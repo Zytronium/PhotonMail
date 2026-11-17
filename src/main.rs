@@ -1,6 +1,7 @@
 mod account_view;
 mod data;
 mod message_list;
+mod pane_divider;
 mod reader;
 mod sidebar;
 mod state;
@@ -12,8 +13,8 @@ mod widgets;
 use freya::{borderless::BorderlessPlugin, prelude::*};
 
 use crate::{
-    message_list::MessageList, reader::Reader, sidebar::Sidebar, state::use_app_state,
-    theme::DARK, titlebar::Titlebar,
+    message_list::MessageList, pane_divider::{PaneDivider, DividerTarget}, reader::Reader,
+    sidebar::Sidebar, state::use_app_state, theme::DARK, titlebar::Titlebar,
 };
 
 pub const APP_NAME: &str = "Photon Mail";
@@ -50,7 +51,9 @@ fn app() -> impl IntoElement {
                 .width(Size::fill())
                 .height(Size::flex(1.))
                 .child(Sidebar { state })
+                .child(PaneDivider { state, target: DividerTarget::Sidebar })
                 .child(MessageList { state })
+                .child(PaneDivider { state, target: DividerTarget::MessageList })
                 .child(Reader { state }),
         )
 }

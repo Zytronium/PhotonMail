@@ -91,7 +91,7 @@ impl Component for Sidebar {
             .child(label().text("All accounts synced").color(DARK.muted).font_size(12.));
 
         rect()
-            .width(Size::px(260.))
+            .width(Size::px(*state.sidebar_width.read()))
             .height(Size::fill())
             .background(DARK.panel)
             .padding(12.)

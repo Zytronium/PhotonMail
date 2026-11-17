@@ -43,7 +43,7 @@ impl Component for MessageList {
         };
 
         rect()
-            .width(Size::px(380.))
+            .width(Size::px(*state.message_list_width.read()))
             .height(Size::fill())
             .background(DARK.bg)
             .child(toolbar)

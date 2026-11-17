@@ -19,6 +19,8 @@ pub struct AppState {
     pub expanded: State<Vec<bool>>,     // per-account sidebar group
     pub view: State<View>,
     pub unread_only: State<bool>,
+    pub sidebar_width: State<f32>,
+    pub message_list_width: State<f32>,
 }
 
 pub fn use_app_state() -> AppState {
@@ -31,6 +33,8 @@ pub fn use_app_state() -> AppState {
         expanded: use_state(|| vec![true; ACCOUNTS.len()]),
         view: use_state(|| View::Mail),
         unread_only: use_state(|| false),
+        sidebar_width: use_state(|| 260.),
+        message_list_width: use_state(|| 380.),
     }
 }
 
