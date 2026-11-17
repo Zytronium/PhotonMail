@@ -1,0 +1,33 @@
+[package]
+name = "PhotonMail"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zytronium <zytronium@zytronium.dev>"]
+description = "Browse and send email at lightspeed with Photon Mail"
+repository = "https://github.com/Zytronium/PhotonMail"
+homepage = "https://photonmail.zytronium.dev"
+license = "MIT"
+keywords = ["email", "mail-client", "gui", "freya"]
+categories = ["gui"]
+rust-version = "1.85"
+
+[dependencies]
+freya = { version = "0.5.2", features = ["borderless", "titlebar"] }
+
+[package.metadata.deb]
+maintainer = "Zytronium <zytronium@zytronium.dev>"
+copyright = "2026, Zytronium"
+license-file = ["LICENSE", "4"]
+section = "email"
+priority = "optional"
+depends = "$auto"
+extended-description = "Browse and send email at lightspeed with Photon Mail"
+
+[package.metadata.generate-rpm]
+packager = "Zytronium <zytronium@zytronium.dev>"
+license = "MIT"
+
+[package.metadata.wix]
+upgrade-guid = "{37afb898-31eb-4598-b006-b5fd77fee273}"
+path-guid = "{9e85ef5e-2e37-4945-ad40-5ea9ac1184c5}"
+app-guid = "{da6027d6-325e-4455-9d1f-202afb58248c}"

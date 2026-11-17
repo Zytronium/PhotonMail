@@ -1,0 +1,44 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="PhotonMail"
+    Version="$(var.CargoVersion)"
+    UpgradeCode="{37afb898-31eb-4598-b006-b5fd77fee273}"
+    Manufacturer="Zytronium"
+    Language="1033"
+    Codepage="1252"
+  >
+    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <MediaTemplate />
+
+    <Feature Id="Binary" Title="PhotonMail" Description="Installs PhotonMail." Level="1">
+      <ComponentGroupRef Id="Binary" />
+    </Feature>
+
+    <StandardDir Table="StandardDirectory" Name="ProgramFiles64Folder" Id="ProgramFiles64Folder">
+      <StandardDir Table="CustomDirectory" Name="PhotonMail" Id="INSTALLFOLDER">
+        <Component Id="PhotonMailShortcut" Guid="{9e85ef5e-2e37-4945-ad40-5ea9ac1184c5}">
+          <Shortcut
+            Id="PhotonMailShortcutStartMenu"
+            Name="PhotonMail"
+            Description="A lightspeed modern email client"
+            Target="[INSTALLFOLDER]PhotonMail.exe"
+            WorkingDirectory="INSTALLFOLDER"
+          />
+        </Component>
+      </StandardDir>
+    </StandardDir>
+
+    <StandardDir Table="StandardDirectory" Name="DesktopFolder" Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{da6027d6-325e-4455-9d1f-202afb58248c}">
+        <Shortcut
+          Id="PhotonMailDesktopShortcut"
+          Name="PhotonMail"
+          Description="A modern email client"
+          Target="[INSTALLFOLDER]PhotonMail.exe"
+          WorkingDirectory="INSTALLFOLDER"
+        />
+      </Component>
+    </StandardDir>
+  </Package>
+</Wix>

@@ -1,0 +1,383 @@
+name: Build & Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Linux x86_64 native build + AppImage, .deb, .rpm
+  # ---------------------------------------------------------------------------
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libssl-dev pkg-config cmake libclang-dev \
+            libudev-dev libasound2-dev liblzma-dev libfontconfig1-dev \
+            libfreetype6-dev libegl1-mesa-dev libgl1-mesa-dev \
+            libgles2-mesa-dev libwayland-dev \
+            appstream util-linux
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x86_64
+
+      - name: Build release binary
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-linux-x86_64
+          path: target/x86_64-unknown-linux-gnu/release/PhotonMail
+          retention-days: 5
+
+      - name: Build AppImage
+        run: |
+          # Download appimagetool
+          curl -L -o /tmp/appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+          /tmp/appimagetool.AppImage --appimageembed desktop
+
+          # Create AppDir
+          mkdir -p PhotonMail.AppDir/usr/bin
+          cp target/x86_64-unknown-linux-gnu/release/PhotonMail PhotonMail.AppDir/usr/bin/
+          
+          # Copy required shared libraries
+          mkdir -p PhotonMail.AppDir/usr/lib
+          ldd target/x86_64-unknown-linux-gnu/release/PhotonMail | \
+            awk '/=> \// {print $3}' | while read lib; do
+              [ -n "$lib" ] && cp -n "$lib" PhotonMail.AppDir/usr/lib/ 2>/dev/null || true
+            done
+
+          # Create desktop entry
+          cat > PhotonMail.AppDir/PhotonMail.desktop << 'EOF'
+          [Desktop Entry]
+          Name=PhotonMail
+          Comment=A modern email client
+          Exec=PhotonMail
+          Icon=PhotonMail
+          Type=Application
+          Categories=EmailClient;Network;
+          EOF
+
+          # Copy app icon
+          if [ -f assets/logo.png ]; then
+            cp assets/logo.png PhotonMail.AppDir/PhotonMail.png
+          fi
+
+          # Build the AppImage
+          /tmp/appimagetool.AppImage PhotonMail.AppDir PhotonMail-x86_64.AppImage
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-appimage
+          path: PhotonMail-x86_64.AppImage
+          retention-days: 5
+
+      - name: Build .deb package
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb --target x86_64-unknown-linux-gnu
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-deb
+          path: target/debian/*.deb
+          retention-days: 5
+
+      - name: Build .rpm package
+        run: |
+          sudo apt-get install -y rpm
+          cargo install cargo-generate-rpm --locked
+          cargo generate-rpm --target x86_64-unknown-linux-gnu
+
+      - name: Upload .rpm
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-rpm
+          path: target/x86_64-unknown-linux-gnu/release/rpmbuild/RPMS/x86_64/*.rpm
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # Linux aarch64 cross-compiled build
+  # ---------------------------------------------------------------------------
+  build-linux-aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libssl-dev pkg-config cmake libclang-dev \
+            libudev-dev libasound2-dev liblzma-dev libfontconfig1-dev \
+            libfreetype6-dev libegl1-mesa-dev libgl1-mesa-dev \
+            libgles2-mesa-dev libwayland-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install aarch64 cross-compiler
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-aarch64
+
+      - name: Build release binary
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-linux-aarch64
+          path: target/aarch64-unknown-linux-gnu/release/PhotonMail
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # macOS x86_64 & aarch64 + .dmg
+  # ---------------------------------------------------------------------------
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Create .app bundle
+        run: |
+          ARCH_NAME="${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x86_64 }}"
+          mkdir -p "PhotonMail.app/Contents/MacOS"
+          mkdir -p "PhotonMail.app/Contents/Resources"
+          cp "target/${{ matrix.target }}/release/PhotonMail" "PhotonMail.app/Contents/MacOS/"
+          if [ -f assets/logo.png ]; then
+            mkdir -p PhotonMail.app/Contents/Resources/AppIcon.iconset
+            sips -z 16 16 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-16.png
+            sips -z 32 32 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-32.png
+            sips -z 64 64 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-64.png
+            sips -z 128 128 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-128.png
+            sips -z 256 256 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-256.png
+            sips -z 512 512 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-512.png
+            cat > PhotonMail.app/Contents/Resources/AppIcon.iconset/Contents.json << 'ICONEOF'
+            {
+              "images": [
+                {"size": "16x16", "filename": "AppIcon-16.png", "scale": "1x"},
+                {"size": "16x16", "filename": "AppIcon-16.png", "scale": "2x"},
+                {"size": "32x32", "filename": "AppIcon-32.png", "scale": "1x"},
+                {"size": "32x32", "filename": "AppIcon-32.png", "scale": "2x"},
+                {"size": "64x64", "filename": "AppIcon-64.png", "scale": "1x"},
+                {"size": "64x64", "filename": "AppIcon-64.png", "scale": "2x"},
+                {"size": "128x128", "filename": "AppIcon-128.png", "scale": "1x"},
+                {"size": "128x128", "filename": "AppIcon-128.png", "scale": "2x"},
+                {"size": "256x256", "filename": "AppIcon-256.png", "scale": "1x"},
+                {"size": "256x256", "filename": "AppIcon-256.png", "scale": "2x"},
+                {"size": "512x512", "filename": "AppIcon-512.png", "scale": "1x"},
+                {"size": "512x512", "filename": "AppIcon-512.png", "scale": "2x"}
+              ]
+            }
+            ICONEOF
+          fi
+          cat > "PhotonMail.app/Contents/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>PhotonMail</string>
+            <key>CFBundleExecutable</key>
+            <string>PhotonMail</string>
+            <key>CFBundleIconName</key>
+            <string>AppIcon</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.photonmail.app</string>
+            <key>CFBundleVersion</key>
+            <string>${{ github.ref_name }}</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${{ github.ref_name }}</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>10.15</string>
+            <key>CFBundleSupportedPlatforms</key>
+            <array>
+              <string>MacOSX</string>
+            </array>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create .dmg
+        run: |
+          ARCH_NAME="${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x86_64 }}"
+          hdiutil create -volname PhotonMail -srcfolder PhotonMail.app \
+            -ov -format UDZO "PhotonMail-${ARCH_NAME}.dmg"
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-macos-${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x86_64' }}-app
+          path: PhotonMail.app
+          retention-days: 5
+
+      - name: Upload .dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-macos-${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x86_64' }}-dmg
+          path: PhotonMail-*.dmg
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # Windows x86_64 + .exe + .msi
+  # ---------------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x86_64
+
+      - name: Build release binary
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-windows-x86_64-exe
+          path: target/x86_64-pc-windows-msvc/release/PhotonMail.exe
+          retention-days: 5
+
+      - name: Build .msi installer
+        run: |
+          cargo install cargo-wix --locked
+          cargo wix --package PhotonMail --nocapture
+
+      - name: Upload .msi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photonmail-windows-x86_64-msi
+          path: target/wix/PhotonMail/*.msi
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # Upload all artifacts to the GitHub Release
+  # ---------------------------------------------------------------------------
+  upload-to-release:
+    needs:
+      - build-linux
+      - build-linux-aarch64
+      - build-macos
+      - build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Upload to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # AppImage
+          gh release upload ${{ github.ref_name }} \
+            photonmail-appimage/PhotonMail-x86_64.AppImage \
+            --repo ${{ github.repository }}
+
+          # .deb
+          gh release upload ${{ github.ref_name }} \
+            photonmail-deb/*.deb \
+            --repo ${{ github.repository }}
+
+          # .rpm
+          gh release upload ${{ github.ref_name }} \
+            photonmail-rpm/*.rpm \
+            --repo ${{ github.repository }}
+
+          # Linux x86_64 binary
+          gh release upload ${{ github.ref_name }} \
+            photonmail-linux-x86_64/PhotonMail \
+            --repo ${{ github.repository }} \
+            --filename PhotonMail-linux-x86_64
+
+          # Linux aarch64 binary
+          gh release upload ${{ github.ref_name }} \
+            photonmail-linux-aarch64/PhotonMail \
+            --repo ${{ github.repository }} \
+            --filename PhotonMail-linux-aarch64
+
+          # macOS x86_64 .dmg
+          gh release upload ${{ github.ref_name }} \
+            photonmail-macos-x86_64-dmg/PhotonMail-x86_64.dmg \
+            --repo ${{ github.repository }}
+
+          # macOS arm64 .dmg
+          gh release upload ${{ github.ref_name }} \
+            photonmail-macos-arm64-dmg/PhotonMail-arm64.dmg \
+            --repo ${{ github.repository }}
+
+          # macOS x86_64 .app
+          (cd photonmail-macos-x86_64-app && \
+            zip -r ../PhotonMail-x86_64.app.zip PhotonMail.app && \
+            gh release upload ${{ github.ref_name }} PhotonMail-x86_64.app.zip \
+              --repo ${{ github.repository }})
+
+          # macOS arm64 .app
+          (cd photonmail-macos-arm64-app && \
+            zip -r ../PhotonMail-arm64.app.zip PhotonMail.app && \
+            gh release upload ${{ github.ref_name }} PhotonMail-arm64.app.zip \
+              --repo ${{ github.repository }})
+
+          # Windows .exe
+          gh release upload ${{ github.ref_name }} \
+            photonmail-windows-x86_64-exe/PhotonMail.exe \
+            --repo ${{ github.repository }}
+
+          # Windows .msi
+          gh release upload ${{ github.ref_name }} \
+            photonmail-windows-x86_64-msi/*.msi \
+            --repo ${{ github.repository }}
