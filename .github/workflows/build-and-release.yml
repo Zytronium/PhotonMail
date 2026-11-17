@@ -185,7 +185,7 @@ jobs:
 
       - name: Create .app bundle
         run: |
-          ARCH_NAME="${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x86_64 }}"
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then ARCH_NAME="arm64"; else ARCH_NAME="x86_64"; fi
           REF_NAME="${{ github.ref_name }}"
           mkdir -p "PhotonMail.app/Contents/MacOS"
           mkdir -p "PhotonMail.app/Contents/Resources"
@@ -248,7 +248,7 @@ jobs:
 
       - name: Create .dmg
         run: |
-          ARCH_NAME="${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x86_64 }}"
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then ARCH_NAME="arm64"; else ARCH_NAME="x86_64"; fi
           hdiutil create -volname PhotonMail -srcfolder PhotonMail.app \
             -ov -format UDZO "PhotonMail-${ARCH_NAME}.dmg"
 
