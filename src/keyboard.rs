@@ -1,6 +1,6 @@
 use freya::prelude::*;
 
-use crate::state::AppState;
+use crate::state::{AppState, View};
 
 /// Which pane currently has keyboard focus.
 #[derive(Clone, Copy, PartialEq)]
@@ -8,6 +8,7 @@ pub enum FocusArea {
     MessageList,
     Sidebar,
     Reader,
+    Compose,
 }
 impl Default for FocusArea {
     fn default() -> Self {
@@ -40,10 +41,31 @@ pub fn handle_key(event: &Event<KeyboardEventData>, state: &mut AppState, focus:
     let key = &event.key;
     let modifiers = &event.modifiers;
 
+    // --- Compose is open: the editor and inputs own the keyboard. ---
+    // Only Escape and Ctrl+Enter are handled globally; everything else is
+    // left alone so typing, Enter, Ctrl+C/V/A, Ctrl+B/I/U etc. reach the editor.
+    if matches!(*state.view.read(), View::Compose) {
+        focus.area = FocusArea::Compose;
+        return match handle_compose(key, modifiers, state, &mut focus.area) {
+            HandleResult::Consumed => {
+                focus.keyboard_active = true;
+                true
+            }
+            HandleResult::Unfocus => {
+                focus.keyboard_active = false;
+                true
+            }
+            HandleResult::Ignored => false,
+        };
+    }
+
     // --- Ctrl/Cmd shortcuts (work from any focus area) ---
     if modifiers.ctrl() || modifiers.meta() {
         let consumed = handle_ctrl_shortcut(key, state, &mut focus.area);
         if consumed {
+            // Only block the default behavior when we actually handled it,
+            // so Ctrl+C / Ctrl+V / Ctrl+A keep working in text inputs.
+            event.prevent_default();
             focus.keyboard_active = true;
         }
         return consumed;
@@ -54,10 +76,12 @@ pub fn handle_key(event: &Event<KeyboardEventData>, state: &mut AppState, focus:
         FocusArea::MessageList => handle_message_list(key, modifiers, state, &mut focus.area),
         FocusArea::Sidebar => handle_sidebar(key, modifiers, state, &mut focus.area),
         FocusArea::Reader => handle_reader(key, modifiers, state, &mut focus.area),
+        // Compose is handled above, but keep the arm for exhaustiveness.
+        FocusArea::Compose => HandleResult::Ignored,
     };
     match result {
-        HandleResult::Consumed => { focus.keyboard_active = true; return true; }
-        HandleResult::Unfocus => { focus.keyboard_active = false; return true; }
+        HandleResult::Consumed => { focus.keyboard_active = true; true }
+        HandleResult::Unfocus => { focus.keyboard_active = false; true }
         HandleResult::Ignored => false,
     }
 }
@@ -67,20 +91,16 @@ pub fn handle_key(event: &Event<KeyboardEventData>, state: &mut AppState, focus:
 // ---------------------------------------------------------------------------
 
 fn handle_ctrl_shortcut(key: &Key, state: &mut AppState, _focus: &mut FocusArea) -> bool {
-    // Ctrl+1..9 switch to folder index
+    // Ctrl+1..6 switch to folder index
     if let Key::Character(ch) = key {
-        if let Some(digit) = ch.parse::<usize>().ok() {
-            if digit >= 1 && digit <= 6 {
+        if let Ok(digit) = ch.parse::<usize>() {
+            if (1..=6).contains(&digit) {
                 // FOLDERS has 6 entries: Inbox, Drafts, Sent, Archive, Spam, Trash
                 let account = *state.account.read();
-                let acc = account.or_else(|| {
-                    // Default to first account if in unified view
-                    Some(0)
-                });
-                if let Some(a) = acc {
-                    state.go(Some(a), digit - 1);
-                    return true;
-                }
+                // Default to first account if in unified view
+                let a = account.unwrap_or(0);
+                state.go(Some(a), digit - 1);
+                return true;
             }
         }
     }
@@ -162,7 +182,6 @@ fn handle_message_list(
 
     // Named keys
     match key {
-        // Arrow keys
         Key::Named(NamedKey::ArrowUp) => {
             if idx > 0 { idx -= 1; }
             state.select(visible[idx]);
@@ -173,7 +192,6 @@ fn handle_message_list(
             state.select(visible[idx]);
             HandleResult::Consumed
         }
-        // Page Up / Page Down
         Key::Named(NamedKey::PageUp) => {
             idx = idx.saturating_sub(10).min(visible.len() - 1);
             state.select(visible[idx]);
@@ -184,7 +202,6 @@ fn handle_message_list(
             state.select(visible[idx]);
             HandleResult::Consumed
         }
-        // Home / End
         Key::Named(NamedKey::Home) => {
             state.select(visible[0]);
             HandleResult::Consumed
@@ -199,19 +216,16 @@ fn handle_message_list(
             *focus = FocusArea::Reader;
             HandleResult::Consumed
         }
-        // Move focus to sidebar
         Key::Named(NamedKey::ArrowLeft) => {
             *focus = FocusArea::Sidebar;
             HandleResult::Consumed
         }
-        // Move focus to reader
         Key::Named(NamedKey::ArrowRight) => {
             if state.open().is_some() {
                 *focus = FocusArea::Reader;
             }
             HandleResult::Consumed
         }
-        // Tab / Shift+Tab for focus switching
         Key::Named(NamedKey::Tab) if modifiers.shift() => {
             *focus = FocusArea::Sidebar;
             HandleResult::Consumed
@@ -222,14 +236,12 @@ fn handle_message_list(
             }
             HandleResult::Consumed
         }
-        // Delete key
         Key::Named(NamedKey::Delete) => {
             if let Some(open) = state.open() {
                 state.trash(open);
             }
             HandleResult::Consumed
         }
-        // Escape — unfocus
         Key::Named(NamedKey::Escape) => HandleResult::Unfocus,
         _ => HandleResult::Ignored,
     }
@@ -247,7 +259,6 @@ fn handle_sidebar(
 ) -> HandleResult {
     match key {
         Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::Tab) => {
-            // Move focus to message list
             *focus = FocusArea::MessageList;
             HandleResult::Consumed
         }
@@ -266,7 +277,6 @@ fn handle_reader(
     state: &mut AppState,
     focus: &mut FocusArea,
 ) -> HandleResult {
-    // Character shortcuts
     if let Key::Character(ch) = key {
         if !modifiers.shift() {
             match ch.as_str() {
@@ -321,20 +331,16 @@ fn handle_reader(
         }
     }
 
-    // Named keys
     match key {
-        // Move focus back to message list
         Key::Named(NamedKey::ArrowLeft) => {
             *focus = FocusArea::MessageList;
             HandleResult::Consumed
         }
-        // Escape — unfocus
         Key::Named(NamedKey::Escape) => HandleResult::Unfocus,
         Key::Named(NamedKey::Tab) if modifiers.shift() => {
             *focus = FocusArea::MessageList;
             HandleResult::Consumed
         }
-        // Navigate to next/prev message while staying in reader
         Key::Named(NamedKey::ArrowDown) => {
             let visible = state.visible();
             let current = *state.selected.read();
@@ -355,13 +361,41 @@ fn handle_reader(
             }
             HandleResult::Consumed
         }
-        // Delete key
         Key::Named(NamedKey::Delete) => {
             if let Some(open) = state.open() {
                 state.trash(open);
             }
             HandleResult::Consumed
         }
+        _ => HandleResult::Ignored,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Compose (only Escape and Ctrl+Enter are global; the editor handles the rest)
+// ---------------------------------------------------------------------------
+
+fn handle_compose(
+    key: &Key,
+    modifiers: &Modifiers,
+    state: &mut AppState,
+    focus: &mut FocusArea,
+) -> HandleResult {
+    match key {
+        // Ctrl/Cmd+Enter sends the message
+        Key::Named(NamedKey::Enter) if modifiers.ctrl() || modifiers.meta() => {
+            // TODO: trigger send
+            state.view.set(View::Mail);
+            *focus = FocusArea::MessageList;
+            HandleResult::Consumed
+        }
+        // Escape closes compose and returns to the mail view
+        Key::Named(NamedKey::Escape) => {
+            state.view.set(View::Mail);
+            *focus = FocusArea::MessageList;
+            HandleResult::Unfocus
+        }
+        // Everything else (typing, Enter, Tab, Ctrl+C/V/A/B/I/U...) goes to the editor.
         _ => HandleResult::Ignored,
     }
 }

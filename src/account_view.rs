@@ -6,7 +6,7 @@ use crate::{
     widgets::{avatar, divider},
 };
 
-const PROVIDERS: [&str; 5] = ["Proton Mail", "Gmail", "Outlook", "iCloud", "Other (IMAP)"];
+const PROVIDERS: [&str; 4] = ["Gmail", "Outlook", "iCloud", "Other (IMAP)"];
 
 #[derive(PartialEq)]
 pub struct AddAccountView;

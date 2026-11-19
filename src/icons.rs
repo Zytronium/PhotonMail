@@ -27,5 +27,6 @@ pub const MAIL: &[u8] = icon!(r#"<rect width="20" height="16" x="2" y="4" rx="2"
 pub const PENCIL: &[u8] = icon!(r#"<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>"#);
 pub const TAG: &[u8] = icon!(r#"<path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.41 0l8.59-8.59a1 1 0 0 0 0-1.41z"/><path d="M7 7h.01"/>"#);
 pub const SEARCH: &[u8] = icon!(r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>"#);
+pub const SEND: &[u8] = icon!(r#"<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>"#);
 
 pub const FOLDER_ICONS: [&[u8]; 6] = [INBOX, DRAFTS, SENT, ARCHIVE, SPAM, TRASH];

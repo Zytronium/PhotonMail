@@ -6,6 +6,7 @@ use crate::keyboard::FocusState;
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
     Mail,
+    Compose,
     AddAccount,
     Settings(usize),
 }

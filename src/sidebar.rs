@@ -85,6 +85,7 @@ impl Component for Sidebar {
         }
 
         let mut compose_hover = use_state(|| false);
+        let mut s_compose = state;
         let compose = rect()
             .width(Size::fill())
             .padding(10.)
@@ -99,7 +100,7 @@ impl Component for Sidebar {
             })
             .on_pointer_enter(move |_| compose_hover.set(true))
             .on_pointer_leave(move |_| compose_hover.set(false))
-            .on_press(|_| {}) // TODO: compose
+            .on_press(move |_| s_compose.view.set(View::Compose))
             .child(icon(PENCIL, 16., DARK.text))
             .child(label().text("New message").color(DARK.text).font_weight(FontWeight::BOLD));
 
@@ -124,9 +125,16 @@ impl Component for Sidebar {
             .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
             .child(compose)
             .child(
-                ScrollView::new()
+                // Negative right margin pulls the ScrollView (and its scrollbar) past the outer padding to the edge
+                rect()
+                    .margin((0., -14., 0., 0.))
+                    .width(Size::fill())
                     .height(Size::flex(1.))
-                    .children(rows.into_iter().enumerate().map(|(n, r)| r.key(n))),
+                    .child(
+                        ScrollView::new()
+                            .height(Size::fill())
+                            .children(rows.into_iter().enumerate().map(|(n, r)| r.key(n))),
+                    ),
             )
             .child(divider())
             .child(footer)
@@ -157,7 +165,7 @@ impl Component for SectionHeader {
             .horizontal()
             .content(Content::Flex)
             .cross_align(Alignment::Center)
-            .padding((12., 0., 4., 8.))
+            .padding((12., 14., 4., 8.))
             .child(label().text(title.to_string()).color(DARK.muted).font_size(11.).font_weight(FontWeight::BOLD))
             .child(rect().width(Size::flex(1.)));
         if show_add {
@@ -197,7 +205,7 @@ impl Component for GroupHeader {
         let on_press = self.on_press.clone();
         let mut r = rect()
             .width(Size::fill())
-            .padding((4., 4., 4., 8.))
+            .padding((4., 14., 4., 8.))
             .corner_radius(8.)
             .horizontal()
             .content(Content::Flex)
@@ -258,7 +266,7 @@ impl Component for Item {
 
         let mut row = rect()
             .width(Size::fill())
-            .padding((8., 8., 8., 8. + indent))
+            .padding((8., 14., 8., 8. + indent))
             .corner_radius(8.)
             .horizontal()
             .cross_align(Alignment::Center)

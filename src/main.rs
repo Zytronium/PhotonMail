@@ -1,4 +1,5 @@
 mod account_view;
+mod compose;
 mod data;
 mod grain;
 mod message_list;
@@ -41,17 +42,17 @@ fn main() {
 
 fn app() -> impl IntoElement {
     let mut state = use_app_state();
-    let mut focus_state = *state.focus_state.read();
 
     rect()
         .expanded()
         .vertical()
         .background(DARK.bg)
         .on_global_key_down(move |e: Event<KeyboardEventData>| {
-            let consumed = handle_key(&e, &mut state, &mut focus_state);
-            if consumed {
+            // Read fresh each time so we never act on a stale copy.
+            let mut fs = *state.focus_state.read();
+            if handle_key(&e, &mut state, &mut fs) {
                 e.stop_propagation();
-                state.focus_state.set(focus_state);
+                state.focus_state.set(fs);
             }
         })
         .on_global_pointer_down(move |_| {

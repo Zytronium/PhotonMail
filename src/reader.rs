@@ -2,6 +2,7 @@ use freya::prelude::*;
 
 use crate::{
     account_view::{AccountSettings, AddAccountView},
+    compose::ComposePane,
     data::{ACCOUNTS, MAILS},
     icons::{CHEVRON_RIGHT, *},
     state::{AppState, View},
@@ -18,11 +19,11 @@ impl Component for Reader {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
         let view = *state.view.read();
-        let show_back = view != View::Mail;
+        let show_back = matches!(view, View::AddAccount | View::Settings(_));
 
         let mut col = rect().spacing(16.).padding(10.);
 
-        // Back button when in a sub-view
+        // Back button when in a sub-view (not for Compose, which has its own close)
         if show_back {
             let mut s_back = state;
             col = col.child(
@@ -42,6 +43,7 @@ impl Component for Reader {
 
         let body = match view {
             View::Mail => rect().child(MailView { state }),
+            View::Compose => rect().child(ComposePane { state }),
             View::AddAccount => rect().child(AddAccountView),
             View::Settings(index) => rect().child(AccountSettings { index }),
         };
