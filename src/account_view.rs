@@ -20,22 +20,40 @@ impl Component for AddAccountView {
             .child(rect().height(Size::px(8.)));
 
         for (n, p) in PROVIDERS.iter().enumerate() {
-            col = col.child(
-                rect()
-                    .key(n)
-                    .width(Size::px(360.))
-                    .padding(12.)
-                    .corner_radius(8.)
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .spacing(12.)
-                    .background(crate::grain::hover())
-                    .on_press(|_| {}) // TODO: sign-in form
-                    .child(avatar(p, DARK.accent, 32.))
-                    .child(label().text(*p).color(DARK.text)),
-            );
+            col = col.child(ProviderCard { index: n, name: *p });
         }
         col.child(label().text("Sign-in forms come next.").color(DARK.muted).font_size(12.))
+    }
+}
+
+#[derive(PartialEq)]
+struct ProviderCard {
+    index: usize,
+    name: &'static str,
+}
+
+impl Component for ProviderCard {
+    fn render(&self) -> impl IntoElement {
+        let mut hovering = use_state(|| false);
+        let name = self.name;
+        rect()
+            .key(self.index)
+            .width(Size::px(360.))
+            .padding(12.)
+            .corner_radius(8.)
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(12.)
+            .background(if hovering() {
+                Fill::from((45, 45, 62))
+            } else {
+                crate::grain::hover()
+            })
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
+            .on_press(|_| {}) // TODO: sign-in form
+            .child(avatar(name, DARK.accent, 32.))
+            .child(label().text(name).color(DARK.text))
     }
 }
 
@@ -70,9 +88,9 @@ impl Component for AccountSettings {
                 rect()
                     .horizontal()
                     .spacing(8.)
-                    .child(button("Sync now", crate::grain::hover()))
-                    .child(button("Edit", crate::grain::hover()))
-                    .child(button("Remove account", DARK.danger)),
+                    .child(AccountButton { text: "Sync now".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((45, 45, 62)), on_press: EventHandler::new(|_| {}) })
+                    .child(AccountButton { text: "Edit".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((45, 45, 62)), on_press: EventHandler::new(|_| {}) })
+                    .child(AccountButton { text: "Remove account".to_string(), bg: Fill::from(DARK.danger), hover_bg: Fill::from(DARK.close_hover), on_press: EventHandler::new(|_| {}) }),
             )
     }
 }
@@ -85,11 +103,32 @@ fn field(name: &str, value: &str, color: (u8, u8, u8)) -> Rect {
         .child(label().text(value.to_string()).color(color))
 }
 
-fn button(text: &str, bg: impl Into<Fill>) -> Rect {
-    rect()
-        .padding((8., 14., 8., 14.))
-        .corner_radius(6.)
-        .background(bg)
-        .on_press(|_| {}) // TODO
-        .child(label().text(text.to_string()).color(DARK.text).font_size(13.))
+#[derive(PartialEq, Clone)]
+struct AccountButton {
+    text: String,
+    bg: Fill,
+    hover_bg: Fill,
+    on_press: EventHandler<Event<PressEventData>>,
+}
+
+impl Component for AccountButton {
+    fn render(&self) -> impl IntoElement {
+        let mut hovering = use_state(|| false);
+        let text = self.text.clone();
+        let bg_fill = self.bg.clone();
+        let hover_fill = self.hover_bg.clone();
+        let on_press = self.on_press.clone();
+        rect()
+            .padding((8., 14., 8., 14.))
+            .corner_radius(6.)
+            .background(if hovering() {
+                hover_fill
+            } else {
+                bg_fill
+            })
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
+            .on_press(on_press)
+            .child(label().text(text).color(DARK.text).font_size(13.))
+    }
 }

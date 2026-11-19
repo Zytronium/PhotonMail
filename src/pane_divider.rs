@@ -47,15 +47,20 @@ impl Component for PaneDivider {
         let mut s_drag = state;
         let t = target;
 
+        let mut hovering = use_state(|| false);
         rect()
             .width(Size::px(DIVIDER_WIDTH))
             .height(Size::fill())
             .background(if is_dragging() {
-                DARK.accent
+                Fill::from(DARK.accent)
+            } else if hovering() {
+                Fill::from((60, 60, 80))
             } else {
-                DARK.divider
+                Fill::from(DARK.divider)
             })
             .cursor(CursorIcon::ColResize)
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
             .on_pointer_down(move |e: Event<PointerEventData>| {
                 is_dragging.set(true);
                 start_x.set(e.global_location().x);

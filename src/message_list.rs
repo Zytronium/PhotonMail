@@ -1,11 +1,12 @@
 use freya::prelude::*;
+use freya_components::input::InputColorsThemePartial;
 
 use crate::{
     data::{ACCOUNTS, MAILS},
     icons::*,
     state::AppState,
     theme::DARK,
-    widgets::{avatar, chip, divider, icon_button},
+    widgets::{avatar, Chip, divider, icon, IconButton},
 };
 
 #[derive(PartialEq)]
@@ -19,18 +20,53 @@ impl Component for MessageList {
         let visible = state.visible();
         let unread_only = *state.unread_only.read();
         let mut s_filter = state;
+        let search_query = use_state(|| String::new());
+
+        // Search bar
+        let search_bar = rect()
+            .width(Size::fill())
+            .padding((6., 10., 6., 10.))
+            .corner_radius(8.)
+            .background(Color::from_rgb(DARK.bg.0, DARK.bg.1, DARK.bg.2).with_a(128))
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(6.)
+            .child(icon(SEARCH, 14., DARK.muted))
+            .child(
+                Input::new(search_query.clone())
+                    .placeholder("Search messages…")
+                    .flat()
+                    .compact()
+                    .width(Size::fill())
+                    .theme_colors(
+                        InputColorsThemePartial::new()
+                            .focus_background(Color::TRANSPARENT)
+                            .focus_border_fill(Color::TRANSPARENT)
+                            .border_fill(Color::TRANSPARENT)
+                            .color(DARK.text)
+                            .placeholder_color(DARK.muted),
+                    ),
+            );
+
+        let chip_on_press: EventHandler<Event<PressEventData>> = (move |_| {
+            let v = !*s_filter.unread_only.read();
+            s_filter.unread_only.set(v);
+        }).into();
 
         let toolbar = rect()
             .width(Size::fill())
-            .horizontal()
-            .content(Content::Flex)
-            .cross_align(Alignment::Center)
-            .padding((8., 12., 8., 12.))
-            .spacing(8.)
-            .child(chip("Unread", unread_only).on_press(move |_| {
-                let v = !*s_filter.unread_only.read();
-                s_filter.unread_only.set(v);
-            }));
+            .vertical()
+            .spacing(6.)
+            .padding((4., 12., 8., 12.))
+            .child(search_bar)
+            .child(
+                rect()
+                    .horizontal()
+                    .content(Content::Flex)
+                    .cross_align(Alignment::Center)
+                    .spacing(8.)
+                    .child(Chip { text: "Unread".to_string(), active: unread_only, on_press: chip_on_press }),
+            );
 
         let body = if visible.is_empty() {
             rect().padding(24.).child(label().text("No messages").color(DARK.muted))
@@ -92,18 +128,18 @@ impl Component for MessageRow {
             rect()
                 .horizontal()
                 .height(Size::px(28.))
-                .child(icon_button(ARCHIVE, DARK.muted).on_press(move |e: Event<PressEventData>| {
+                .child(IconButton { bytes: ARCHIVE, color: DARK.muted, on_press: (move |e: Event<PressEventData>| {
                     e.stop_propagation();
                     s_archive.archive(i);
-                }))
-                .child(icon_button(TRASH, DARK.muted).on_press(move |e: Event<PressEventData>| {
+                }).into() })
+                .child(IconButton { bytes: TRASH, color: DARK.muted, on_press: (move |e: Event<PressEventData>| {
                     e.stop_propagation();
                     s_trash.trash(i);
-                }))
-                .child(icon_button(MAIL, DARK.muted).on_press(move |e: Event<PressEventData>| {
+                }).into() })
+                .child(IconButton { bytes: MAIL, color: DARK.muted, on_press: (move |e: Event<PressEventData>| {
                     e.stop_propagation();
                     s_read.toggle_read(i);
-                }))
+                }).into() })
         } else {
             rect()
                 .height(Size::px(28.))

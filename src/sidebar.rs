@@ -5,7 +5,7 @@ use crate::{
     icons::*,
     state::{AppState, View},
     theme::{Rgb, DARK},
-    widgets::{divider, icon, icon_button},
+    widgets::{divider, icon, IconButton},
 };
 
 #[derive(PartialEq)]
@@ -26,50 +26,65 @@ impl Component for Sidebar {
 
         // Unified inbox
         let mut s = state;
-        rows.push(
-            item(Lead::Icon(INBOX), "All inboxes", in_mail && acc.is_none() && fol == 0, state.inbox_unread(None), 0.)
-                .on_press(move |_| s.go(None, 0)),
-        );
+        rows.push(rect().child(Item {
+            lead: Lead::Icon(INBOX),
+            text: "All inboxes".to_string(),
+            active: in_mail && acc.is_none() && fol == 0,
+            count: state.inbox_unread(None),
+            indent: 0.,
+            on_press: (move |_| s.go(None, 0)).into(),
+        }));
 
-        // Accounts
-        let mut s = state;
-        let add = icon_button(PLUS, DARK.muted).on_press(move |_| s.view.set(View::AddAccount));
-        rows.push(section("ACCOUNTS", Some(add)));
+        // Accounts section header
+        rows.push(rect().child(SectionHeader { title: "ACCOUNTS", show_add: true, state: state.clone() }));
+
         for (i, a) in ACCOUNTS.iter().enumerate() {
             let open = expanded[i];
             let mut s_toggle = state;
             let mut s_gear = state;
-            let gear = icon_button(SETTINGS, DARK.muted).on_press(move |e: Event<PressEventData>| {
+            let gear_on_press: EventHandler<Event<PressEventData>> = (move |e: Event<PressEventData>| {
                 e.stop_propagation();
                 s_gear.view.set(View::Settings(i));
-            });
-            rows.push(
-                group_header(a.name, a.color, open, view == View::Settings(i), state.inbox_unread(Some(i)), gear)
-                    .on_press(move |_| s_toggle.toggle_expanded(i)),
-            );
+            }).into();
+            rows.push(rect().child(GroupHeader {
+                name: a.name.to_string(),
+                color: a.color,
+                open,
+                active: view == View::Settings(i),
+                count: state.inbox_unread(Some(i)),
+                show_gear: true,
+                gear_on_press: gear_on_press.clone(),
+                on_press: (move |_| s_toggle.toggle_expanded(i)).into(),
+            }));
             if open {
                 for (f, name) in FOLDERS.iter().enumerate() {
                     let mut s_go = state;
-                    rows.push(
-                        item(
-                            Lead::Icon(FOLDER_ICONS[f]),
-                            name,
-                            in_mail && acc == Some(i) && fol == f,
-                            state.account_folder_unread(i, f),
-                            20.,
-                        )
-                            .on_press(move |_| s_go.go(Some(i), f)),
-                    );
+                    rows.push(rect().child(Item {
+                        lead: Lead::Icon(FOLDER_ICONS[f]),
+                        text: name.to_string(),
+                        active: in_mail && acc == Some(i) && fol == f,
+                        count: state.account_folder_unread(i, f),
+                        indent: 20.,
+                        on_press: (move |_| s_go.go(Some(i), f)).into(),
+                    }));
                 }
             }
         }
 
         // Labels (static for now)
-        rows.push(section("LABELS", None));
+        rows.push(rect().child(SectionHeader { title: "LABELS", show_add: false, state: state.clone() }));
         for (name, color) in LABELS.iter() {
-            rows.push(item(Lead::Tinted(TAG, *color), name, false, 0, 0.));
+            rows.push(rect().child(Item {
+                lead: Lead::Tinted(TAG, *color),
+                text: name.to_string(),
+                active: false,
+                count: 0,
+                indent: 0.,
+                on_press: EventHandler::new(|_| {}),
+            }));
         }
 
+        let mut compose_hover = use_state(|| false);
         let compose = rect()
             .width(Size::fill())
             .padding(10.)
@@ -77,7 +92,13 @@ impl Component for Sidebar {
             .horizontal()
             .center()
             .spacing(8.)
-            .background(DARK.accent)
+            .background(if compose_hover() {
+                Fill::from((120, 90, 255))
+            } else {
+                Fill::from(DARK.accent)
+            })
+            .on_pointer_enter(move |_| compose_hover.set(true))
+            .on_pointer_leave(move |_| compose_hover.set(false))
             .on_press(|_| {}) // TODO: compose
             .child(icon(PENCIL, 16., DARK.text))
             .child(label().text("New message").color(DARK.text).font_weight(FontWeight::BOLD));
@@ -112,70 +133,155 @@ impl Component for Sidebar {
     }
 }
 
+#[derive(PartialEq, Clone)]
 enum Lead {
     Dot(Rgb),
     Icon(&'static [u8]),
     Tinted(&'static [u8], Rgb),
 }
 
-fn section(title: &str, trailing: Option<Rect>) -> Rect {
-    let mut r = rect()
-        .width(Size::fill())
-        .horizontal()
-        .content(Content::Flex)
-        .cross_align(Alignment::Center)
-        .padding((12., 0., 4., 8.))
-        .child(label().text(title.to_string()).color(DARK.muted).font_size(11.).font_weight(FontWeight::BOLD))
-        .child(rect().width(Size::flex(1.)));
-    if let Some(t) = trailing {
-        r = r.child(t);
-    }
-    r
+#[derive(PartialEq, Clone)]
+struct SectionHeader {
+    title: &'static str,
+    show_add: bool,
+    state: AppState,
 }
 
-fn group_header(name: &str, color: Rgb, open: bool, active: bool, count: usize, gear: Rect) -> Rect {
-    let mut r = rect()
-        .width(Size::fill())
-        .padding((4., 4., 4., 8.))
-        .corner_radius(8.)
-        .horizontal()
-        .content(Content::Flex)
-        .cross_align(Alignment::Center)
-        .spacing(6.)
-        .child(icon(if open { CHEVRON_DOWN } else { CHEVRON_RIGHT }, 14., DARK.muted))
-        .child(label().text("●").color(color))
-        .child(label().text(name.to_string()).color(DARK.text).font_weight(FontWeight::BOLD))
-        .child(rect().width(Size::flex(1.)));
-    if count > 0 {
-        r = r.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
+impl Component for SectionHeader {
+    fn render(&self) -> impl IntoElement {
+        let show_add = self.show_add;
+        let title = self.title;
+        let state = self.state.clone();
+        let mut r = rect()
+            .width(Size::fill())
+            .horizontal()
+            .content(Content::Flex)
+            .cross_align(Alignment::Center)
+            .padding((12., 0., 4., 8.))
+            .child(label().text(title.to_string()).color(DARK.muted).font_size(11.).font_weight(FontWeight::BOLD))
+            .child(rect().width(Size::flex(1.)));
+        if show_add {
+            let mut s_add = state;
+            r = r.child(IconButton {
+                bytes: PLUS,
+                color: DARK.muted,
+                on_press: (move |_| s_add.view.set(View::AddAccount)).into(),
+            });
+        }
+        r
     }
-    if active {
-        r = r.background(crate::grain::selected());
-    }
-    r.child(gear)
 }
 
-fn item(lead: Lead, text: &str, active: bool, count: usize, indent: f32) -> Rect {
-    let row = rect()
-        .width(Size::fill())
-        .padding((8., 8., 8., 8. + indent))
-        .corner_radius(8.)
-        .horizontal()
-        .cross_align(Alignment::Center)
-        .content(Content::Flex)
-        .spacing(8.);
-    let row = if active { row.background(crate::grain::selected()) } else { row };
+#[derive(PartialEq, Clone)]
+struct GroupHeader {
+    name: String,
+    color: Rgb,
+    open: bool,
+    active: bool,
+    count: usize,
+    show_gear: bool,
+    gear_on_press: EventHandler<Event<PressEventData>>,
+    on_press: EventHandler<Event<PressEventData>>,
+}
 
-    let mut row = match lead {
-        Lead::Dot(color) => row.child(label().text("●").color(color)),
-        Lead::Icon(bytes) => row.child(icon(bytes, 16., if active { DARK.text } else { DARK.muted })),
-        Lead::Tinted(bytes, color) => row.child(icon(bytes, 16., color)),
+impl Component for GroupHeader {
+    fn render(&self) -> impl IntoElement {
+        let mut hovering = use_state(|| false);
+        let name = self.name.clone();
+        let color = self.color;
+        let open = self.open;
+        let active = self.active;
+        let count = self.count;
+        let show_gear = self.show_gear;
+        let gear_on_press = self.gear_on_press.clone();
+        let on_press = self.on_press.clone();
+        let mut r = rect()
+            .width(Size::fill())
+            .padding((4., 4., 4., 8.))
+            .corner_radius(8.)
+            .horizontal()
+            .content(Content::Flex)
+            .cross_align(Alignment::Center)
+            .spacing(6.)
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
+            .on_press(on_press)
+            .child(icon(if open { CHEVRON_DOWN } else { CHEVRON_RIGHT }, 14., DARK.muted))
+            .child(label().text("●").color(color))
+            .child(label().text(name).color(DARK.text).font_weight(FontWeight::BOLD))
+            .child(rect().width(Size::flex(1.)));
+        if count > 0 {
+            r = r.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
+        }
+        if active {
+            r = r.background(crate::grain::selected());
+        } else if hovering() {
+            r = r.background(crate::grain::hover());
+        }
+        if show_gear {
+            r = r.child(IconButton {
+                bytes: SETTINGS,
+                color: DARK.muted,
+                on_press: gear_on_press,
+            });
+        }
+        r
     }
-        .child(label().text(text.to_string()).color(DARK.text))
-        .child(rect().width(Size::flex(1.)));
+}
 
-    if count > 0 {
-        row = row.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
+#[derive(PartialEq, Clone)]
+struct Item {
+    lead: Lead,
+    text: String,
+    active: bool,
+    count: usize,
+    indent: f32,
+    on_press: EventHandler<Event<PressEventData>>,
+}
+
+impl Component for Item {
+    fn render(&self) -> impl IntoElement {
+        let mut hovering = use_state(|| false);
+        let lead = self.lead.clone();
+        let text = self.text.clone();
+        let active = self.active;
+        let count = self.count;
+        let indent = self.indent;
+        let on_press = self.on_press.clone();
+        let bg = if active {
+            Some(crate::grain::selected())
+        } else if hovering() {
+            Some(crate::grain::hover())
+        } else {
+            None
+        };
+
+        let mut row = rect()
+            .width(Size::fill())
+            .padding((8., 8., 8., 8. + indent))
+            .corner_radius(8.)
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(8.)
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
+            .on_press(on_press);
+        if let Some(c) = bg {
+            row = row.background(c);
+        }
+
+        let mut row = match lead {
+            Lead::Dot(color) => row.child(label().text("●").color(color)),
+            Lead::Icon(bytes) => row.child(icon(bytes, 16., if active { DARK.text } else { DARK.muted })),
+            Lead::Tinted(bytes, color) => row.child(icon(bytes, 16., color)),
+        }
+            .child(label().text(text).color(DARK.text))
+            .child(rect().width(Size::flex(1.)));
+
+        if count > 0 {
+            row = row.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
+        }
+        row
     }
-    row
 }

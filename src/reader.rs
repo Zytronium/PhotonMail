@@ -3,10 +3,10 @@ use freya::prelude::*;
 use crate::{
     account_view::{AccountSettings, AddAccountView},
     data::{ACCOUNTS, MAILS},
-    icons::*,
+    icons::{CHEVRON_RIGHT, *},
     state::{AppState, View},
     theme::DARK,
-    widgets::{action, avatar, divider, icon, icon_button},
+    widgets::{Action, avatar, divider, icon, IconButton},
 };
 
 #[derive(PartialEq)]
@@ -17,11 +17,36 @@ pub struct Reader {
 impl Component for Reader {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
-        let body = match *state.view.read() {
+        let view = *state.view.read();
+        let show_back = view != View::Mail;
+
+        let mut col = rect().spacing(16.).padding(10.);
+
+        // Back button when in a sub-view
+        if show_back {
+            let mut s_back = state;
+            col = col.child(
+                rect()
+                    .width(Size::px(120.))
+                    .padding((6., 12., 6., 12.))
+                    .corner_radius(6.)
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .spacing(6.)
+                    .background(crate::grain::hover())
+                    .on_press(move |_| s_back.view.set(View::Mail))
+                    .child(icon(CHEVRON_RIGHT, 14., DARK.text))
+                    .child(label().text("Back").color(DARK.text).font_size(13.)),
+            );
+        }
+
+        let body = match view {
             View::Mail => rect().child(MailView { state }),
             View::AddAccount => rect().child(AddAccountView),
             View::Settings(index) => rect().child(AccountSettings { index }),
         };
+
+        col = col.child(body.width(Size::fill()).height(Size::fill()));
 
         let fs = *state.focus_state.read();
         let has_focus = fs.keyboard_active && fs.area == crate::keyboard::FocusArea::Reader;
@@ -32,7 +57,7 @@ impl Component for Reader {
             .background(crate::grain::panel())
             .padding(26.)
             .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
-            .child(body.width(Size::fill()).height(Size::fill()))
+            .child(col.width(Size::fill()).height(Size::fill()))
     }
 }
 
@@ -69,24 +94,18 @@ impl Component for MailView {
                     .content(Content::Flex)
                     .cross_align(Alignment::Center)
                     .spacing(8.)
-                    .child(action(REPLY, "Reply", DARK.text).on_press(|_| {}))
-                    .child(action(REPLY_ALL, "Reply all", DARK.text).on_press(|_| {}))
-                    .child(action(FORWARD, "Forward", DARK.text).on_press(|_| {}))
+                    .child(Action { bytes: REPLY, text: "Reply".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
+                    .child(Action { bytes: REPLY_ALL, text: "Reply all".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
+                    .child(Action { bytes: FORWARD, text: "Forward".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
                     .child(rect().width(Size::flex(1.)))
                     .child(
-                        icon_button(ARCHIVE, DARK.muted)
-                            .background(crate::grain::hover())
-                            .on_press(move |_| s_archive.archive(i)),
+                        IconButton { bytes: ARCHIVE, color: DARK.muted, on_press: (move |_| s_archive.archive(i)).into() }
                     )
                     .child(
-                        icon_button(TRASH, DARK.muted)
-                            .background(crate::grain::hover())
-                            .on_press(move |_| s_trash.trash(i)),
+                        IconButton { bytes: TRASH, color: DARK.muted, on_press: (move |_| s_trash.trash(i)).into() }
                     )
                     .child(
-                        icon_button(MAIL, DARK.muted)
-                            .background(crate::grain::hover())
-                            .on_press(move |_| s_unread.toggle_read(i)),
+                        IconButton { bytes: MAIL, color: DARK.muted, on_press: (move |_| s_unread.toggle_read(i)).into() }
                     );
 
                 rect()
