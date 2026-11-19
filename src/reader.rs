@@ -29,7 +29,7 @@ impl Component for Reader {
         rect()
             .width(Size::flex(1.))
             .height(Size::fill())
-            .background(DARK.panel)
+            .background(crate::grain::panel())
             .padding(26.)
             .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
             .child(body.width(Size::fill()).height(Size::fill()))

@@ -48,7 +48,7 @@ impl Component for MessageList {
         rect()
             .width(Size::px(*state.message_list_width.read()))
             .height(Size::fill())
-            .background(DARK.bg)
+            .background(crate::grain::surface())
             .padding(2.)
             .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
             .child(toolbar)
@@ -75,11 +75,11 @@ impl Component for MessageRow {
         let unified = state.account.read().is_none();
         let weight = if unread { FontWeight::BOLD } else { FontWeight::NORMAL };
         let bg = if selected {
-            DARK.selected
+            Some(DARK.selected)
         } else if hovering() {
-            DARK.hover
+            Some(DARK.hover)
         } else {
-            DARK.bg
+            None
         };
 
         let mut s_select = state;
@@ -138,13 +138,17 @@ impl Component for MessageRow {
             .child(name_row)
             .child(email_row);
 
-        rect()
+        let row = rect()
             .width(Size::fill())
             .padding(12.)
             .horizontal()
             .content(Content::Flex)
-            .spacing(10.)
-            .background(bg)
+            .spacing(10.);
+        let row = match bg {
+            Some(c) => row.background(c),
+            None => row,
+        };
+        row
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(move |_| s_select.select(i))

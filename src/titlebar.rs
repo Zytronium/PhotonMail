@@ -18,7 +18,7 @@ impl Component for Titlebar {
             .content(Content::Flex)
             .width(Size::fill())
             .height(Size::px(36.))
-            .background(DARK.titlebar)
+            .background(crate::grain::titlebar())
             .cross_align(Alignment::Center)
             .padding((0., 0., 0., 12.))
             .spacing(8.)
@@ -44,9 +44,9 @@ impl Component for WinButton {
         let action = self.0;
 
         let bg = match (hovering(), action == WinAction::Close) {
-            (true, true) => DARK.close_hover,
-            (true, false) => DARK.hover,
-            _ => DARK.titlebar,
+            (true, true) => Some(DARK.close_hover),
+            (true, false) => Some(DARK.hover),
+            _ => None,
         };
         let icon: &'static [u8] = match action {
             WinAction::Minimize => ICON_MIN,
@@ -55,10 +55,14 @@ impl Component for WinButton {
             WinAction::Close => ICON_CLOSE,
         };
 
-        rect()
+        let button = rect()
             .width(Size::px(46.))
-            .height(Size::px(36.))
-            .background(bg)
+            .height(Size::px(36.));
+        let button = match bg {
+            Some(c) => button.background(c),
+            None => button,
+        };
+        button
             .center()
             .on_pointer_enter(move |_| {
                 hovering.set(true);

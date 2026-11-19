@@ -96,7 +96,7 @@ impl Component for Sidebar {
         rect()
             .width(Size::px(*state.sidebar_width.read()))
             .height(Size::fill())
-            .background(DARK.panel)
+            .background(crate::grain::panel())
             .padding(14.)
             .spacing(8.)
             .content(Content::Flex)
@@ -142,13 +142,15 @@ fn group_header(name: &str, color: Rgb, open: bool, active: bool, count: usize, 
         .content(Content::Flex)
         .cross_align(Alignment::Center)
         .spacing(6.)
-        .background(if active { DARK.selected } else { DARK.panel })
         .child(icon(if open { CHEVRON_DOWN } else { CHEVRON_RIGHT }, 14., DARK.muted))
         .child(label().text("●").color(color))
         .child(label().text(name.to_string()).color(DARK.text).font_weight(FontWeight::BOLD))
         .child(rect().width(Size::flex(1.)));
     if count > 0 {
         r = r.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
+    }
+    if active {
+        r = r.background(DARK.selected);
     }
     r.child(gear)
 }
@@ -161,8 +163,8 @@ fn item(lead: Lead, text: &str, active: bool, count: usize, indent: f32) -> Rect
         .horizontal()
         .cross_align(Alignment::Center)
         .content(Content::Flex)
-        .spacing(8.)
-        .background(if active { DARK.selected } else { DARK.panel });
+        .spacing(8.);
+    let row = if active { row.background(DARK.selected) } else { row };
 
     let mut row = match lead {
         Lead::Dot(color) => row.child(label().text("●").color(color)),

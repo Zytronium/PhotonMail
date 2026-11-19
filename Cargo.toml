@@ -12,7 +12,7 @@ categories = ["gui"]
 rust-version = "1.85"
 
 [dependencies]
-freya = { version = "0.5.2", features = ["borderless", "titlebar"] }
+freya = { version = "0.5.2", features = ["borderless", "titlebar", "engine"] }
 
 [package.metadata.deb]
 maintainer = "Zytronium <zytronium@zytronium.dev>"
