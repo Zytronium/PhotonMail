@@ -54,6 +54,11 @@ fn app() -> impl IntoElement {
                 state.focus_state.set(focus_state);
             }
         })
+        .on_global_pointer_down(move |_| {
+            let mut fs = *state.focus_state.read();
+            fs.keyboard_active = false;
+            state.focus_state.set(fs);
+        })
         .child(Titlebar)
         .child(
             rect()
