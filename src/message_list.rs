@@ -75,9 +75,9 @@ impl Component for MessageRow {
         let unified = state.account.read().is_none();
         let weight = if unread { FontWeight::BOLD } else { FontWeight::NORMAL };
         let bg = if selected {
-            Some(DARK.selected)
+            Some(crate::grain::selected())
         } else if hovering() {
-            Some(DARK.hover)
+            Some(crate::grain::hover())
         } else {
             None
         };

@@ -29,7 +29,7 @@ impl Component for AddAccountView {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(12.)
-                    .background(DARK.hover)
+                    .background(crate::grain::hover())
                     .on_press(|_| {}) // TODO: sign-in form
                     .child(avatar(p, DARK.accent, 32.))
                     .child(label().text(*p).color(DARK.text)),
@@ -70,8 +70,8 @@ impl Component for AccountSettings {
                 rect()
                     .horizontal()
                     .spacing(8.)
-                    .child(button("Sync now", DARK.hover))
-                    .child(button("Edit", DARK.hover))
+                    .child(button("Sync now", crate::grain::hover()))
+                    .child(button("Edit", crate::grain::hover()))
                     .child(button("Remove account", DARK.danger)),
             )
     }
@@ -85,7 +85,7 @@ fn field(name: &str, value: &str, color: (u8, u8, u8)) -> Rect {
         .child(label().text(value.to_string()).color(color))
 }
 
-fn button(text: &str, bg: (u8, u8, u8)) -> Rect {
+fn button(text: &str, bg: impl Into<Fill>) -> Rect {
     rect()
         .padding((8., 14., 8., 14.))
         .corner_radius(6.)

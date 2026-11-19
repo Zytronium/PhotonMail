@@ -150,7 +150,7 @@ fn group_header(name: &str, color: Rgb, open: bool, active: bool, count: usize, 
         r = r.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
     }
     if active {
-        r = r.background(DARK.selected);
+        r = r.background(crate::grain::selected());
     }
     r.child(gear)
 }
@@ -164,7 +164,7 @@ fn item(lead: Lead, text: &str, active: bool, count: usize, indent: f32) -> Rect
         .cross_align(Alignment::Center)
         .content(Content::Flex)
         .spacing(8.);
-    let row = if active { row.background(DARK.selected) } else { row };
+    let row = if active { row.background(crate::grain::selected()) } else { row };
 
     let mut row = match lead {
         Lead::Dot(color) => row.child(label().text("●").color(color)),

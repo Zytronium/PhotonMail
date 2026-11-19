@@ -46,7 +46,7 @@ pub fn chip(text: &str, active: bool) -> Rect {
     rect()
         .padding((4., 10., 4., 10.))
         .corner_radius(12.)
-        .background(if active { DARK.accent } else { DARK.hover })
+        .background(if active { Fill::from(DARK.accent) } else { crate::grain::hover() })
         .child(label().text(text.to_string()).color(DARK.text).font_size(12.))
 }
 
@@ -62,7 +62,7 @@ pub fn action(bytes: &'static [u8], text: &str, color: Rgb) -> Rect {
         .spacing(6.)
         .padding((6., 10., 6., 10.))
         .corner_radius(6.)
-        .background(DARK.hover)
+        .background(crate::grain::hover())
         .child(icon(bytes, 14., color))
         .child(label().text(text.to_string()).color(DARK.text).font_size(13.))
 }

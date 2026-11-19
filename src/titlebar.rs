@@ -44,8 +44,8 @@ impl Component for WinButton {
         let action = self.0;
 
         let bg = match (hovering(), action == WinAction::Close) {
-            (true, true) => Some(DARK.close_hover),
-            (true, false) => Some(DARK.hover),
+            (true, true) => Some(crate::grain::close_hover()),
+            (true, false) => Some(crate::grain::hover()),
             _ => None,
         };
         let icon: &'static [u8] = match action {

@@ -11,7 +11,7 @@ use freya::prelude::*;
 
 use crate::theme::{DARK, Rgb};
 
-/// How strong the grain is, as a fraction of full brightness.
+/// How strong the grain is, as a fraction of full brightness (0.012 ≈ ±3/255).
 /// Raise for more texture, lower for less.
 const GRAIN: f32 = 0.01;
 
@@ -110,6 +110,9 @@ thread_local! {
     static PANEL: Fill = { let (a, b) = gradient(DARK.panel); build(a, b) };
     static SURFACE: Fill = { let (a, b) = gradient(DARK.bg); build(a, b) };
     static TITLEBAR: Fill = { let (a, b) = gradient(DARK.titlebar); build(a, b) };
+    static HOVER: Fill = { let (a, b) = gradient(DARK.hover); build(a, b) };
+    static SELECTED: Fill = { let (a, b) = gradient(DARK.selected); build(a, b) };
+    static CLOSE_HOVER: Fill = { let (a, b) = gradient(DARK.close_hover); build(a, b) };
 }
 
 /// Sidebar and reader.
@@ -125,4 +128,19 @@ pub fn surface() -> Fill {
 /// Window titlebar.
 pub fn titlebar() -> Fill {
     TITLEBAR.with(|f| f.clone())
+}
+
+/// Hovered / secondary-button background.
+pub fn hover() -> Fill {
+    HOVER.with(|f| f.clone())
+}
+
+/// Selected row background.
+pub fn selected() -> Fill {
+    SELECTED.with(|f| f.clone())
+}
+
+/// Window close button while hovered.
+pub fn close_hover() -> Fill {
+    CLOSE_HOVER.with(|f| f.clone())
 }

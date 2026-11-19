@@ -75,17 +75,17 @@ impl Component for MailView {
                     .child(rect().width(Size::flex(1.)))
                     .child(
                         icon_button(ARCHIVE, DARK.muted)
-                            .background(DARK.hover)
+                            .background(crate::grain::hover())
                             .on_press(move |_| s_archive.archive(i)),
                     )
                     .child(
                         icon_button(TRASH, DARK.muted)
-                            .background(DARK.hover)
+                            .background(crate::grain::hover())
                             .on_press(move |_| s_trash.trash(i)),
                     )
                     .child(
                         icon_button(MAIL, DARK.muted)
-                            .background(DARK.hover)
+                            .background(crate::grain::hover())
                             .on_press(move |_| s_unread.toggle_read(i)),
                     );
 
