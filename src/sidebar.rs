@@ -90,13 +90,17 @@ impl Component for Sidebar {
             .child(label().text("●").color(DARK.success).font_size(10.))
             .child(label().text("All accounts synced").color(DARK.muted).font_size(12.));
 
+        let fs = *state.focus_state.read();
+        let has_focus = fs.keyboard_active && fs.area == crate::keyboard::FocusArea::Sidebar;
+
         rect()
             .width(Size::px(*state.sidebar_width.read()))
             .height(Size::fill())
             .background(DARK.panel)
-            .padding(12.)
+            .padding(14.)
             .spacing(8.)
             .content(Content::Flex)
+            .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
             .child(compose)
             .child(
                 ScrollView::new()

@@ -23,11 +23,15 @@ impl Component for Reader {
             View::Settings(index) => rect().child(AccountSettings { index }),
         };
 
+        let fs = *state.focus_state.read();
+        let has_focus = fs.keyboard_active && fs.area == crate::keyboard::FocusArea::Reader;
+
         rect()
             .width(Size::flex(1.))
             .height(Size::fill())
             .background(DARK.panel)
-            .padding(24.)
+            .padding(26.)
+            .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
             .child(body.width(Size::fill()).height(Size::fill()))
     }
 }

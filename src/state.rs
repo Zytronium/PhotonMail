@@ -1,6 +1,7 @@
 use freya::prelude::*;
 
 use crate::data::{Mail, ACCOUNTS, MAILS};
+use crate::keyboard::FocusState;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
@@ -21,6 +22,7 @@ pub struct AppState {
     pub unread_only: State<bool>,
     pub sidebar_width: State<f32>,
     pub message_list_width: State<f32>,
+    pub focus_state: State<FocusState>, // keyboard focus state
 }
 
 pub fn use_app_state() -> AppState {
@@ -35,6 +37,7 @@ pub fn use_app_state() -> AppState {
         unread_only: use_state(|| false),
         sidebar_width: use_state(|| 260.),
         message_list_width: use_state(|| 380.),
+        focus_state: use_state(|| FocusState::default()),
     }
 }
 

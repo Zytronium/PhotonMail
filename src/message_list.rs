@@ -42,10 +42,15 @@ impl Component for MessageList {
             )
         };
 
+        let fs = *state.focus_state.read();
+        let has_focus = fs.keyboard_active && fs.area == crate::keyboard::FocusArea::MessageList;
+
         rect()
             .width(Size::px(*state.message_list_width.read()))
             .height(Size::fill())
             .background(DARK.bg)
+            .padding(2.)
+            .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
             .child(toolbar)
             .child(divider())
             .child(body)

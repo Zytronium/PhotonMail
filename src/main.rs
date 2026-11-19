@@ -9,10 +9,12 @@ mod theme;
 mod titlebar;
 mod icons;
 mod widgets;
+mod keyboard;
 
 use freya::{borderless::BorderlessPlugin, prelude::*};
 
 use crate::{
+    keyboard::handle_key,
     message_list::MessageList, pane_divider::{PaneDivider, DividerTarget}, reader::Reader,
     sidebar::Sidebar, state::use_app_state, theme::DARK, titlebar::Titlebar,
 };
@@ -37,12 +39,20 @@ fn main() {
 }
 
 fn app() -> impl IntoElement {
-    let state = use_app_state();
+    let mut state = use_app_state();
+    let mut focus_state = *state.focus_state.read();
 
     rect()
         .expanded()
         .vertical()
         .background(DARK.bg)
+        .on_global_key_down(move |e: Event<KeyboardEventData>| {
+            let consumed = handle_key(&e, &mut state, &mut focus_state);
+            if consumed {
+                e.stop_propagation();
+                state.focus_state.set(focus_state);
+            }
+        })
         .child(Titlebar)
         .child(
             rect()
