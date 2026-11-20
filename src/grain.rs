@@ -113,6 +113,7 @@ thread_local! {
     static HOVER: Fill = { let (a, b) = gradient(DARK.hover); build(a, b) };
     static SELECTED: Fill = { let (a, b) = gradient(DARK.selected); build(a, b) };
     static CLOSE_HOVER: Fill = { let (a, b) = gradient(DARK.close_hover); build(a, b) };
+    static DIALOG: Fill = { let (a, b) = gradient(DARK.panel); build(a, b) };
 }
 
 /// Sidebar and reader.
@@ -143,4 +144,9 @@ pub fn selected() -> Fill {
 /// Window close button while hovered.
 pub fn close_hover() -> Fill {
     CLOSE_HOVER.with(|f| f.clone())
+}
+
+/// Popup dialog card.
+pub fn dialog() -> Fill {
+    DIALOG.with(|f| f.clone())
 }

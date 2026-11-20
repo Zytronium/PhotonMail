@@ -12,9 +12,15 @@ categories = ["gui"]
 rust-version = "1.85"
 
 [dependencies]
-freya = { version = "0.5.2", features = ["borderless", "titlebar", "engine"] }
+freya = { version = "0.5.2", features = ["borderless", "titlebar", "engine", "html"] }
 freya-components = "0.5.2"
+freya-html = "0.5.2"
+open = "5"
+regex = "1"
 rfd = "0.17.2"
+
+[patch.crates-io]
+freya-html = { path = "freya-html-patch" }
 
 [package.metadata.deb]
 maintainer = "Zytronium <zytronium@zytronium.dev>"

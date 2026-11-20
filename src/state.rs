@@ -2,6 +2,7 @@ use freya::prelude::*;
 
 use crate::data::{Mail, ACCOUNTS, MAILS};
 use crate::keyboard::FocusState;
+use crate::link_prefs::LinkPrefs;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
@@ -24,6 +25,10 @@ pub struct AppState {
     pub sidebar_width: State<f32>,
     pub message_list_width: State<f32>,
     pub focus_state: State<FocusState>, // keyboard focus state
+    pub link_prefs: State<LinkPrefs>,   // "do not show again" link preferences
+    pub link_dialog_url: State<String>,  // URL for the link confirmation dialog
+    pub link_dialog_sender: State<String>, // Sender email for the link confirmation dialog
+    pub link_dialog_open: State<bool>,    // Whether the link confirmation dialog is visible
 }
 
 pub fn use_app_state() -> AppState {
@@ -39,6 +44,10 @@ pub fn use_app_state() -> AppState {
         sidebar_width: use_state(|| 260.),
         message_list_width: use_state(|| 380.),
         focus_state: use_state(|| FocusState::default()),
+        link_prefs: use_state(|| LinkPrefs::load_from_disk()),
+        link_dialog_url: use_state(|| String::new()),
+        link_dialog_sender: use_state(|| String::new()),
+        link_dialog_open: use_state(|| false),
     }
 }
 

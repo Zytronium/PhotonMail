@@ -3,7 +3,8 @@ use freya::prelude::*;
 use crate::{
     account_view::{AccountSettings, AddAccountView},
     compose::ComposePane,
-    data::{ACCOUNTS, MAILS},
+    data::{MailContentType, ACCOUNTS, MAILS},
+    html_viewer::SecureHtmlViewer,
     icons::{CHEVRON_RIGHT, *},
     state::{AppState, View},
     theme::DARK,
@@ -110,12 +111,38 @@ impl Component for MailView {
                         IconButton { bytes: MAIL, color: DARK.muted, on_press: (move |_| s_unread.toggle_read(i)).into() }
                     );
 
+                let body_content = if m.content_type == MailContentType::Html {
+                    rect()
+                        .height(Size::fill())
+                        .width(Size::fill())
+                        .key(i)
+                        .child(SecureHtmlViewer {
+                            html: m.body.to_string(),
+                            sender_email: m.from_email.to_string(),
+                            state,
+                        })
+                } else {
+                    rect()
+                        .height(Size::fill())
+                        .width(Size::fill())
+                        .child(
+                            ScrollView::new()
+                                .height(Size::fill())
+                                .child(
+                                    paragraph()
+                                        .span(m.body)
+                                        .color(DARK.text),
+                                ),
+                        )
+                };
+
                 rect()
+                    .height(Size::fill())
                     .spacing(16.)
                     .child(header)
                     .child(actions)
                     .child(divider())
-                    .child(label().text(m.preview).color(DARK.text))
+                    .child(body_content)
             }
             None => rect()
                 .expanded()
