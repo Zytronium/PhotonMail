@@ -11,9 +11,9 @@ use freya::prelude::*;
 
 use crate::theme::{DARK, Rgb};
 
-/// How strong the grain is, as a fraction of full brightness (0.012 ≈ ±3/255).
+/// How strong the grain is, as a fraction of full brightness.
 /// Raise for more texture, lower for less.
-const GRAIN: f32 = 0.01;
+const GRAIN: f32 = 0.011;
 
 const SKSL: &str = r#"
 uniform float ox;
