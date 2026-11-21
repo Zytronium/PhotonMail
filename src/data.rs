@@ -1,6 +1,6 @@
 use crate::theme::Rgb;
 
-pub struct Account { pub name: &'static str, pub addr: &'static str, pub color: Rgb, pub sync: &'static str }
+pub struct DemoAccount { pub name: &'static str, pub addr: &'static str, pub color: Rgb, pub sync: &'static str }
 
 /// Content type of the mail body.
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -10,7 +10,7 @@ pub enum MailContentType {
     Html,
 }
 
-pub struct Mail {
+pub struct DemoMail {
     pub account: usize,
     pub folder: usize,
     pub unread: bool,
@@ -26,10 +26,10 @@ pub struct Mail {
     pub ts: u32, // for sorting; higher = newer
 }
 
-pub const ACCOUNTS: [Account; 3] = [
-    Account { name: "Personal", addr: "foogle_user@femail.com", color: (109, 74, 255), sync: "2 min ago" },
-    Account { name: "Work", addr: "why.wont@it.work", color: (0, 150, 136), sync: "just now" },
-    Account { name: "Dev", addr: "still@in.dev", color: (240, 140, 40), sync: "1 hour ago" },
+pub const DEMO_ACCOUNTS: [DemoAccount; 3] = [
+    DemoAccount { name: "Personal", addr: "foogle_user@femail.com", color: (109, 74, 255), sync: "2 min ago" },
+    DemoAccount { name: "Work", addr: "why.wont@it.work", color: (0, 150, 136), sync: "just now" },
+    DemoAccount { name: "Dev", addr: "still@in.dev", color: (240, 140, 40), sync: "1 hour ago" },
 ];
 pub const FOLDERS: [&str; 6] = ["Inbox", "Drafts", "Sent", "Archive", "Spam", "Trash"];
 pub const LABELS: [(&str, Rgb); 3] = [
@@ -37,9 +37,9 @@ pub const LABELS: [(&str, Rgb); 3] = [
     ("Travel", (0, 150, 136)),
     ("Important", (220, 70, 90)),
 ];
-pub const MAILS: [Mail; 16] = [
+pub const DEMO_MAILS: [DemoMail; 16] = [
     // 1. Simple plain-text email
-    Mail {
+    DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Alice", from_email: "im.a@femail.com",
         subject: "Weekend plans",
@@ -49,7 +49,7 @@ pub const MAILS: [Mail; 16] = [
         date: "10:42", ts: 90,
     },
     // 2. HTML marketing email with rich formatting
-    Mail {
+    DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Foogle Store", from_email: "deals@fooglestore.com",
         subject: "🔥 Black Friday — Up to 60% Off!",
@@ -112,7 +112,7 @@ pub const MAILS: [Mail; 16] = [
         date: "10:30", ts: 85,
     },
     // 3. CI/CD notification with code blocks
-    Mail {
+    DemoMail {
         account: 1, folder: 0, unread: true,
         from: "Build Bot", from_email: "notifications@buildci.io",
         subject: "CI failed on main",
@@ -174,7 +174,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
         date: "09:15", ts: 80,
     },
     // 4. Receipt / invoice email
-    Mail {
+    DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Bob", from_email: "bob.henderson@femail.com",
         subject: "Invoice #2024-0892",
@@ -240,7 +240,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
         date: "Yesterday", ts: 75,
     },
     // 5. Newsletter with images and columns
-    Mail {
+    DemoMail {
         account: 2, folder: 0, unread: false,
         from: "Dev Weekly", from_email: "newsletter@devweekly.io",
         subject: "Dev Weekly #312: Rust 2024 Edition",
@@ -321,7 +321,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
         date: "Yesterday", ts: 70,
     },
     // 6. Deployment notification
-    Mail {
+    DemoMail {
         account: 2, folder: 0, unread: false,
         from: "Vercel", from_email: "ship@vercel.com",
         subject: "Deployment ready",
@@ -383,7 +383,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
         date: "Yesterday", ts: 65,
     },
     // 7. HR benefits update
-    Mail {
+    DemoMail {
         account: 1, folder: 0, unread: false,
         from: "HR", from_email: "hr@acmecorp.com",
         subject: "Benefits update",
@@ -456,7 +456,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
         date: "Nov 12", ts: 55,
     },
     // 8. GitHub security advisory
-    Mail {
+    DemoMail {
         account: 2, folder: 0, unread: false,
         from: "GitHub Security", from_email: "security-noreply@github.com",
         subject: "⚠️ Security advisory: dependency vulnerability",
@@ -505,7 +505,7 @@ zytronium/api-gateway</pre>
         date: "Nov 8", ts: 45,
     },
     // 9. Plain text reply
-    Mail {
+    DemoMail {
         account: 0, folder: 2, unread: false,
         from: "To: Alice", from_email: "foogle_user@femail.com",
         subject: "Re: Weekend plans",
@@ -515,7 +515,7 @@ zytronium/api-gateway</pre>
         date: "Nov 11", ts: 40,
     },
     // 10. Draft
-    Mail {
+    DemoMail {
         account: 1, folder: 1, unread: false,
         from: "Draft", from_email: "why.wont@it.work",
         subject: "Q4 report",
@@ -525,7 +525,7 @@ zytronium/api-gateway</pre>
         date: "Nov 10", ts: 35,
     },
     // 11. HTML event invitation
-    Mail {
+    DemoMail {
         account: 1, folder: 0, unread: false,
         from: "Events", from_email: "events@acmecorp.com",
         subject: "🎉 Company All-Hands — Dec 5",
@@ -617,7 +617,7 @@ zytronium/api-gateway</pre>
         date: "Nov 9", ts: 30,
     },
     // 12. HTML password reset
-    Mail {
+    DemoMail {
         account: 0, folder: 0, unread: false,
         from: "Foogle Security", from_email: "no-reply@security.foogle.com",
         subject: "Password reset requested",
@@ -663,7 +663,7 @@ zytronium/api-gateway</pre>
         date: "Nov 7", ts: 25,
     },
     // 13. Plain text archived message
-    Mail {
+    DemoMail {
         account: 2, folder: 3, unread: false,
         from: "GitHub", from_email: "security-noreply@github.com",
         subject: "Security advisory (archived)",
@@ -673,7 +673,7 @@ zytronium/api-gateway</pre>
         date: "Nov 8", ts: 20,
     },
     // 14. HTML table / data report
-    Mail {
+    DemoMail {
         account: 1, folder: 0, unread: false,
         from: "Analytics", from_email: "reports@analytics.io",
         subject: "📊 Weekly Traffic Report",
@@ -766,7 +766,7 @@ zytronium/api-gateway</pre>
         date: "Nov 6", ts: 15,
     },
     // 15. Stellicast — email confirmation (dark theme)
-    Mail {
+    DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Stellicast", from_email: "noreply@stellicast.com",
         subject: "Welcome to Stellicast",
@@ -850,7 +850,7 @@ zytronium/api-gateway</pre>
         date: "Nov 5", ts: 10,
     },
     // 16. Luminous — email confirmation (dark navy theme with teal accents)
-    Mail {
+    DemoMail {
         account: 2, folder: 0, unread: true,
         from: "Luminous", from_email: "noreply@luminous-chat.app",
         subject: "Confirm your Luminous account",

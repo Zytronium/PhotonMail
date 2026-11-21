@@ -1,8 +1,9 @@
 use freya::prelude::*;
 
 use crate::{
-    data::{ACCOUNTS, FOLDERS, LABELS},
+    data::{FOLDERS, LABELS},
     icons::*,
+    model::Summary,
     state::{AppState, View},
     theme::{Rgb, DARK},
     widgets::{divider, icon, IconButton},
@@ -20,7 +21,8 @@ impl Component for Sidebar {
         let fol = *state.folder.read();
         let view = *state.view.read();
         let in_mail = view == View::Mail;
-        let expanded = state.expanded.read().clone();
+        let accounts = state.store.read().accounts.clone();
+        let demo = state.store.read().demo;
 
         let mut rows: Vec<Rect> = Vec::new();
 
@@ -38,8 +40,8 @@ impl Component for Sidebar {
         // Accounts section header
         rows.push(rect().child(SectionHeader { title: "ACCOUNTS", show_add: true, state: state.clone() }));
 
-        for (i, a) in ACCOUNTS.iter().enumerate() {
-            let open = expanded[i];
+        for (i, a) in accounts.iter().enumerate() {
+            let open = state.is_expanded(i);
             let mut s_toggle = state;
             let mut s_gear = state;
             let gear_on_press: EventHandler<Event<PressEventData>> = (move |e: Event<PressEventData>| {
@@ -47,7 +49,7 @@ impl Component for Sidebar {
                 s_gear.view.set(View::Settings(i));
             }).into();
             rows.push(rect().child(GroupHeader {
-                name: a.name.to_string(),
+                name: a.name.clone(),
                 color: a.color,
                 open,
                 active: view == View::Settings(i),
@@ -71,17 +73,19 @@ impl Component for Sidebar {
             }
         }
 
-        // Labels (static for now)
-        rows.push(rect().child(SectionHeader { title: "LABELS", show_add: false, state: state.clone() }));
-        for (name, color) in LABELS.iter() {
-            rows.push(rect().child(Item {
-                lead: Lead::Tinted(TAG, *color),
-                text: name.to_string(),
-                active: false,
-                count: 0,
-                indent: 0.,
-                on_press: EventHandler::new(|_| {}),
-            }));
+        // Labels are placeholder data for now, so they only appear in --demo.
+        if demo {
+            rows.push(rect().child(SectionHeader { title: "LABELS", show_add: false, state: state.clone() }));
+            for (name, color) in LABELS.iter() {
+                rows.push(rect().child(Item {
+                    lead: Lead::Tinted(TAG, *color),
+                    text: name.to_string(),
+                    active: false,
+                    count: 0,
+                    indent: 0.,
+                    on_press: EventHandler::new(|_| {}),
+                }));
+            }
         }
 
         let mut compose_hover = use_state(|| false);
@@ -104,13 +108,19 @@ impl Component for Sidebar {
             .child(icon(PENCIL, 16., DARK.text))
             .child(label().text("New message").color(DARK.text).font_weight(FontWeight::BOLD));
 
+        let (dot, footer_text) = match state.store.read().summary() {
+            Summary::NoAccounts => (DARK.muted, "No accounts yet".to_string()),
+            Summary::Error(msg) => (DARK.danger, msg),
+            Summary::Syncing => (DARK.accent, "Syncing…".to_string()),
+            Summary::Synced => (DARK.success, "All accounts synced".to_string()),
+        };
         let footer = rect()
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(8.)
             .padding((8., 4., 0., 4.))
-            .child(label().text("●").color(DARK.success).font_size(10.))
-            .child(label().text("All accounts synced").color(DARK.muted).font_size(12.));
+            .child(label().text("●").color(dot).font_size(10.))
+            .child(label().text(footer_text).color(DARK.muted).font_size(12.));
 
         let fs = *state.focus_state.read();
         let has_focus = fs.keyboard_active && fs.area == crate::keyboard::FocusArea::Sidebar;

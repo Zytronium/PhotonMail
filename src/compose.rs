@@ -12,7 +12,7 @@ use freya::text_edit::{
 use freya_components::input::InputColorsThemePartial;
 
 use crate::{
-    icons::{CHEVRON_RIGHT, SEND},
+    icons::{CHEVRON_LEFT, SEND},
     state::AppState,
     theme::DARK,
     widgets::{divider, icon, IconButton},
@@ -210,7 +210,7 @@ impl Component for ComposePane {
             .child(label().text("New message").font_size(14.).font_weight(FontWeight::BOLD).color(DARK.text))
             .child(rect().width(Size::flex(1.)))
             .child(IconButton {
-                bytes: CHEVRON_RIGHT,
+                bytes: CHEVRON_LEFT,
                 color: DARK.muted,
                 on_press: close_on_press,
             })

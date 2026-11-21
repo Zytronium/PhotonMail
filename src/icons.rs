@@ -20,6 +20,7 @@ pub const REPLY: &[u8] = icon!(r#"<polyline points="9 17 4 12 9 7"/><path d="M20
 pub const REPLY_ALL: &[u8] = icon!(r#"<polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/>"#);
 pub const FORWARD: &[u8] = icon!(r#"<polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/>"#);
 pub const CHEVRON_RIGHT: &[u8] = icon!(r#"<path d="m9 18 6-6-6-6"/>"#);
+pub const CHEVRON_LEFT: &[u8] = icon!(r#"<path d="m15 18-6-6 6-6"/>"#);
 pub const CHEVRON_DOWN: &[u8] = icon!(r#"<path d="m6 9 6 6 6-6"/>"#);
 pub const PLUS: &[u8] = icon!(r#"<path d="M5 12h14M12 5v14"/>"#);
 pub const SETTINGS: &[u8] = icon!(r#"<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>"#);

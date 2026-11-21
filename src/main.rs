@@ -5,7 +5,9 @@ mod grain;
 mod html_viewer;
 mod keyboard;
 mod link_prefs;
+mod mail;
 mod message_list;
+mod model;
 mod pane_divider;
 mod reader;
 mod sidebar;
@@ -25,6 +27,14 @@ use crate::{
 };
 
 pub const APP_NAME: &str = "Photon Mail";
+
+/// `photon-mail --demo` shows the built-in placeholder accounts and emails instead of
+/// connecting to real mail servers.
+pub fn is_demo() -> bool {
+    static DEMO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DEMO.get_or_init(|| std::env::args().skip(1).any(|a| a == "--demo"))
+}
+
 const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
 
 fn main() {

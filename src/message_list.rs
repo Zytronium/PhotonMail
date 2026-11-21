@@ -2,7 +2,6 @@ use freya::prelude::*;
 use freya_components::input::InputColorsThemePartial;
 
 use crate::{
-    data::{ACCOUNTS, MAILS},
     icons::*,
     state::AppState,
     theme::DARK,
@@ -104,8 +103,14 @@ impl Component for MessageRow {
         let mut hovering = use_state(|| false);
         let state = self.state;
         let i = self.i;
-        let m = &MAILS[i];
-        let account = &ACCOUNTS[m.account];
+        let (m, account) = {
+            let store = state.store.read();
+            let Some(m) = store.mails.get(i).cloned() else {
+                return rect();
+            };
+            let account = store.accounts[m.account].clone();
+            (m, account)
+        };
         let selected = *state.selected.read() == i;
         let unread = state.is_unread(i);
         let unified = state.account.read().is_none();
@@ -144,7 +149,7 @@ impl Component for MessageRow {
             rect()
                 .height(Size::px(28.))
                 .center()
-                .child(label().text(m.date).color(DARK.muted).font_size(12.))
+                .child(label().text(m.date.clone()).color(DARK.muted).font_size(12.))
         };
 
         let mut name_row = rect()
@@ -153,9 +158,9 @@ impl Component for MessageRow {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .child(label().text(m.from).color(DARK.text).font_size(15.).font_weight(weight));
+            .child(label().text(m.from.clone()).color(DARK.text).font_size(15.).font_weight(weight));
         if unified {
-            name_row = name_row.child(label().text(account.name).color(account.color).font_size(11.));
+            name_row = name_row.child(label().text(account.name.clone()).color(account.color).font_size(11.));
         }
         let name_row = name_row.child(rect().width(Size::flex(1.))).child(trailing);
 
@@ -165,7 +170,7 @@ impl Component for MessageRow {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .child(label().text(m.from_email).color(DARK.muted).font_size(12.))
+            .child(label().text(m.from_email.clone()).color(DARK.muted).font_size(12.))
             .child(rect().width(Size::flex(1.)));
 
         let top = rect()
@@ -188,14 +193,14 @@ impl Component for MessageRow {
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(move |_| s_select.select(i))
-            .child(avatar(m.from, account.color, 36.))
+            .child(avatar(&m.from, account.color, 36.))
             .child(
                 rect()
                     .width(Size::flex(1.))
                     .spacing(2.)
                     .child(top)
-                    .child(label().text(m.subject).color(DARK.text).font_weight(weight))
-                    .child(label().text(m.preview).color(DARK.muted).font_size(12.)),
+                    .child(label().text(m.subject.clone()).color(DARK.text).font_weight(weight))
+                    .child(label().text(m.preview.clone()).color(DARK.muted).font_size(12.)),
             )
     }
 }

@@ -3,9 +3,10 @@ use freya::prelude::*;
 use crate::{
     account_view::{AccountSettings, AddAccountView},
     compose::ComposePane,
-    data::{MailContentType, ACCOUNTS, MAILS},
+    data::MailContentType,
     html_viewer::SecureHtmlViewer,
-    icons::{CHEVRON_RIGHT, *},
+    icons::{CHEVRON_LEFT, *},
+    model::BodyState,
     state::{AppState, View},
     theme::DARK,
     widgets::{Action, avatar, divider, icon, IconButton},
@@ -37,7 +38,7 @@ impl Component for Reader {
                     .spacing(6.)
                     .background(crate::grain::hover())
                     .on_press(move |_| s_back.view.set(View::Mail))
-                    .child(icon(CHEVRON_RIGHT, 14., DARK.text))
+                    .child(icon(CHEVRON_LEFT, 14., DARK.text))
                     .child(label().text("Back").color(DARK.text).font_size(13.)),
             );
         }
@@ -45,8 +46,8 @@ impl Component for Reader {
         let body = match view {
             View::Mail => rect().child(MailView { state }),
             View::Compose => rect().child(ComposePane { state }),
-            View::AddAccount => rect().child(AddAccountView),
-            View::Settings(index) => rect().child(AccountSettings { index }),
+            View::AddAccount => rect().child(AddAccountView { state }),
+            View::Settings(index) => rect().child(AccountSettings { state, index }),
         };
 
         col = col.child(body.width(Size::fill()).height(Size::fill()));
@@ -72,10 +73,19 @@ struct MailView {
 impl Component for MailView {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
+        let empty_text = if state.store.read().accounts.is_empty() {
+            "Add an account to get started"
+        } else {
+            "Select a message to read"
+        };
         match state.open() {
             Some(i) => {
-                let m = &MAILS[i];
-                let account = &ACCOUNTS[m.account];
+                let (m, account) = {
+                    let store = state.store.read();
+                    let m = store.mails[i].clone();
+                    let account = store.accounts[m.account].clone();
+                    (m, account)
+                };
                 let mut s_archive = state;
                 let mut s_trash = state;
                 let mut s_unread = state;
@@ -83,13 +93,13 @@ impl Component for MailView {
                 let header = rect()
                     .horizontal()
                     .spacing(12.)
-                    .child(avatar(m.from, account.color, 44.))
+                    .child(avatar(&m.from, account.color, 44.))
                     .child(
                         rect()
                             .spacing(2.)
-                            .child(label().text(m.subject).font_size(24.).font_weight(FontWeight::BOLD).color(DARK.text))
+                            .child(label().text(m.subject.clone()).font_size(24.).font_weight(FontWeight::BOLD).color(DARK.text))
                             .child(label().text(format!("{} → {}", m.from, account.addr)).color(DARK.muted))
-                            .child(label().text(m.date).color(DARK.muted).font_size(12.)),
+                            .child(label().text(m.date.clone()).color(DARK.muted).font_size(12.)),
                     );
 
                 let actions = rect()
@@ -111,29 +121,30 @@ impl Component for MailView {
                         IconButton { bytes: MAIL, color: DARK.muted, on_press: (move |_| s_unread.toggle_read(i)).into() }
                     );
 
-                let body_content = if m.content_type == MailContentType::Html {
-                    rect()
+                let body_content = match &m.body {
+                    BodyState::Loaded { content_type: MailContentType::Html, text } => rect()
                         .height(Size::fill())
                         .width(Size::fill())
                         .key(i)
                         .child(SecureHtmlViewer {
-                            html: m.body.to_string(),
-                            sender_email: m.from_email.to_string(),
+                            html: text.to_string(),
+                            sender_email: m.from_email.clone(),
                             state,
-                        })
-                } else {
-                    rect()
+                        }),
+                    BodyState::Loaded { text, .. } => rect()
                         .height(Size::fill())
                         .width(Size::fill())
                         .child(
                             ScrollView::new()
                                 .height(Size::fill())
-                                .child(
-                                    paragraph()
-                                        .span(m.body)
-                                        .color(DARK.text),
-                                ),
-                        )
+                                .child(paragraph().span(text.to_string()).color(DARK.text)),
+                        ),
+                    BodyState::Failed(err) => rect()
+                        .width(Size::fill())
+                        .child(label().text(format!("Couldn't load this message: {err}")).color(DARK.danger)),
+                    BodyState::NotLoaded | BodyState::Loading => rect()
+                        .width(Size::fill())
+                        .child(label().text("Loading message…").color(DARK.muted)),
                 };
 
                 rect()
@@ -149,7 +160,7 @@ impl Component for MailView {
                 .center()
                 .spacing(12.)
                 .child(icon(INBOX, 48., DARK.muted))
-                .child(label().text("Select a message to read").color(DARK.muted)),
+                .child(label().text(empty_text).color(DARK.muted)),
         }
     }
 }
