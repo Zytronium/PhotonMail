@@ -56,6 +56,11 @@ fn main() {
 fn app() -> impl IntoElement {
     let mut state = use_app_state();
 
+    // Subscribe to search_query so the app re-renders when it changes, allowing MessageList
+    // to re-filter messages. Without this, the parent never re-renders on search query changes
+    // because AppState contains State<T> fields which compare equal by Arc pointer identity.
+    let _ = state.search_query.read();
+
     // Link confirmation dialog — uses Freya's Popup component for proper z-order and centering.
     let show_link_dialog = *state.link_dialog_open.read();
     let close_link_dialog = {

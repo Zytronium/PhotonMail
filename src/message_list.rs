@@ -8,17 +8,30 @@ use crate::{
     widgets::{avatar, Chip, divider, icon, IconButton},
 };
 
-#[derive(PartialEq)]
 pub struct MessageList {
     pub state: AppState,
 }
 
+impl PartialEq for MessageList {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
+}
+
 impl Component for MessageList {
     fn render(&self) -> impl IntoElement {
-        let state = self.state;
+        let mut state = self.state;
         let unread_only = *state.unread_only.read();
         let mut s_filter = state;
         let search_query = state.search_query.clone();
+
+        // Track whether the search input has focus so the keyboard handler can skip navigation
+        let search_a11y_id = use_a11y();
+        let search_focus = use_focus(search_a11y_id);
+        {
+            let mut fs = state.focus_state.write();
+            fs.search_input_focused = search_focus.read().is_focused();
+        }
 
         // Filter visible messages by search query
         let query_text = search_query.peek().clone();
@@ -36,6 +49,7 @@ impl Component for MessageList {
             .child(icon(SEARCH, 14., DARK.muted))
             .child(
                 Input::new(search_query.clone())
+                    .a11y_id(search_a11y_id)
                     .placeholder("Search messages…")
                     .flat()
                     .compact()
@@ -99,10 +113,15 @@ impl Component for MessageList {
     }
 }
 
-#[derive(PartialEq)]
 struct MessageRow {
     state: AppState,
     i: usize,
+}
+
+impl PartialEq for MessageRow {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
 }
 
 impl Component for MessageRow {

@@ -21,6 +21,7 @@ impl Default for FocusArea {
 pub struct FocusState {
     pub area: FocusArea,
     pub keyboard_active: bool,
+    pub search_input_focused: bool,
 }
 
 /// Result of a focus-area-specific key handler.
@@ -38,6 +39,11 @@ enum HandleResult {
 ///
 /// Returns `true` when the key was consumed (the caller should stop propagation).
 pub fn handle_key(event: &Event<KeyboardEventData>, state: &mut AppState, focus: &mut FocusState) -> bool {
+    // If the search input is focused, don't handle keyboard navigation
+    if focus.search_input_focused {
+        return false;
+    }
+
     let key = &event.key;
     let modifiers = &event.modifiers;
 
