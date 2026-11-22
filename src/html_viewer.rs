@@ -81,25 +81,33 @@ pub fn sanitize_html(html: &str) -> HtmlAnalysis {
     analysis.tracking_pixels_blocked += count;
     result = RE_TRACKING_FRAME.replace_all(&result, "").to_string();
 
-    // 6. Inject CSS to show pointer cursor on links
-    let style = "<style>a{cursor:pointer!important}</style>";
+    // 6. Inject CSS for dark mode rendering and pointer cursor on links.
+    //    Uses the standard email-client approach: invert all colors via CSS filter
+    //    so dark text becomes readable on our dark background, then re-invert images
+    //    so photographs don't look like negatives. This is how Gmail iOS and many
+    //    other clients handle dark mode for emails without explicit dark-mode styles.
+    let style = r#"<style>
+html{filter:invert(1) hue-rotate(180deg)!important}
+img,video,iframe{filter:invert(1) hue-rotate(180deg)!important}
+a{cursor:pointer!important}
+</style>"#.to_string();
     if let Some(body_start) = result.find("<body") {
         let insert_pos = if let Some(gt) = result[body_start..].find('>') {
             body_start + gt + 1
         } else {
             body_start + 6
         };
-        result.insert_str(insert_pos, style);
+        result.insert_str(insert_pos, &style);
     } else if let Some(html_start) = result.find("<html") {
         let insert_pos = if let Some(gt) = result[html_start..].find('>') {
             html_start + gt + 1
         } else {
             html_start + 6
         };
-        result.insert_str(insert_pos, style);
+        result.insert_str(insert_pos, &style);
     } else {
         // No <body> or <html> tag — prepend the style
-        result.insert_str(0, style);
+        result.insert_str(0, &style);
     }
 
     analysis.sanitized = result;
