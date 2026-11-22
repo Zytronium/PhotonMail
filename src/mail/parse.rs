@@ -69,6 +69,9 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
                     })
                     .unwrap_or_else(|| "application/octet-stream".to_string()),
                 data,
+                content_id: part
+                    .content_id()
+                    .map(|s| s.trim().trim_start_matches('<').trim_end_matches('>').to_string()),
             }
         })
         .collect();

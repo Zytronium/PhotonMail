@@ -68,6 +68,8 @@ pub struct AttachmentInfo {
     pub content_type: String,
     /// Decoded binary data of the attachment, if inlined with the body.
     pub data: Option<Vec<u8>>,
+    /// Content-ID (without angle brackets) for inline parts referenced as `cid:` from the HTML.
+    pub content_id: Option<String>,
 }
 
 #[derive(Clone)]

@@ -340,4 +340,20 @@ impl AppState {
     pub fn update_draft(&self, account: usize, uid: u32, raw: String) {
         self.send(account, WorkerCmd::UpdateDraft { uid, raw });
     }
+
+    /// Move a draft to a different account: delete from old account, append to new account.
+    pub fn move_draft_to_account(&self, old_account: usize, uid: u32, new_account: usize, raw: String) {
+        // Delete the old draft
+        self.send(old_account, WorkerCmd::UpdateDraft { uid, raw: String::new() });
+        // Append the new draft to the new account
+        self.send(new_account, WorkerCmd::AppendDraft { raw });
+    }
+
+    /// Update a draft move: delete from old account, append to new account.
+    /// (Called from compose when switching accounts on an existing draft before save.)
+    pub fn update_draft_move(&self, old_account: usize, uid: u32, _new_account: usize) {
+        // We just need to signal that the draft should be moved.
+        // The actual move happens when the draft is saved.
+        self.send(old_account, WorkerCmd::UpdateDraft { uid, raw: String::new() });
+    }
 }

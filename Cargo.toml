@@ -12,6 +12,7 @@ categories = ["gui"]
 rust-version = "1.85"
 
 [dependencies]
+base64 = "0.22"
 freya = { version = "0.5.2", features = ["borderless", "titlebar", "engine", "html"] }
 freya-components = "0.5.2"
 freya-html = "0.5.2"
