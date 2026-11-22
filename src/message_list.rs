@@ -16,10 +16,13 @@ pub struct MessageList {
 impl Component for MessageList {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
-        let visible = state.visible();
         let unread_only = *state.unread_only.read();
         let mut s_filter = state;
-        let search_query = use_state(|| String::new());
+        let search_query = state.search_query.clone();
+
+        // Filter visible messages by search query
+        let query_text = search_query.peek().clone();
+        let visible = state.search_visible(&query_text);
 
         // Search bar
         let search_bar = rect()
@@ -68,7 +71,11 @@ impl Component for MessageList {
             );
 
         let body = if visible.is_empty() {
-            rect().padding(24.).child(label().text("No messages").color(DARK.muted))
+            if query_text.trim().is_empty() {
+                rect().padding(24.).child(label().text("No messages").color(DARK.muted))
+            } else {
+                rect().padding(24.).child(label().text("No matching messages").color(DARK.muted))
+            }
         } else {
             rect().child(
                 ScrollView::new()

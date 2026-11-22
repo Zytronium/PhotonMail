@@ -15,6 +15,7 @@ pub enum View {
     Compose,
     AddAccount,
     Settings(usize),
+    EditAccount(usize),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -34,6 +35,7 @@ pub struct AppState {
     pub link_dialog_url: State<String>,  // URL for the link confirmation dialog
     pub link_dialog_sender: State<String>, // Sender email for the link confirmation dialog
     pub link_dialog_open: State<bool>,    // Whether the link confirmation dialog is visible
+    pub search_query: State<String>,     // Search query for filtering messages
 }
 
 pub fn use_app_state() -> AppState {
@@ -69,6 +71,7 @@ pub fn use_app_state() -> AppState {
         link_dialog_url: use_state(|| String::new()),
         link_dialog_sender: use_state(|| String::new()),
         link_dialog_open: use_state(|| false),
+        search_query: use_state(|| String::new()),
     };
 
     // Drain worker events into the store, once, for the life of the app.
@@ -119,10 +122,44 @@ impl AppState {
         v
     }
 
-    /// The selected mail, if it's in the current view.
+    /// Filter visible mails by a search query, checking subject, sender, recipient,
+    /// preview text, and loaded body content.
+    pub fn search_visible(&self, query: &str) -> Vec<usize> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return self.visible();
+        }
+
+        let visible = self.visible();
+        let store = self.store.read();
+        visible
+            .into_iter()
+            .filter(|&i| {
+                let m = &store.mails[i];
+                let subject_match = m.subject.to_lowercase().contains(&query);
+                let from_match = m.from.to_lowercase().contains(&query)
+                    || m.from_email.to_lowercase().contains(&query);
+                let preview_match = m.preview.to_lowercase().contains(&query);
+                let body_match = match &m.body {
+                    BodyState::Loaded { text, .. } => text.to_lowercase().contains(&query),
+                    _ => false,
+                };
+                subject_match || from_match || preview_match || body_match
+            })
+            .collect()
+    }
+
+    /// Return the currently visible mails, filtered by the active search query if any.
+    /// Use this instead of `visible()` when the search bar might have text.
+    pub fn filtered_visible(&self) -> Vec<usize> {
+        let query = self.search_query.peek();
+        self.search_visible(&query)
+    }
+
+    /// The selected mail, if it's in the current view (respects search filter).
     pub fn open(&self) -> Option<usize> {
         let sel = *self.selected.read();
-        self.visible().contains(&sel).then_some(sel)
+        self.filtered_visible().contains(&sel).then_some(sel)
     }
 
     pub fn is_unread(&self, i: usize) -> bool {

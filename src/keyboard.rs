@@ -117,7 +117,7 @@ fn handle_message_list(
     state: &mut AppState,
     focus: &mut FocusArea,
 ) -> HandleResult {
-    let visible = state.visible();
+    let visible = state.filtered_visible();
     if visible.is_empty() {
         return HandleResult::Ignored;
     }
@@ -281,7 +281,7 @@ fn handle_reader(
         if !modifiers.shift() {
             match ch.as_str() {
                 "j" => {
-                    let visible = state.visible();
+                    let visible = state.filtered_visible();
                     let current = *state.selected.read();
                     if let Some(idx) = visible.iter().position(|&v| v == current) {
                         if idx + 1 < visible.len() {
@@ -291,7 +291,7 @@ fn handle_reader(
                     return HandleResult::Consumed;
                 }
                 "k" => {
-                    let visible = state.visible();
+                    let visible = state.filtered_visible();
                     let current = *state.selected.read();
                     if let Some(idx) = visible.iter().position(|&v| v == current) {
                         if idx > 0 {
@@ -342,7 +342,7 @@ fn handle_reader(
             HandleResult::Consumed
         }
         Key::Named(NamedKey::ArrowDown) => {
-            let visible = state.visible();
+            let visible = state.filtered_visible();
             let current = *state.selected.read();
             if let Some(idx) = visible.iter().position(|&v| v == current) {
                 if idx + 1 < visible.len() {
@@ -352,7 +352,7 @@ fn handle_reader(
             HandleResult::Consumed
         }
         Key::Named(NamedKey::ArrowUp) => {
-            let visible = state.visible();
+            let visible = state.filtered_visible();
             let current = *state.selected.read();
             if let Some(idx) = visible.iter().position(|&v| v == current) {
                 if idx > 0 {

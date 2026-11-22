@@ -1,7 +1,7 @@
 use freya::prelude::*;
 
 use crate::{
-    account_view::{AccountSettings, AddAccountView},
+    account_view::{AccountSettings, AddAccountView, EditAccountView},
     compose::ComposePane,
     data::MailContentType,
     html_viewer::SecureHtmlViewer,
@@ -21,7 +21,7 @@ impl Component for Reader {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
         let view = *state.view.read();
-        let show_back = matches!(view, View::AddAccount | View::Settings(_));
+        let show_back = matches!(view, View::AddAccount | View::Settings(_) | View::EditAccount(_));
 
         let mut col = rect().spacing(16.).padding(10.);
 
@@ -48,6 +48,7 @@ impl Component for Reader {
             View::Compose => rect().child(ComposePane { state }),
             View::AddAccount => rect().child(AddAccountView { state }),
             View::Settings(index) => rect().child(AccountSettings { state, index }),
+            View::EditAccount(index) => rect().child(EditAccountView { state, index }),
         };
 
         col = col.child(body.width(Size::fill()).height(Size::fill()));
