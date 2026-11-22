@@ -96,6 +96,8 @@ pub enum Event {
     Notice { text: String },
     AccountAdded { cfg: AccountConfig },
     AddAccountFailed { error: String },
+    /// A draft was saved on the server; `uid` is the (possibly new) UID of the draft.
+    DraftSaved { account: usize, uid: u32 },
 }
 
 /// UI → one account's worker.
@@ -109,6 +111,10 @@ pub enum WorkerCmd {
     FetchBody { folder: usize, uid: u32 },
     SetSeen { folder: usize, uid: u32, seen: bool },
     MoveTo { folder: usize, uid: u32, to: usize },
+    /// Append a new draft message to the Drafts folder on the server.
+    AppendDraft { raw: String },
+    /// Update an existing draft: delete the old one (by UID) and append the new content.
+    UpdateDraft { uid: u32, raw: String },
 }
 
 /// UI → manager.

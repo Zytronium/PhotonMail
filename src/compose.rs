@@ -12,7 +12,7 @@ use freya::text_edit::{
 use freya_components::input::InputColorsThemePartial;
 
 use crate::{
-    icons::{CHEVRON_LEFT, SEND},
+    icons::{CHEVRON_LEFT, DISK, SEND},
     state::AppState,
     theme::DARK,
     widgets::{divider, icon, IconButton},
@@ -59,35 +59,140 @@ fn is_placeholder(c: char) -> bool {
     ('\u{E000}'..='\u{F8FF}').contains(&c)
 }
 
+/// A draft body converted for the editor: text plus per-character formatting.
+#[derive(Clone, Default)]
+struct DraftBody {
+    text: String,
+    formats: Vec<FormatFlags>,
+    links: Vec<String>,
+}
+
 type LineMouse = (usize, ParagraphHolder, Event<MouseEventData>);
 
 #[derive(PartialEq)]
 pub struct ComposePane {
     pub state: AppState,
+    /// The key the parent mounted this pane with (used to pin it across draft saves).
+    pub compose_key: String,
 }
 
 impl Component for ComposePane {
     fn render(&self) -> impl IntoElement {
         let state = self.state.clone();
 
-        let to = use_state(|| String::new());
-        let cc = use_state(|| String::new());
-        let bcc = use_state(|| String::new());
-        let subject = use_state(|| String::new());
+        // Pre-fill from draft if editing an existing draft.
+        // We read the draft info from the store using (account, folder, uid).
+        // Since the UID may change after saving (old draft deleted, new one appended),
+        // we also check the tombstoned entries in case the UID hasn't been updated yet.
+        let draft_info = *state.draft_mail.read();
+        let (draft_to, draft_cc, draft_bcc, draft_subject, draft_body, _draft_uid, needs_fetch) = {
+            if let Some((account, folder, uid)) = draft_info {
+                let store = state.store.read();
+                let mail_opt = store.mails.iter().enumerate().find(|(_, m)| {
+                    m.account == account && m.folder == folder && m.uid == uid && !m.removed
+                });
+                if let Some((_, m)) = mail_opt {
+                    let body_text = match &m.body {
+                        crate::model::BodyState::Loaded { text, content_type, .. } => {
+                            // HTML drafts are converted back into editor text + formatting
+                            // (bold / italic / underline / links) instead of being stripped.
+                            if *content_type == crate::data::MailContentType::Html {
+                                html_to_editor(text)
+                            } else {
+                                let t = text.to_string();
+                                DraftBody {
+                                    formats: t.chars().map(|_| FormatFlags::default()).collect(),
+                                    text: t,
+                                    links: Vec::new(),
+                                }
+                            }
+                        }
+                        _ => DraftBody::default(),
+                    };
+                    let body_loaded = matches!(m.body, crate::model::BodyState::Loaded { .. });
+                    let needs_fetch = !body_loaded && uid != 0;
+                    let fetch_info = if needs_fetch {
+                        Some((account, folder, uid))
+                    } else {
+                        None
+                    };
+                    (
+                        m.to_email.clone(),
+                        String::new(),
+                        String::new(),
+                        m.subject.clone(),
+                        body_text,
+                        uid,
+                        fetch_info,
+                    )
+                } else {
+                    // Mail not found in store (e.g. UID changed after save, or not synced yet).
+                    // Try to find a tombstoned entry with the same UID to get the header info.
+                    let tombstoned_opt = store.mails.iter().enumerate().find(|(_, m)| {
+                        m.account == account && m.folder == folder && m.uid == uid && m.removed
+                    });
+                    if let Some((_, m)) = tombstoned_opt {
+                        (
+                            m.to_email.clone(),
+                            String::new(),
+                            String::new(),
+                            m.subject.clone(),
+                            DraftBody::default(),
+                            uid,
+                            None,
+                        )
+                    } else {
+                        (
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            DraftBody::default(),
+                            uid,
+                            if uid != 0 { Some((account, folder, uid)) } else { None },
+                        )
+                    }
+                }
+            } else {
+                (String::new(), String::new(), String::new(), String::new(), DraftBody::default(), 0u32, None)
+            }
+        };
+
+        // Trigger body fetch only once, using a use_state guard to avoid re-sending.
+        let mut fetch_guard = use_state(|| None::<(usize, usize, u32)>);
+        if let Some((account, folder, uid)) = needs_fetch {
+            let already_fetched = fetch_guard.read().is_some_and(|(a, f, u)| a == account && f == folder && u == uid);
+            if !already_fetched {
+                fetch_guard.set(Some((account, folder, uid)));
+                state.send(account, crate::mail::WorkerCmd::FetchBody { folder, uid });
+            }
+        } else {
+            fetch_guard.set(None);
+        }
 
         let show_cc = use_state(|| false);
         let show_bcc = use_state(|| false);
 
         // One editor for the whole message. Images are placeholder characters in its text.
-        let mut editable = use_editable(|| String::new(), EditableConfig::new);
+        let mut editable = use_editable(|| draft_body.text.clone(), EditableConfig::new);
         let a11y_id = use_a11y();
         // One entry per character of the text.
-        let formats = use_state(|| Vec::<FormatFlags>::new());
+        let formats: State<Vec<FormatFlags>> = use_state(|| {
+            let mut f = draft_body.formats.clone();
+            f.resize(draft_body.text.chars().count(), FormatFlags::default());
+            f
+        });
+
+        let to = use_state(|| draft_to.clone());
+        let cc = use_state(|| draft_cc.clone());
+        let bcc = use_state(|| draft_bcc.clone());
+        let subject = use_state(|| draft_subject.clone());
+
         // Format applied to newly typed text.
         let cursor_format = use_state(|| FormatFlags::default());
 
         // Links: URLs referenced by FormatFlags::link.
-        let links = use_state(|| Vec::<String>::new());
+        let links = use_state(|| draft_body.links.clone());
         let show_link_bar = use_state(|| false);
         let link_url = use_state(|| String::new());
 
@@ -98,6 +203,8 @@ impl Component for ComposePane {
         let close_on_press: EventHandler<Event<PressEventData>> = {
             let mut s = state.clone();
             EventHandler::new(move |_| {
+                s.draft_mail.set(None);
+                s.draft_pin.set(None);
                 s.view.set(crate::state::View::Mail);
             })
         };
@@ -106,7 +213,85 @@ impl Component for ComposePane {
             let mut s = state.clone();
             EventHandler::new(move |_| {
                 // TODO: actually send the message
+                s.draft_mail.set(None);
+                s.draft_pin.set(None);
                 s.view.set(crate::state::View::Mail);
+            })
+        };
+
+        let save_draft_on_press: EventHandler<Event<PressEventData>> = {
+            let s = state.clone();
+            let to = to.clone();
+            let cc = cc.clone();
+            let bcc = bcc.clone();
+            let subject = subject.clone();
+            let editable = editable.clone();
+            let formats = formats.clone();
+            let links = links.clone();
+            let compose_key = self.compose_key.clone();
+            EventHandler::new(move |_| {
+                let mut s = s.clone();
+                // Keep this pane mounted when the server hands back the saved draft's new UID.
+                s.draft_pin.set(Some((compose_key.clone(), None)));
+                let to_val = to.read().clone();
+                let cc_val = cc.read().clone();
+                let bcc_val = bcc.read().clone();
+                let subject_val = subject.read().clone();
+                let body_val = editable.editor().read().to_string();
+                let all_formats = formats.read().clone();
+                let all_links = links.read().clone();
+
+                // Build HTML body from the editor text + formatting flags
+                let html_body = build_html_body(&body_val, &all_formats, &all_links);
+                let plain_body = &body_val;
+
+                // Build a multipart/alternative RFC-2822 message
+                let boundary = "000000000000abcdef1234";
+                let mut raw = String::new();
+                raw.push_str(&format!("To: {}\r\n", to_val));
+                if !cc_val.is_empty() {
+                    raw.push_str(&format!("Cc: {}\r\n", cc_val));
+                }
+                if !bcc_val.is_empty() {
+                    raw.push_str(&format!("Bcc: {}\r\n", bcc_val));
+                }
+                raw.push_str(&format!("Subject: {}\r\n", subject_val));
+                raw.push_str("MIME-Version: 1.0\r\n");
+                raw.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n", boundary));
+                raw.push_str("\r\n");
+
+                // Plain text part
+                raw.push_str(&format!("--{}\r\n", boundary));
+                raw.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
+                raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                raw.push_str("\r\n");
+                raw.push_str(plain_body);
+                raw.push_str("\r\n");
+
+                // HTML part
+                raw.push_str(&format!("--{}\r\n", boundary));
+                raw.push_str("Content-Type: text/html; charset=UTF-8\r\n");
+                raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                raw.push_str("\r\n");
+                raw.push_str(&html_body);
+                raw.push_str("\r\n");
+
+                // Closing boundary
+                raw.push_str(&format!("--{}--\r\n", boundary));
+
+                // Check if we're updating an existing draft or creating a new one
+                if let Some((account, _folder, uid)) = draft_info {
+                    if uid != 0 {
+                        // Update existing draft
+                        s.update_draft(account, uid, raw);
+                    } else {
+                        // Demo mail, no server — just append
+                        s.save_new_draft(account, raw);
+                    }
+                } else {
+                    // New draft
+                    s.save_new_draft(0, raw);
+                }
             })
         };
 
@@ -201,19 +386,28 @@ impl Component for ComposePane {
             .placeholder_color(DARK.muted);
 
         // --- Header bar ---
+        let is_editing_draft = draft_info.is_some();
+        let header_title = if is_editing_draft { "Edit draft" } else { "New message" };
         let header = rect()
             .width(Size::fill())
             .horizontal()
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(8.)
-            .child(label().text("New message").font_size(14.).font_weight(FontWeight::BOLD).color(DARK.text))
+            .child(label().text(header_title).font_size(14.).font_weight(FontWeight::BOLD).color(DARK.text))
             .child(rect().width(Size::flex(1.)))
             .child(IconButton {
                 bytes: CHEVRON_LEFT,
                 color: DARK.muted,
                 on_press: close_on_press,
             })
+            .child(
+                IconButton {
+                    bytes: DISK,
+                    color: DARK.muted,
+                    on_press: save_draft_on_press,
+                }
+            )
             .child(
                 rect()
                     .padding((6., 14., 6., 14.))
@@ -950,4 +1144,355 @@ fn input_field(
                 .width(Size::fill())
                 .theme_colors(theme),
         ))
+}
+
+/// Escape a string for safe inclusion in HTML text content.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Build an HTML body fragment from the editor text + per-character formatting flags.
+/// Converts bold, italic, underline, and links to inline HTML tags.
+fn build_html_body(text: &str, formats: &[FormatFlags], links: &[String]) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::with_capacity(text.len() + 256);
+    let mut current_flags = FormatFlags::default();
+
+    for (i, ch) in text.chars().enumerate() {
+        let flags = formats.get(i).copied().unwrap_or_default();
+
+        // Close tags that are no longer active
+        if current_flags.bold && !flags.bold {
+            html.push_str("</strong>");
+        }
+        if current_flags.italic && !flags.italic {
+            html.push_str("</em>");
+        }
+        if current_flags.underline && !flags.underline {
+            html.push_str("</u>");
+        }
+        if current_flags.link.is_some() && current_flags.link != flags.link {
+            html.push_str("</a>");
+        }
+
+        // Open tags that are now active
+        if !current_flags.bold && flags.bold {
+            html.push_str("<strong>");
+        }
+        if !current_flags.italic && flags.italic {
+            html.push_str("<em>");
+        }
+        if !current_flags.underline && flags.underline {
+            html.push_str("<u>");
+        }
+        if current_flags.link != flags.link {
+            if let Some(link_idx) = flags.link {
+                if let Some(url) = links.get(link_idx) {
+                    html.push_str("<a href=\"");
+                    html.push_str(&html_escape(url));
+                    html.push_str("\">");
+                }
+            }
+        }
+
+        // Write the character
+        if is_placeholder(ch) {
+            // Skip placeholder characters in HTML output
+        } else {
+            html_escape_char(ch, &mut html);
+        }
+
+        current_flags = flags;
+    }
+
+    // Close any remaining open tags
+    if current_flags.bold {
+        html.push_str("</strong>");
+    }
+    if current_flags.italic {
+        html.push_str("</em>");
+    }
+    if current_flags.underline {
+        html.push_str("</u>");
+    }
+    if current_flags.link.is_some() {
+        html.push_str("</a>");
+    }
+
+    // Wrap lines in <p> tags for proper HTML structure
+    // Replace newlines with </p><p> boundaries
+    let mut final_html = String::with_capacity(html.len() + 128);
+    let mut in_paragraph = false;
+    for line in html.split('\n') {
+        if line.is_empty() {
+            if in_paragraph {
+                final_html.push_str("</p>");
+                in_paragraph = false;
+            }
+        } else {
+            if !in_paragraph {
+                final_html.push_str("<p>");
+                in_paragraph = true;
+            } else {
+                final_html.push_str("<br>");
+            }
+            final_html.push_str(line);
+        }
+    }
+    if in_paragraph {
+        final_html.push_str("</p>");
+    }
+
+    final_html
+}
+
+/// Escape a single character for HTML, appending to the given string.
+fn html_escape_char(ch: char, out: &mut String) {
+    match ch {
+        '&' => out.push_str("&amp;"),
+        '<' => out.push_str("&lt;"),
+        '>' => out.push_str("&gt;"),
+        '"' => out.push_str("&quot;"),
+        c => out.push(c),
+    }
+}
+
+/// Decode the HTML entities we care about.
+fn decode_entity(name: &str) -> Option<char> {
+    match name {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some(' '),
+        "copy" => Some('©'),
+        "reg" => Some('®'),
+        "mdash" => Some('—'),
+        "ndash" => Some('–'),
+        "hellip" => Some('…'),
+        "bull" => Some('•'),
+        _ => {
+            let num = name.strip_prefix('#')?;
+            let code = if let Some(hex) = num.strip_prefix(['x', 'X']) {
+                u32::from_str_radix(hex, 16).ok()?
+            } else {
+                num.parse::<u32>().ok()?
+            };
+            char::from_u32(code)
+        }
+    }
+}
+
+/// Extract an attribute value (`href="..."`) from the inside of a tag.
+fn tag_attr(tag: &str, attr: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(pos) = lower[from..].find(attr) {
+        let start = from + pos;
+        let before_ok = start == 0 || lower.as_bytes()[start - 1].is_ascii_whitespace();
+        let rest = tag[start + attr.len()..].trim_start();
+        if before_ok && rest.starts_with('=') {
+            let rest = rest[1..].trim_start();
+            return Some(match rest.chars().next() {
+                Some(q @ ('"' | '\'')) => rest[1..].split(q).next().unwrap_or("").to_string(),
+                _ => rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or("").to_string(),
+            });
+        }
+        from = start + attr.len();
+    }
+    None
+}
+
+/// Convert a draft's HTML into editor text plus per-character formatting. This is the
+/// inverse of `build_html_body` (strong/b, em/i, u, a[href], br, p/div); other tags are
+/// ignored and script/style content is dropped.
+fn html_to_editor(html: &str) -> DraftBody {
+    let mut out = DraftBody::default();
+    let mut text = String::new();
+    let mut bold = 0usize;
+    let mut italic = 0usize;
+    let mut underline = 0usize;
+    let mut link_stack: Vec<Option<usize>> = Vec::new();
+    let mut pending_nl = 0usize;
+    let mut skip_until: Option<&'static str> = None;
+
+    let chars: Vec<char> = html.chars().collect();
+    let mut i = 0;
+
+    // Flush pending paragraph breaks (only between content, never at the very start).
+    fn flush(text: &mut String, formats: &mut Vec<FormatFlags>, pending: &mut usize) {
+        if *pending > 0 && !text.is_empty() {
+            for _ in 0..*pending {
+                text.push('\n');
+                formats.push(FormatFlags::default());
+            }
+        }
+        *pending = 0;
+    }
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        if let Some(end_tag) = skip_until {
+            if ch == '<' {
+                let rest: String = chars[i..].iter().take(end_tag.len() + 2).collect();
+                if rest.to_ascii_lowercase().starts_with(&format!("</{}", end_tag)) {
+                    skip_until = None;
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '<' {
+            // HTML comment
+            if chars[i..].iter().take(4).collect::<String>() == "<!--" {
+                let rest: String = chars[i..].iter().collect();
+                match rest.find("-->") {
+                    Some(end) => {
+                        i += rest[..end + 3].chars().count();
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] != '>' {
+                j += 1;
+            }
+            if j >= chars.len() {
+                break;
+            }
+            let tag: String = chars[i + 1..j].iter().collect();
+            i = j + 1;
+
+            let closing = tag.starts_with('/');
+            let body = tag.trim_start_matches('/').trim_end_matches('/').trim();
+            let name = body
+                .split(|c: char| c.is_whitespace())
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+
+            match name.as_str() {
+                "script" | "style" | "head" if !closing => {
+                    skip_until = Some(match name.as_str() {
+                        "script" => "script",
+                        "style" => "style",
+                        _ => "head",
+                    });
+                }
+                "strong" | "b" => {
+                    if closing { bold = bold.saturating_sub(1) } else { bold += 1 }
+                }
+                "em" | "i" => {
+                    if closing { italic = italic.saturating_sub(1) } else { italic += 1 }
+                }
+                "u" => {
+                    if closing { underline = underline.saturating_sub(1) } else { underline += 1 }
+                }
+                "a" => {
+                    if closing {
+                        link_stack.pop();
+                    } else {
+                        let idx = tag_attr(body, "href").filter(|u| !u.is_empty()).map(|u| {
+                            let u = decode_entities(&u);
+                            out.links.push(u);
+                            out.links.len() - 1
+                        });
+                        link_stack.push(idx);
+                    }
+                }
+                "br" => {
+                    flush(&mut text, &mut out.formats, &mut pending_nl);
+                    text.push('\n');
+                    out.formats.push(FormatFlags::default());
+                }
+                "p" | "div" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "table" => {
+                    pending_nl = pending_nl.max(2);
+                }
+                "li" | "tr" => {
+                    pending_nl = pending_nl.max(1);
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        // Character data (entities decoded, whitespace collapsed like a browser would)
+        let mut c = ch;
+        if ch == '&' {
+            let mut j = i + 1;
+            while j < chars.len() && j - i <= 10 && chars[j] != ';' && chars[j] != '&' && chars[j] != '<' {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == ';' {
+                let name: String = chars[i + 1..j].iter().collect();
+                if let Some(d) = decode_entity(&name) {
+                    c = d;
+                    i = j;
+                }
+            }
+        }
+        i += 1;
+
+        if is_placeholder(c) || c == '\r' {
+            continue;
+        }
+        if c.is_whitespace() && c != '\u{a0}' {
+            let prev_ws = text.chars().next_back().map_or(true, |p| p == ' ' || p == '\n');
+            if prev_ws || pending_nl > 0 {
+                continue;
+            }
+            c = ' ';
+        }
+
+        flush(&mut text, &mut out.formats, &mut pending_nl);
+        text.push(c);
+        out.formats.push(FormatFlags {
+            bold: bold > 0,
+            italic: italic > 0,
+            underline: underline > 0,
+            link: link_stack.iter().rev().find_map(|l| *l),
+        });
+    }
+
+    out.text = text;
+    out
+}
+
+/// Decode entities in a whole string (used for href values).
+fn decode_entities(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '&' {
+            if let Some(end) = chars[i..].iter().take(12).position(|&c| c == ';') {
+                let name: String = chars[i + 1..i + end].iter().collect();
+                if let Some(d) = decode_entity(&name) {
+                    out.push(d);
+                    i += end + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }

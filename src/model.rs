@@ -262,6 +262,9 @@ impl Store {
                 return true;
             }
             Event::AddAccountFailed { error } => self.add_error = Some(error),
+            Event::DraftSaved { .. } => {
+                // Handled by the event pump in state.rs, nothing to do in the store.
+            }
         }
         false
     }

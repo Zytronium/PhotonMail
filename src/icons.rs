@@ -36,5 +36,6 @@ pub const EYE: &[u8] = icon!(r#"<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-
 pub const CLOSE: &[u8] = icon!(r#"<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>"#);
 pub const MAXIMIZE: &[u8] = icon!(r#"<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>"#);
 pub const MINIMIZE: &[u8] = icon!(r#"<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>"#);
+pub const DISK: &[u8] = icon!(r#"<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>"#);
 
 pub const FOLDER_ICONS: [&[u8]; 6] = [INBOX, DRAFTS, SENT, ARCHIVE, SPAM, TRASH];

@@ -104,7 +104,11 @@ impl Component for Sidebar {
             })
             .on_pointer_enter(move |_| compose_hover.set(true))
             .on_pointer_leave(move |_| compose_hover.set(false))
-            .on_press(move |_| s_compose.view.set(View::Compose))
+            .on_press(move |_| {
+                s_compose.draft_mail.set(None);
+                s_compose.draft_pin.set(None);
+                s_compose.view.set(View::Compose);
+            })
             .child(icon(PENCIL, 16., DARK.text))
             .child(label().text("New message").color(DARK.text).font_weight(FontWeight::BOLD));
 

@@ -3,6 +3,7 @@ use freya_components::input::InputColorsThemePartial;
 
 use crate::{
     icons::*,
+    mail::DRAFTS,
     state::AppState,
     theme::DARK,
     widgets::{avatar, Chip, divider, icon, IconButton},
@@ -224,7 +225,16 @@ impl Component for MessageRow {
         row
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
-            .on_press(move |_| s_select.select(i))
+            .on_press(move |_e: Event<PressEventData>| {
+                if m.folder == DRAFTS {
+                    let mut s_compose = state.clone();
+                    s_compose.draft_mail.set(Some((m.account, m.folder, m.uid)));
+                    s_compose.draft_pin.set(None);
+                    s_compose.view.set(crate::state::View::Compose);
+                } else {
+                    s_select.select(i);
+                }
+            })
             .child(avatar(&m.from, account.color, 36.))
             .child(
                 rect()

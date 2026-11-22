@@ -125,6 +125,133 @@ fn make_preview(text: &str) -> String {
     out.trim().to_string()
 }
 
+/// Strip HTML tags from a string, returning plain text.
+/// Handles common tags: converts `<br>` to newlines, `<p>` to double newlines,
+/// and decodes common HTML entities.
+pub fn strip_html_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut in_script_or_style = false;
+    let mut i = 0usize;
+    let chars: Vec<char> = html.chars().collect();
+    let len = chars.len();
+
+    while i < len {
+        let ch = chars[i];
+
+        if in_script_or_style {
+            if in_tag {
+                if ch == '>' {
+                    in_tag = false;
+                    in_script_or_style = false;
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '<' {
+            // Look ahead to determine tag type
+            let rest: String = chars[i..].iter().collect();
+            if let Some(tag_end) = rest.find('>') {
+                let tag_content: String = rest[1..tag_end].chars().collect();
+                let tag_lower = tag_content.trim().to_lowercase();
+
+                if tag_lower == "br" || tag_lower == "br/" || tag_lower.starts_with("br ") {
+                    result.push('\n');
+                } else if tag_lower == "p" || tag_lower == "/p" {
+                    // Only add paragraph break if last char isn't already a newline
+                    if !result.ends_with('\n') {
+                        result.push_str("\n\n");
+                    } else if result.ends_with('\n') && !result.ends_with("\n\n") {
+                        result.push('\n');
+                    }
+                } else if tag_lower.starts_with("script") || tag_lower.starts_with("style") {
+                    in_script_or_style = true;
+                    in_tag = true;
+                    i += 1;
+                    continue;
+                } else if tag_lower.starts_with("<!--") {
+                    // HTML comment — skip until -->
+                    if let Some(comment_end) = rest.find("-->") {
+                        i += comment_end + 3;
+                        continue;
+                    }
+                }
+                in_tag = true;
+            } else {
+                // No closing >, skip rest
+                break;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Decode common HTML entities
+        if ch == '&' {
+            let rest: String = chars[i..].iter().collect();
+            if let Some(amp_end) = rest.find(';') {
+                let entity = &rest[1..amp_end];
+                match entity {
+                    "amp" => result.push('&'),
+                    "lt" => result.push('<'),
+                    "gt" => result.push('>'),
+                    "quot" => result.push('"'),
+                    "apos" => result.push('\''),
+                    "nbsp" => result.push(' '),
+                    "copy" => result.push('©'),
+                    "reg" => result.push('®'),
+                    "mdash" => result.push('—'),
+                    "ndash" => result.push('–'),
+                    "laquo" => result.push('«'),
+                    "raquo" => result.push('»'),
+                    "bull" => result.push('•'),
+                    _ => {
+                        // Not a known entity, keep as-is
+                        result.push(ch);
+                        i += 1;
+                        continue;
+                    }
+                }
+                i += amp_end + 1;
+                continue;
+            } else {
+                result.push(ch);
+                i += 1;
+                continue;
+            }
+        }
+
+        result.push(ch);
+        i += 1;
+    }
+
+    // Collapse 3+ consecutive newlines to 2
+    let mut out = String::with_capacity(result.len());
+    let mut consecutive_newlines = 0;
+    for ch in result.chars() {
+        if ch == '\n' {
+            consecutive_newlines += 1;
+            if consecutive_newlines <= 2 {
+                out.push(ch);
+            }
+        } else {
+            consecutive_newlines = 0;
+            out.push(ch);
+        }
+    }
+
+    out.trim().to_string()
+}
+
 /// List-style date: time today, "Yesterday", "Nov 12", or "Nov 12, 2025".
 pub fn fmt_date(ts: i64) -> String {
     use chrono::{DateTime, Datelike, Local, Utc};

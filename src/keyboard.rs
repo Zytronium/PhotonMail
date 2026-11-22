@@ -391,12 +391,23 @@ fn handle_compose(
         // Ctrl/Cmd+Enter sends the message
         Key::Named(NamedKey::Enter) if modifiers.ctrl() || modifiers.meta() => {
             // TODO: trigger send
+            state.draft_mail.set(None);
+            state.draft_pin.set(None);
             state.view.set(View::Mail);
             *focus = FocusArea::MessageList;
             HandleResult::Consumed
         }
+        // Ctrl/Cmd+S saves the draft
+        Key::Character(ch) if (modifiers.ctrl() || modifiers.meta()) && ch.as_str() == "s" => {
+            // TODO: trigger save draft from compose pane
+            // The compose pane handles this via its own button; this shortcut
+            // is a placeholder for future implementation.
+            HandleResult::Ignored
+        }
         // Escape closes compose and returns to the mail view
         Key::Named(NamedKey::Escape) => {
+            state.draft_mail.set(None);
+            state.draft_pin.set(None);
             state.view.set(View::Mail);
             *focus = FocusArea::MessageList;
             HandleResult::Unfocus

@@ -8,7 +8,7 @@ use crate::{
     data::MailContentType,
     html_viewer::SecureHtmlViewer,
     icons::{CHEVRON_LEFT, *},
-    mail::AttachmentInfo,
+    mail::{AttachmentInfo, DRAFTS},
     model::BodyState,
     state::{AppState, View},
     theme::DARK,
@@ -53,9 +53,39 @@ impl Component for Reader {
             );
         }
 
+        // Compute a key for ComposePane so it remounts when the draft body loads.
+        // This is essential because use_editable initializes once on mount, and we
+        // need the component to remount with the new body text when the async fetch completes.
+        let compose_key = {
+            if matches!(view, View::Compose) {
+                let draft_info = *state.draft_mail.read();
+                if let Some((account, folder, uid)) = draft_info {
+                    let store = state.store.read();
+                    let body_loaded = store.mails.iter().any(|m| {
+                        m.account == account && m.folder == folder && m.uid == uid
+                            && !m.removed
+                            && matches!(m.body, crate::model::BodyState::Loaded { .. })
+                    });
+                    format!("draft-{}-{}-{}-loaded={}", account, folder, uid, body_loaded)
+                } else {
+                    "new".to_string()
+                }
+            } else {
+                String::new()
+            }
+        };
+
+        // After a draft save the UID changes; keep the pinned key so the pane isn't remounted.
+        let compose_key = match (state.draft_pin.read().clone(), *state.draft_mail.read()) {
+            (Some((key, Some(pinned_uid))), Some((_, _, uid))) if pinned_uid == uid => key,
+            _ => compose_key,
+        };
+
         let body = match view {
             View::Mail => rect().child(MailView { state }),
-            View::Compose => rect().child(ComposePane { state }),
+            View::Compose => rect()
+                .key(&compose_key)
+                .child(ComposePane { state, compose_key: compose_key.clone() }),
             View::AddAccount => rect().child(AddAccountView { state }),
             View::Settings(index) => rect().child(AccountSettings { state, index }),
             View::EditAccount(index) => rect().child(EditAccountView { state, index }),
@@ -128,14 +158,23 @@ impl Component for MailView {
                             .child(label().text(m.date.clone()).color(DARK.muted).font_size(12.)),
                     );
 
-                let actions = rect()
+                // Hide Reply/Reply All/Forward when viewing a draft
+                let is_draft = m.folder == DRAFTS;
+
+                let mut actions = rect()
                     .horizontal()
                     .content(Content::Flex)
                     .cross_align(Alignment::Center)
-                    .spacing(8.)
-                    .child(Action { bytes: REPLY, text: "Reply".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
-                    .child(Action { bytes: REPLY_ALL, text: "Reply all".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
-                    .child(Action { bytes: FORWARD, text: "Forward".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
+                    .spacing(8.);
+
+                if !is_draft {
+                    actions = actions
+                        .child(Action { bytes: REPLY, text: "Reply".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
+                        .child(Action { bytes: REPLY_ALL, text: "Reply all".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
+                        .child(Action { bytes: FORWARD, text: "Forward".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) });
+                }
+
+                actions = actions
                     .child(rect().width(Size::flex(1.)))
                     .child(
                         IconButton { bytes: ARCHIVE, color: DARK.muted, on_press: (move |_| s_archive.archive(i)).into() }

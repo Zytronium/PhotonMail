@@ -40,6 +40,11 @@ pub struct AppState {
     pub attachment_preview_index: State<usize>,         // Index within the mail's attachments list
     pub attachment_preview_open: State<bool>,           // Whether the preview modal is open
     pub attachment_preview_fullscreen: State<bool>,     // Whether the preview is fullscreen
+    pub draft_mail: State<Option<(usize, usize, u32)>>, // (account, folder, uid) of the draft being edited (None = new message)
+    /// Pins the compose pane's mount key across saves. `(key, None)` = a save is pending;
+    /// `(key, Some(uid))` = the save finished and `uid` is the draft's new UID. While the
+    /// pin matches `draft_mail`, the compose pane keeps its key and is NOT remounted.
+    pub draft_pin: State<Option<(String, Option<u32>)>>,
 }
 
 pub fn use_app_state() -> AppState {
@@ -80,10 +85,12 @@ pub fn use_app_state() -> AppState {
         attachment_preview_index: use_state(|| 0),
         attachment_preview_open: use_state(|| false),
         attachment_preview_fullscreen: use_state(|| false),
+        draft_mail: use_state(|| None),
+        draft_pin: use_state(|| None),
     };
 
     // Drain worker events into the store, once, for the life of the app.
-    use_hook(move || start_event_pump(app));
+    use_hook(move || start_event_pump(app.clone()));
 
     app
 }
@@ -95,6 +102,20 @@ fn start_event_pump(app: AppState) {
     spawn(async move {
         let mut app = app;
         while let Ok(event) = rx.recv().await {
+            // Handle DraftSaved before applying to store. The server gives the saved draft a
+            // new UID; track it (also for brand-new drafts) and pin the compose pane's key so
+            // the pane keeps its contents instead of remounting.
+            if let crate::mail::Event::DraftSaved { account, uid } = &event {
+                let pin = app.draft_pin.read().clone();
+                if let Some((key, _)) = pin {
+                    let in_compose = matches!(*app.view.read(), View::Compose);
+                    let current = *app.draft_mail.read();
+                    if in_compose && current.map_or(true, |(a, _, _)| a == *account) {
+                        app.draft_pin.set(Some((key, Some(*uid))));
+                        app.draft_mail.set(Some((*account, crate::mail::DRAFTS, *uid)));
+                    }
+                }
+            }
             let added = app.store.write().apply(event);
             if added {
                 // A new account just finished signing in: show its inbox.
@@ -198,7 +219,7 @@ impl AppState {
             .count()
     }
 
-    fn send(&self, account: usize, cmd: WorkerCmd) {
+    pub fn send(&self, account: usize, cmd: WorkerCmd) {
         self.engine.peek().account(account, cmd);
     }
 
@@ -308,5 +329,15 @@ impl AppState {
     /// Sync every folder of one account now (the "Sync now" button).
     pub fn sync_account(&self, account: usize) {
         self.send(account, WorkerCmd::SyncAll);
+    }
+
+    /// Save a new draft (no existing UID) to the server.
+    pub fn save_new_draft(&self, account: usize, raw: String) {
+        self.send(account, WorkerCmd::AppendDraft { raw });
+    }
+
+    /// Update an existing draft on the server (delete old, append new).
+    pub fn update_draft(&self, account: usize, uid: u32, raw: String) {
+        self.send(account, WorkerCmd::UpdateDraft { uid, raw });
     }
 }

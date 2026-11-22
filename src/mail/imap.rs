@@ -537,7 +537,81 @@ impl Worker {
                 }
                 result.map(|_| ())
             }
+            WorkerCmd::AppendDraft { raw } => {
+                let new_uid = self.append_draft(raw).await?;
+                if let Some(uid) = new_uid {
+                    self.emit(Event::DraftSaved { account: self.index, uid });
+                }
+                Ok(())
+            }
+            WorkerCmd::UpdateDraft { uid, raw } => {
+                let new_uid = self.update_draft(uid, raw).await?;
+                if let Some(new_uid) = new_uid {
+                    self.emit(Event::DraftSaved { account: self.index, uid: new_uid });
+                }
+                Ok(())
+            }
         }
+    }
+
+    /// Append a raw RFC-2822 message to the Drafts folder on the server.
+    /// Returns the UID of the newly appended draft.
+    async fn append_draft(&mut self, raw: String) -> Res<Option<u32>> {
+        let Some(drafts_path) = self.paths[DRAFTS].clone() else {
+            self.emit(Event::Notice {
+                text: "This account has no Drafts folder.".to_string(),
+            });
+            return Ok(None);
+        };
+        let session = self.session.as_mut().ok_or_else(not_connected)?;
+        io("APPEND", async {
+            session
+                .append(&drafts_path, Some("(\\Draft)"), None, raw.as_bytes())
+                .await
+        })
+        .await?;
+        // Find the new UID by searching for the highest UID in the Drafts folder
+        let new_uid = self.fetch_highest_uid(DRAFTS).await.unwrap_or(None);
+        // Queue a re-sync so the new draft appears in the list, but do it asynchronously
+        // so the compose pane doesn't lose focus immediately.
+        self.push_sync_front(DRAFTS);
+        Ok(new_uid)
+    }
+
+    /// Update an existing draft: delete the old one and append the new content.
+    /// Returns the UID of the new draft.
+    async fn update_draft(&mut self, old_uid: u32, raw: String) -> Res<Option<u32>> {
+        if !self.ensure_selected(DRAFTS).await? {
+            return Ok(None);
+        }
+        let session = self.session.as_mut().ok_or_else(not_connected)?;
+        let uid_str = old_uid.to_string();
+        // Mark the old draft as deleted
+        io("STORE", async {
+            session
+                .uid_store(&uid_str, "+FLAGS.SILENT (\\Deleted)")
+                .await?
+                .try_collect::<Vec<Fetch>>()
+                .await
+        })
+        .await?;
+        io("EXPUNGE", async {
+            session.uid_expunge(&uid_str).await?.try_collect::<Vec<u32>>().await
+        })
+        .await?;
+        // Append the new draft content
+        self.append_draft(raw).await
+    }
+
+    /// Fetch the highest UID in a folder by doing a UID SEARCH ALL.
+    async fn fetch_highest_uid(&mut self, folder: usize) -> Res<Option<u32>> {
+        if !self.ensure_selected(folder).await? {
+            return Ok(None);
+        }
+        let session = self.session.as_mut().ok_or_else(not_connected)?;
+        let uids: std::collections::HashSet<u32> =
+            io("UID SEARCH", session.uid_search("ALL")).await?;
+        Ok(uids.iter().copied().max())
     }
 
     /// Returns Ok(false) if the destination folder doesn't exist on this account.
