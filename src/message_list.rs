@@ -178,13 +178,19 @@ impl Component for MessageRow {
                 .child(label().text(m.date.clone()).color(DARK.muted).font_size(12.))
         };
 
+        // For Sent (folder 2) and Drafts (folder 1), show the recipient instead of the sender
+        let (display_name, display_email) = if m.folder == 1 || m.folder == 2 {
+            (m.to.clone(), m.to_email.clone())
+        } else {
+            (m.from.clone(), m.from_email.clone())
+        };
         let mut name_row = rect()
             .width(Size::fill())
             .horizontal()
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .child(label().text(m.from.clone()).color(DARK.text).font_size(15.).font_weight(weight));
+            .child(label().text(display_name).color(DARK.text).font_size(15.).font_weight(weight));
         if unified {
             name_row = name_row.child(label().text(account.name.clone()).color(account.color).font_size(11.));
         }
@@ -196,7 +202,7 @@ impl Component for MessageRow {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .child(label().text(m.from_email.clone()).color(DARK.muted).font_size(12.))
+            .child(label().text(display_email).color(DARK.muted).font_size(12.))
             .child(rect().width(Size::flex(1.)));
 
         let top = rect()

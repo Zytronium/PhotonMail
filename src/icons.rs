@@ -29,5 +29,12 @@ pub const PENCIL: &[u8] = icon!(r#"<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2
 pub const TAG: &[u8] = icon!(r#"<path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.41 0l8.59-8.59a1 1 0 0 0 0-1.41z"/><path d="M7 7h.01"/>"#);
 pub const SEARCH: &[u8] = icon!(r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>"#);
 pub const SEND: &[u8] = icon!(r#"<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>"#);
+pub const PAPERCLIP: &[u8] = icon!(r#"<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.19 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>"#);
+pub const DOWNLOAD: &[u8] = icon!(r#"<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>"#);
+pub const IMAGE: &[u8] = icon!(r#"<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>"#);
+pub const EYE: &[u8] = icon!(r#"<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>"#);
+pub const CLOSE: &[u8] = icon!(r#"<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>"#);
+pub const MAXIMIZE: &[u8] = icon!(r#"<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>"#);
+pub const MINIMIZE: &[u8] = icon!(r#"<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>"#);
 
 pub const FOLDER_ICONS: [&[u8]; 6] = [INBOX, DRAFTS, SENT, ARCHIVE, SPAM, TRASH];

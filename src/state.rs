@@ -36,6 +36,10 @@ pub struct AppState {
     pub link_dialog_sender: State<String>, // Sender email for the link confirmation dialog
     pub link_dialog_open: State<bool>,    // Whether the link confirmation dialog is visible
     pub search_query: State<String>,     // Search query for filtering messages
+    pub attachment_preview_mail: State<Option<usize>>,  // Mail index of the attachment being previewed
+    pub attachment_preview_index: State<usize>,         // Index within the mail's attachments list
+    pub attachment_preview_open: State<bool>,           // Whether the preview modal is open
+    pub attachment_preview_fullscreen: State<bool>,     // Whether the preview is fullscreen
 }
 
 pub fn use_app_state() -> AppState {
@@ -72,6 +76,10 @@ pub fn use_app_state() -> AppState {
         link_dialog_sender: use_state(|| String::new()),
         link_dialog_open: use_state(|| false),
         search_query: use_state(|| String::new()),
+        attachment_preview_mail: use_state(|| None),
+        attachment_preview_index: use_state(|| 0),
+        attachment_preview_open: use_state(|| false),
+        attachment_preview_fullscreen: use_state(|| false),
     };
 
     // Drain worker events into the store, once, for the life of the app.
@@ -139,12 +147,14 @@ impl AppState {
                 let subject_match = m.subject.to_lowercase().contains(&query);
                 let from_match = m.from.to_lowercase().contains(&query)
                     || m.from_email.to_lowercase().contains(&query);
+                let to_match = m.to.to_lowercase().contains(&query)
+                    || m.to_email.to_lowercase().contains(&query);
                 let preview_match = m.preview.to_lowercase().contains(&query);
                 let body_match = match &m.body {
                     BodyState::Loaded { text, .. } => text.to_lowercase().contains(&query),
                     _ => false,
                 };
-                subject_match || from_match || preview_match || body_match
+                subject_match || from_match || to_match || preview_match || body_match
             })
             .collect()
     }

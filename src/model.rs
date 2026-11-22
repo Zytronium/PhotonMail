@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     data::{MailContentType, DEMO_ACCOUNTS, DEMO_MAILS},
-    mail::{parse::fmt_date, AccountConfig, BodyData, Event, HeaderRow, SyncStatus},
+    mail::{parse::fmt_date, AccountConfig, AttachmentInfo, BodyData, Event, HeaderRow, SyncStatus},
     theme::Rgb,
 };
 
@@ -78,9 +78,14 @@ pub struct Mail {
     pub unread: bool,
     pub from: String,
     pub from_email: String,
+    /// Recipient (populated for Sent/Drafts; empty for Inbox).
+    pub to: String,
+    pub to_email: String,
     pub subject: String,
     pub preview: String,
     pub body: BodyState,
+    /// Attachments found in the message body.
+    pub attachments: Vec<AttachmentInfo>,
     pub date: String,
     /// For sorting; higher = newer.
     pub ts: i64,
@@ -141,12 +146,15 @@ impl Store {
                 unread: m.unread,
                 from: m.from.to_string(),
                 from_email: m.from_email.to_string(),
+                to: m.to.to_string(),
+                to_email: m.to_email.to_string(),
                 subject: m.subject.to_string(),
                 preview: m.preview.to_string(),
                 body: BodyState::Loaded {
                     content_type: m.content_type,
                     text: Arc::from(m.body),
                 },
+                attachments: Vec::new(),
                 date: m.date.to_string(),
                 ts: m.ts as i64,
                 removed: false,
@@ -236,11 +244,12 @@ impl Store {
                 if let Some(&i) = self.index.get(&(account, folder, uid)) {
                     let m = &mut self.mails[i];
                     match result {
-                        Ok(BodyData { content_type, text, preview }) => {
+                        Ok(BodyData { content_type, text, preview, attachments }) => {
                             if !preview.is_empty() {
                                 m.preview = preview;
                             }
                             m.body = BodyState::Loaded { content_type, text };
+                            m.attachments = attachments;
                         }
                         Err(e) => m.body = BodyState::Failed(e),
                     }
@@ -272,9 +281,12 @@ impl Store {
             unread: row.unread,
             from: row.from,
             from_email: row.from_email,
+            to: String::new(),
+            to_email: String::new(),
             subject: row.subject,
             preview: String::new(),
             body: BodyState::NotLoaded,
+            attachments: Vec::new(),
             date: fmt_date(row.ts),
             ts: row.ts,
             removed: false,

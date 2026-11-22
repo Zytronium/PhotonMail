@@ -16,6 +16,9 @@ pub struct DemoMail {
     pub unread: bool,
     pub from: &'static str,
     pub from_email: &'static str,
+    /// Recipient (populated for Sent/Drafts; empty for Inbox).
+    pub to: &'static str,
+    pub to_email: &'static str,
     pub subject: &'static str,
     /// Plain-text preview shown in the message list.
     pub preview: &'static str,
@@ -42,6 +45,7 @@ pub const DEMO_MAILS: [DemoMail; 16] = [
     DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Alice", from_email: "im.a@femail.com",
+        to: "", to_email: "",
         subject: "Weekend plans",
         preview: "Are we still on for Saturday?",
         body: "Hey!\n\nAre we still on for Saturday? Let me know what time works for you.\n\nBest,\nAlice",
@@ -52,6 +56,7 @@ pub const DEMO_MAILS: [DemoMail; 16] = [
     DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Foogle Store", from_email: "deals@fooglestore.com",
+        to: "", to_email: "",
         subject: "🔥 Black Friday — Up to 60% Off!",
         preview: "Our biggest sale of the year is here...",
         body: r##"<!DOCTYPE html>
@@ -115,6 +120,7 @@ pub const DEMO_MAILS: [DemoMail; 16] = [
     DemoMail {
         account: 1, folder: 0, unread: true,
         from: "Build Bot", from_email: "notifications@buildci.io",
+        to: "", to_email: "",
         subject: "CI failed on main",
         preview: "Job #482 failed at step 3...",
         body: r##"<!DOCTYPE html>
@@ -177,6 +183,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
     DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Bob", from_email: "bob.henderson@femail.com",
+        to: "", to_email: "",
         subject: "Invoice #2024-0892",
         preview: "Here's the invoice for the Q4 consulting...",
         body: r##"<!DOCTYPE html>
@@ -243,6 +250,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
     DemoMail {
         account: 2, folder: 0, unread: false,
         from: "Dev Weekly", from_email: "newsletter@devweekly.io",
+        to: "", to_email: "",
         subject: "Dev Weekly #312: Rust 2024 Edition",
         preview: "This week: Rust 2024, new CSS features...",
         body: r##"<!DOCTYPE html>
@@ -324,6 +332,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
     DemoMail {
         account: 2, folder: 0, unread: false,
         from: "Vercel", from_email: "ship@vercel.com",
+        to: "", to_email: "",
         subject: "Deployment ready",
         preview: "Your project was deployed successfully.",
         body: r##"<!DOCTYPE html>
@@ -386,6 +395,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
     DemoMail {
         account: 1, folder: 0, unread: false,
         from: "HR", from_email: "hr@acmecorp.com",
+        to: "", to_email: "",
         subject: "Benefits update",
         preview: "Open enrollment starts next week...",
         body: r##"<!DOCTYPE html>
@@ -459,6 +469,7 @@ note: run with RUST_BACKTRACE=1 for details</pre>
     DemoMail {
         account: 2, folder: 0, unread: false,
         from: "GitHub Security", from_email: "security-noreply@github.com",
+        to: "", to_email: "",
         subject: "⚠️ Security advisory: dependency vulnerability",
         preview: "A critical vulnerability was found in a dependency...",
         body: r##"<!DOCTYPE html>
@@ -504,10 +515,11 @@ zytronium/api-gateway</pre>
         content_type: MailContentType::Html,
         date: "Nov 8", ts: 45,
     },
-    // 9. Plain text reply
+    // 9. Plain text reply (Sent)
     DemoMail {
         account: 0, folder: 2, unread: false,
-        from: "To: Alice", from_email: "foogle_user@femail.com",
+        from: "You", from_email: "foogle_user@femail.com",
+        to: "Alice", to_email: "im.a@femail.com",
         subject: "Re: Weekend plans",
         preview: "Saturday works for me!",
         body: "Saturday works for me! How about 2 PM at the usual spot?\n\nSee you then! :)",
@@ -517,7 +529,8 @@ zytronium/api-gateway</pre>
     // 10. Draft
     DemoMail {
         account: 1, folder: 1, unread: false,
-        from: "Draft", from_email: "why.wont@it.work",
+        from: "You", from_email: "why.wont@it.work",
+        to: "Team", to_email: "team@acmecorp.com",
         subject: "Q4 report",
         preview: "Hi team, attached is the Q4 summary...",
         body: "Hi team,\n\nAttached is the Q4 summary report. Please review before our meeting on Friday.\n\nKey highlights:\n- Revenue up 15% YoY\n- New customer acquisition exceeded targets\n- Infrastructure costs reduced by 22%\n\nBest regards",
@@ -528,6 +541,7 @@ zytronium/api-gateway</pre>
     DemoMail {
         account: 1, folder: 0, unread: false,
         from: "Events", from_email: "events@acmecorp.com",
+        to: "", to_email: "",
         subject: "🎉 Company All-Hands — Dec 5",
         preview: "Join us for the quarterly all-hands meeting...",
         body: r##"<!DOCTYPE html>
@@ -620,6 +634,7 @@ zytronium/api-gateway</pre>
     DemoMail {
         account: 0, folder: 0, unread: false,
         from: "Foogle Security", from_email: "no-reply@security.foogle.com",
+        to: "", to_email: "",
         subject: "Password reset requested",
         preview: "We received a request to reset your password...",
         body: r##"<!DOCTYPE html>
@@ -666,6 +681,7 @@ zytronium/api-gateway</pre>
     DemoMail {
         account: 2, folder: 3, unread: false,
         from: "GitHub", from_email: "security-noreply@github.com",
+        to: "", to_email: "",
         subject: "Security advisory (archived)",
         preview: "A dependency in your repo had a vulnerability...",
         body: "A dependency in your repo had a vulnerability that has since been resolved.\n\nThis message has been archived.",
@@ -676,6 +692,7 @@ zytronium/api-gateway</pre>
     DemoMail {
         account: 1, folder: 0, unread: false,
         from: "Analytics", from_email: "reports@analytics.io",
+        to: "", to_email: "",
         subject: "📊 Weekly Traffic Report",
         preview: "Your weekly analytics summary is ready...",
         body: r##"<!DOCTYPE html>
@@ -769,6 +786,7 @@ zytronium/api-gateway</pre>
     DemoMail {
         account: 0, folder: 0, unread: true,
         from: "Stellicast", from_email: "noreply@stellicast.com",
+        to: "", to_email: "",
         subject: "Welcome to Stellicast",
         preview: "Confirm your email address to activate your account...",
         body: r##"<html>
@@ -849,139 +867,128 @@ zytronium/api-gateway</pre>
         content_type: MailContentType::Html,
         date: "Nov 5", ts: 10,
     },
-    // 16. Luminous — email confirmation (dark navy theme with teal accents)
+    // 16. Order confirmation with rich text formatting (moved to Inbox — user receives this, doesn't send it)
     DemoMail {
-        account: 2, folder: 0, unread: true,
-        from: "Luminous", from_email: "noreply@luminous-chat.app",
-        subject: "Confirm your Luminous account",
-        preview: "Welcome to Luminous! Verify your Atlas School email...",
-        body: r##"<html>
+        account: 0, folder: 0, unread: true,
+        from: "Foogle Store", from_email: "orders@fooglestore.com",
+        to: "", to_email: "",
+        subject: "Order #FS-2024-8842 Confirmed",
+        preview: "Thank you for your order! Here are the details...",
+        body: r##"<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Confirm your Luminous account</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background: #f9f9fb; color: #1a1a2e; }
+  .container { max-width: 560px; margin: 0 auto; background: #ffffff; border: 1px solid #e8e8f0; }
+  .header { background: #6d4aff; padding: 24px 30px; text-align: center; color: #fff; }
+  .header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  .header p { margin: 6px 0 0; font-size: 14px; opacity: 0.85; }
+  .content { padding: 30px; }
+  .order-id { background: #f4f0ff; padding: 12px 16px; border-radius: 8px; text-align: center; margin-bottom: 24px; }
+  .order-id strong { color: #6d4aff; font-size: 16px; }
+  .section-title { font-size: 16px; font-weight: 600; margin: 0 0 12px; color: #1a1a2e; }
+  .item { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid #f0f0f5; }
+  .item:last-child { border-bottom: none; }
+  .item-name { font-weight: 500; }
+  .item-qty { color: #888; font-size: 13px; }
+  .item-price { font-weight: 600; }
+  .totals { margin-top: 20px; padding: 16px; background: #f9f9fb; border-radius: 8px; }
+  .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; }
+  .totals-row.total { font-weight: 700; font-size: 16px; border-top: 1px solid #e0e0ea; margin-top: 8px; padding-top: 12px; }
+  .tracking { margin-top: 24px; padding: 20px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; text-align: center; }
+  .tracking h3 { margin: 0 0 8px; color: #166534; font-size: 15px; }
+  .tracking p { margin: 0; color: #15803d; font-size: 14px; }
+  .timeline { display: flex; justify-content: space-between; margin-top: 20px; }
+  .timeline-step { text-align: center; flex: 1; position: relative; }
+  .timeline-step::after { content: ''; position: absolute; top: 14px; left: 50%; width: 100%; height: 2px; background: #e0e0ea; }
+  .timeline-step:last-child::after { display: none; }
+  .dot { width: 28px; height: 28px; border-radius: 50%; background: #e0e0ea; display: inline-block; margin: 0 auto 8px; position: relative; z-index: 1; }
+  .dot.active { background: #6d4aff; }
+  .timeline-step span { font-size: 12px; color: #888; }
+  .timeline-step.active span { color: #6d4aff; font-weight: 600; }
+  .btn { display: inline-block; background: #6d4aff; color: #fff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; margin-top: 20px; }
+  .footer { background: #f9f9fb; padding: 20px 30px; text-align: center; font-size: 12px; color: #888; border-top: 1px solid #e8e8f0; }
+  .footer a { color: #6d4aff; text-decoration: none; }
+</style>
 </head>
-<body style="margin:0;padding:0;background-color:#00002e;font-family:Arial,Helvetica,sans-serif;">
+<body>
+<div class="container">
+  <div class="header">
+    <h1>✓ Order Confirmed</h1>
+    <p>Thank you for shopping with Foogle Store</p>
+  </div>
+  <div class="content">
+    <div class="order-id">
+      Order <strong>#FS-2024-8842</strong> · Nov 22, 2026
+    </div>
 
-<!-- Outer wrapper -->
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       style="background-color:#00002e;min-height:100vh;">
-  <tr>
-    <td align="center" valign="top" style="padding:40px 16px;">
+    <h2 class="section-title">Order Summary</h2>
+    <div class="item">
+      <div>
+        <div class="item-name">Wireless Headphones Pro</div>
+        <div class="item-qty">Qty: 1 · Black</div>
+      </div>
+      <div class="item-price">$79.99</div>
+    </div>
+    <div class="item">
+      <div>
+        <div class="item-name">USB-C Charging Cable (2m)</div>
+        <div class="item-qty">Qty: 2 · White</div>
+      </div>
+      <div class="item-price">$19.98</div>
+    </div>
 
-      <!-- Card -->
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-             style="max-width:480px;background-color:#00003c;border-radius:32px;border:3px solid #fef9e6;overflow:hidden;">
+    <div class="totals">
+      <div class="totals-row">
+        <span>Subtotal</span><span>$99.97</span>
+      </div>
+      <div class="totals-row">
+        <span>Shipping</span><span>Free</span>
+      </div>
+      <div class="totals-row">
+        <span>Tax</span><span>$8.50</span>
+      </div>
+      <div class="totals-row total">
+        <span>Total</span><span>$108.47</span>
+      </div>
+    </div>
 
-        <!-- Teal top accent bar -->
-        <tr>
-          <td style="background-color:#1ED2AF;height:6px;font-size:0;line-height:0;">&nbsp;</td>
-        </tr>
+    <div class="tracking">
+      <h3>📦 Estimated Delivery: Nov 26 – Nov 28</h3>
+      <p>We'll send you a tracking number once your order ships.</p>
+    </div>
 
-        <!-- Header -->
-        <tr>
-          <td align="center" style="padding:36px 40px 24px;">
-            <img src="https://luminous-chat.vercel.app/logo.png"
-                 alt="Luminous"
-                 width="56" height="56"
-                 style="border-radius:50%;display:block;margin:0 auto 16px;" />
-            <h1 style="margin:0;font-size:28px;font-weight:700;color:#fef9e6;letter-spacing:-0.5px;">
-              Luminous
-            </h1>
-            <p style="margin:6px 0 0;font-size:12px;color:#1ED2AF;letter-spacing:2px;text-transform:uppercase;">
-              Atlas School's Unofficial Chat App
-            </p>
-          </td>
-        </tr>
+    <div class="timeline">
+      <div class="timeline-step active">
+        <div class="dot active"></div>
+        <span>Confirmed</span>
+      </div>
+      <div class="timeline-step">
+        <div class="dot"></div>
+        <span>Processing</span>
+      </div>
+      <div class="timeline-step">
+        <div class="dot"></div>
+        <span>Shipped</span>
+      </div>
+      <div class="timeline-step">
+        <div class="dot"></div>
+        <span>Delivered</span>
+      </div>
+    </div>
 
-        <!-- Divider -->
-        <tr>
-          <td style="padding:0 40px;">
-            <div style="height:1px;background-color:#fef9e6;opacity:0.1;"></div>
-          </td>
-        </tr>
-
-        <!-- Body -->
-        <tr>
-          <td style="padding:32px 40px 16px;">
-            <h2 style="margin:0 0 12px;font-size:20px;font-weight:700;color:#fef9e6;">
-              Confirm your email address
-            </h2>
-            <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#fef9e6;opacity:0.75;">
-              Welcome to Luminous! To finish creating your account, please verify
-              that this is your Atlas School email address by clicking the button below.
-            </p>
-            <p style="margin:0 0 28px;font-size:15px;line-height:1.6;color:#fef9e6;opacity:0.75;">
-              This link will expire in <strong style="color:#fef9e6;opacity:1;">24 hours</strong>.
-            </p>
-          </td>
-        </tr>
-
-        <!-- CTA Button -->
-        <tr>
-          <td align="center" style="padding:0 40px 32px;">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td align="center" style="border-radius:20px;background-color:#1ED2AF;">
-                  <a href="https://luminous-chat.vercel.app/confirm?token=xyz789ghi012"
-                     style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:700;color:#00002e;text-decoration:none;border-radius:20px;letter-spacing:0.3px;">
-                    Confirm My Account
-                  </a>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- Fallback link -->
-        <tr>
-          <td style="padding:0 40px 32px;">
-            <div style="background-color:#00002e;border-radius:16px;padding:16px;border:1px solid #fef9e6;border-opacity:0.1;">
-              <p style="margin:0 0 8px;font-size:11px;color:#fef9e6;opacity:0.4;text-transform:uppercase;letter-spacing:1.5px;">
-                Button not working?
-              </p>
-              <p style="margin:0;font-size:12px;color:#fef9e6;opacity:0.5;word-break:break-all;line-height:1.5;">
-                Copy and paste this link into your browser:<br/>
-                <a href="https://luminous-chat.vercel.app/confirm?token=xyz789ghi012"
-                   style="color:#1ED2AF;text-decoration:underline;font-size:12px;word-break:break-all;">
-                  https://luminous-chat.vercel.app/confirm?token=xyz789ghi012
-                </a>
-              </p>
-            </div>
-          </td>
-        </tr>
-
-        <!-- Divider -->
-        <tr>
-          <td style="padding:0 40px;">
-            <div style="height:1px;background-color:#fef9e6;opacity:0.1;"></div>
-          </td>
-        </tr>
-
-        <!-- Footer -->
-        <tr>
-          <td align="center" style="padding:24px 40px 32px;">
-            <p style="margin:0 0 6px;font-size:12px;color:#fef9e6;opacity:0.35;line-height:1.5;">
-              If you didn't create a Luminous account, you can safely ignore this email.
-            </p>
-          </td>
-        </tr>
-
-        <!-- Teal bottom accent bar -->
-        <tr>
-          <td style="background-color:#1ED2AF;height:4px;font-size:0;line-height:0;">&nbsp;</td>
-        </tr>
-
-      </table>
-      <!-- /Card -->
-
-    </td>
-  </tr>
-</table>
-
+    <div style="text-align: center;">
+      <a class="btn" href="#">Track Order</a>
+    </div>
+  </div>
+  <div class="footer">
+    <p>Questions? Contact us at <a href="#">support@fooglestore.com</a></p>
+    <p>© 2026 Foogle Store. All rights reserved.</p>
+  </div>
+</div>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 4", ts: 5,
+        date: "Nov 22", ts: 95,
     },
 ];

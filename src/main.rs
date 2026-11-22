@@ -22,7 +22,8 @@ use freya::{borderless::BorderlessPlugin, prelude::*};
 use crate::{
     html_viewer::LinkConfirmDialog,
     keyboard::handle_key,
-    message_list::MessageList, pane_divider::{PaneDivider, DividerTarget}, reader::Reader,
+    message_list::MessageList, pane_divider::{PaneDivider, DividerTarget},
+    reader::{AttachmentPreview, Reader},
     sidebar::Sidebar, state::use_app_state, theme::DARK, titlebar::Titlebar,
 };
 
@@ -128,4 +129,38 @@ fn app() -> impl IntoElement {
                         .child(LinkConfirmDialog { state }),
                 )
         }))
+        .maybe_child({
+            // Attachment preview overlay
+            let show_preview = *state.attachment_preview_open.read();
+            show_preview.then(|| {
+                let close_preview = {
+                    let mut preview_open = state.attachment_preview_open.clone();
+                    let mut preview_fs = state.attachment_preview_fullscreen.clone();
+                    EventHandler::new(move |_| {
+                        preview_open.set(false);
+                        preview_fs.set(false);
+                    })
+                };
+                rect()
+                    .layer(Layer::Overlay)
+                    .position(Position::new_global().top(0.).left(0.))
+                    .width(Size::window_percent(100.))
+                    .height(Size::window_percent(100.))
+                    .background(Color::from_argb(180, 0, 0, 0))
+                    .on_press(close_preview.clone())
+                    .child(
+                        rect()
+                            .position(Position::new_global().top(0.).left(0.))
+                            .width(Size::window_percent(100.))
+                            .height(Size::window_percent(100.))
+                            .center()
+                            .on_press({
+                                EventHandler::new(move |e: Event<freya::prelude::PressEventData>| {
+                                    e.stop_propagation();
+                                })
+                            })
+                            .child(AttachmentPreview { state }),
+                    )
+            })
+        })
 }

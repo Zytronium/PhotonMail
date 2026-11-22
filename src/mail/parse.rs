@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use mail_parser::{MessageParser, PartType};
+use mail_parser::{MessageParser, MimeHeaders, PartType};
 
-use super::BodyData;
+use super::{AttachmentInfo, BodyData};
 use crate::data::MailContentType;
 
 /// ENVELOPE strings arrive raw, so a subject or display name can still be an RFC 2047
@@ -32,8 +32,46 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
             content_type: MailContentType::PlainText,
             preview: make_preview(&text),
             text: Arc::from(text),
+            attachments: Vec::new(),
         };
     };
+
+    // Extract attachments with their binary data
+    let attachments: Vec<AttachmentInfo> = msg
+        .attachments()
+        .map(|part| {
+            // Extract the decoded binary data from the attachment part
+            let data = match &part.body {
+                PartType::Binary(data) | PartType::InlineBinary(data) => {
+                    Some(data.to_vec())
+                }
+                PartType::Text(text) => {
+                    // Some attachments may be text-based (e.g., CSV, plain text files)
+                    Some(text.as_bytes().to_vec())
+                }
+                _ => None,
+            };
+
+            AttachmentInfo {
+                name: part
+                    .attachment_name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "attachment".to_string()),
+                size: part.len(),
+                content_type: part
+                    .content_type()
+                    .map(|ct| {
+                        if let Some(sub) = &ct.c_subtype {
+                            format!("{}/{}", ct.c_type, sub)
+                        } else {
+                            ct.c_type.to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| "application/octet-stream".to_string()),
+                data,
+            }
+        })
+        .collect();
 
     // For HTML-only mail, `body_text` renders the HTML down to plain text, which is
     // what we want for the list preview.
@@ -50,6 +88,7 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
             content_type: MailContentType::Html,
             preview,
             text: Arc::from(html.as_ref()),
+            attachments,
         };
     }
 
@@ -58,6 +97,7 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
         content_type: MailContentType::PlainText,
         preview,
         text: Arc::from(text),
+        attachments,
     }
 }
 

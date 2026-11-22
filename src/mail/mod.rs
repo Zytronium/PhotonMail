@@ -57,11 +57,26 @@ pub struct HeaderRow {
     pub size: u32,
 }
 
+/// Metadata about a single email attachment.
+#[derive(Clone, Debug)]
+pub struct AttachmentInfo {
+    /// Suggested filename from Content-Disposition or Content-Type.
+    pub name: String,
+    /// Size in bytes of the decoded attachment data.
+    pub size: usize,
+    /// MIME content type (e.g. "application/pdf").
+    pub content_type: String,
+    /// Decoded binary data of the attachment, if inlined with the body.
+    pub data: Option<Vec<u8>>,
+}
+
 #[derive(Clone)]
 pub struct BodyData {
     pub content_type: MailContentType,
     pub text: Arc<str>,
     pub preview: String,
+    /// Attachments found in the message.
+    pub attachments: Vec<AttachmentInfo>,
 }
 
 /// Worker → UI.

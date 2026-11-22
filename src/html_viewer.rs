@@ -34,6 +34,84 @@ static RE_TRACKING_FRAME: LazyLock<Regex> = LazyLock::new(|| {
     ).unwrap()
 });
 
+
+static RE_BG_DECL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)(?:background(?:-color)?\s*:\s*|bgcolor\s*=\s*["']?)(#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|[a-z]+)"#).unwrap()
+});
+static RE_COLOR_SCHEME_DARK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)(?:color-scheme\s*:\s*[^;"}]*\bdark\b|<meta[^>]*name=["']color-scheme["'][^>]*dark|supported-color-schemes[^>]*dark)"#).unwrap()
+});
+
+/// Parse a CSS/HTML color into (r, g, b). Returns None for unknown / transparent values.
+fn parse_color(v: &str) -> Option<(u8, u8, u8)> {
+    let v = v.trim().to_ascii_lowercase();
+    if let Some(hex) = v.strip_prefix('#') {
+        let h: Vec<u8> = hex.chars().filter_map(|c| c.to_digit(16).map(|d| d as u8)).collect();
+        return match h.len() {
+            3 | 4 => Some((h[0] * 17, h[1] * 17, h[2] * 17)),
+            6 | 8 => Some((h[0] * 16 + h[1], h[2] * 16 + h[3], h[4] * 16 + h[5])),
+            _ => None,
+        };
+    }
+    if v.starts_with("rgb") {
+        let inner = v.split('(').nth(1)?.split(')').next()?;
+        let nums: Vec<f32> = inner
+            .split(|c: char| c == ',' || c == ' ' || c == '/')
+            .filter(|t| !t.is_empty())
+            .filter_map(|t| t.trim_end_matches('%').parse::<f32>().ok())
+            .collect();
+        if nums.len() >= 3 {
+            if nums.len() >= 4 && nums[3] == 0.0 {
+                return None;
+            }
+            return Some((nums[0] as u8, nums[1] as u8, nums[2] as u8));
+        }
+        return None;
+    }
+    match v.as_str() {
+        "black" => Some((0, 0, 0)),
+        "white" => Some((255, 255, 255)),
+        "navy" => Some((0, 0, 128)),
+        "darkblue" => Some((0, 0, 139)),
+        "midnightblue" => Some((25, 25, 112)),
+        "darkslategray" | "darkslategrey" => Some((47, 79, 79)),
+        "gray" | "grey" => Some((128, 128, 128)),
+        _ => None,
+    }
+}
+
+fn luminance((r, g, b): (u8, u8, u8)) -> f32 {
+    (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
+}
+
+/// Heuristic: does this email already ship with a dark design?
+/// Looks for a declared dark color scheme, or a dark page background on
+/// html/body/the outermost table (the first background declarations in the document).
+fn is_already_dark(html: &str) -> bool {
+    if RE_COLOR_SCHEME_DARK.is_match(html) {
+        return true;
+    }
+    // Only consider the first few background declarations: those belong to the
+    // outermost wrappers (html/body/main table), not to small inner accents.
+    let mut seen = 0;
+    let mut dark_votes = 0;
+    let mut light_votes = 0;
+    for cap in RE_BG_DECL.captures_iter(html) {
+        if let Some(c) = parse_color(&cap[1]) {
+            if luminance(c) < 0.35 {
+                dark_votes += 1;
+            } else {
+                light_votes += 1;
+            }
+            seen += 1;
+            if seen >= 4 {
+                break;
+            }
+        }
+    }
+    dark_votes > 0 && dark_votes >= light_votes
+}
+
 /// Analyze an HTML body and return a sanitized version plus tracking-pixel warnings.
 #[derive(Clone, Default, PartialEq)]
 pub struct HtmlAnalysis {
@@ -86,11 +164,17 @@ pub fn sanitize_html(html: &str) -> HtmlAnalysis {
     //    so dark text becomes readable on our dark background, then re-invert images
     //    so photographs don't look like negatives. This is how Gmail iOS and many
     //    other clients handle dark mode for emails without explicit dark-mode styles.
-    let style = r#"<style>
+    //    Emails that are already dark (detected heuristically) are left untouched,
+    //    otherwise the inversion would turn them light.
+    let style = if is_already_dark(&result) {
+        "<style>a{cursor:pointer!important}</style>".to_string()
+    } else {
+        r#"<style>
 html{filter:invert(1) hue-rotate(180deg)!important}
 img,video,iframe{filter:invert(1) hue-rotate(180deg)!important}
 a{cursor:pointer!important}
-</style>"#.to_string();
+</style>"#.to_string()
+    };
     if let Some(body_start) = result.find("<body") {
         let insert_pos = if let Some(gt) = result[body_start..].find('>') {
             body_start + gt + 1
