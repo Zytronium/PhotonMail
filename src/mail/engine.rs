@@ -100,6 +100,16 @@ async fn manager(
                             let _ = done_tx.send((cfg, password, result));
                         });
                     }
+                    Command::UpdateAccount { index, cfg } => {
+                        if let Some(existing) = configs.get_mut(index) {
+                            *existing = cfg.clone();
+                            if let Err(e) = config::save_accounts(&configs) {
+                                let _ = events.try_send(Event::Notice {
+                                    text: format!("Couldn't save the account list: {e}"),
+                                });
+                            }
+                        }
+                    }
                 }
             }
 

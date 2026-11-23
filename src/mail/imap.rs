@@ -551,7 +551,43 @@ impl Worker {
                 }
                 Ok(())
             }
+            WorkerCmd::SendEmail { raw } => {
+                let result = super::smtp::send_email(&self.cfg, &self.password, &raw).await;
+                match result {
+                    Ok(()) => {
+                        self.emit(Event::EmailSent { account: self.index });
+                        // Gmail files SMTP-sent mail into Sent itself; everyone else needs an APPEND.
+                        if !self.cfg.smtp_host.to_lowercase().contains("gmail") {
+                            if let Err(e) = self.append_sent(&raw).await {
+                                self.emit(Event::Notice {
+                                    text: format!("Sent, but could not save to Sent folder: {e}"),
+                                });
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.emit(Event::EmailSendFailed { account: self.index, error: e });
+                    }
+                }
+                Ok(())
+            }
         }
+    }
+
+    /// Save a copy of a just-sent message in the Sent folder (marked Seen).
+    async fn append_sent(&mut self, raw: &str) -> Res<()> {
+        let Some(sent_path) = self.paths[SENT].clone() else {
+            return Ok(());
+        };
+        let session = self.session.as_mut().ok_or_else(not_connected)?;
+        io("APPEND", async {
+            session
+                .append(&sent_path, Some("(\\Seen)"), None, raw.as_bytes())
+                .await
+        })
+            .await?;
+        self.push_sync_front(SENT);
+        Ok(())
     }
 
     /// Append a raw RFC-2822 message to the Drafts folder on the server.
@@ -569,7 +605,7 @@ impl Worker {
                 .append(&drafts_path, Some("(\\Draft)"), None, raw.as_bytes())
                 .await
         })
-        .await?;
+            .await?;
         // Find the new UID by searching for the highest UID in the Drafts folder
         let new_uid = self.fetch_highest_uid(DRAFTS).await.unwrap_or(None);
         // Queue a re-sync so the new draft appears in the list, but do it asynchronously
@@ -594,11 +630,11 @@ impl Worker {
                 .try_collect::<Vec<Fetch>>()
                 .await
         })
-        .await?;
+            .await?;
         io("EXPUNGE", async {
             session.uid_expunge(&uid_str).await?.try_collect::<Vec<u32>>().await
         })
-        .await?;
+            .await?;
         // Append the new draft content
         self.append_draft(raw).await
     }

@@ -71,39 +71,133 @@ impl Component for AddAccountView {
 
         // Form state
         let email = use_state(String::new);
-        let display_name = use_state(String::new);
+        let account_name = use_state(String::new);
+        let sender_name = use_state(String::new);
         let password = use_state(String::new);
         let host = use_state(String::new);
         let port = use_state(|| "993".to_string());
         let security = use_state(|| "SSL/TLS".to_string());
+        let smtp_host = use_state(String::new);
+        let smtp_port = use_state(|| "587".to_string());
         let mut working = use_state(|| false);
         let current_step = use_state(|| SetupStep::Account);
+
+        // Auto-detect status: tracks the async DNS/autoconfig discovery
+        let detecting = use_state(|| false);
+        let detect_status = use_state(|| String::new());
 
         // A failure from the worker re-enables the button.
         if error.is_some() && *working.peek() {
             working.set(false);
         }
 
-        // Auto-discover IMAP host from email domain when advancing from Account step
+        // Auto-discover server settings from email domain when advancing from Account step.
+        // Uses the built-in provider database (discover_settings) for known providers,
+        // and falls back to heuristic guessing for unknown domains.
         let discover_host = {
             let email = email.clone();
             let mut host = host.clone();
+            let mut port = port.clone();
+            let mut smtp_host = smtp_host.clone();
+            let mut smtp_port = smtp_port.clone();
             move || {
-                if host.read().is_empty() {
+                if host.read().is_empty() || smtp_host.read().is_empty() {
                     let addr = email.read().trim().to_string();
-                    if let Some(domain) = addr.split('@').nth(1) {
-                        let discovered = match domain {
-                            d if d.ends_with("gmail.com") || d.ends_with("googlemail.com") => "imap.gmail.com",
-                            d if d.ends_with("outlook.com") || d.ends_with("hotmail.com") || d.ends_with("live.com") => "outlook.office365.com",
-                            d if d.ends_with("icloud.com") => "imap.mail.me.com",
-                            d if d.ends_with("yahoo.com") => "imap.mail.yahoo.com",
-                            _ => "",
-                        };
-                        if !discovered.is_empty() {
-                            host.set(discovered.to_string());
+                    // Try the built-in provider database first
+                    if let Some(settings) = crate::mail::config::discover_settings(&addr) {
+                        if host.read().is_empty() {
+                            host.set(settings.imap.host.to_string());
+                        }
+                        if port.read().as_str() == "993" {
+                            port.set(settings.imap.port.to_string());
+                        }
+                        if smtp_host.read().is_empty() {
+                            smtp_host.set(settings.smtp.host.to_string());
+                        }
+                        if smtp_port.read().as_str() == "587" {
+                            smtp_port.set(settings.smtp.port.to_string());
+                        }
+                        return;
+                    }
+                    // Fallback: heuristic guessing for unknown domains
+                    if host.read().is_empty() {
+                        if let Some(domain) = addr.split('@').nth(1) {
+                            host.set(format!("imap.{domain}"));
+                        }
+                    }
+                    if smtp_host.read().is_empty() {
+                        let h = host.read().trim().to_lowercase();
+                        if !h.is_empty() {
+                            let suggested = if let Some(rest) = ["imap-mail.", "imap.", "imaps."]
+                                .iter()
+                                .find_map(|p| h.strip_prefix(p))
+                            {
+                                format!("smtp.{rest}")
+                            } else if h.starts_with("smtp.") || h.starts_with("mail.") {
+                                h.clone()
+                            } else {
+                                format!("smtp.{}", h.trim_start_matches("imap.").trim_start_matches("imap-").trim_start_matches("imaps."))
+                            };
+                            smtp_host.set(suggested);
                         }
                     }
                 }
+            }
+        };
+
+        // Auto-detect: triggered by the "Auto-detect" button.
+        // First tries the built-in provider database (instant), then falls back to
+        // async DNS/autoconfig discovery for unknown domains.
+        // Uses a channel to send results back to the UI thread (Freya State is !Send).
+        let auto_detect = {
+            let email = email.clone();
+            let mut host = host.clone();
+            let mut port = port.clone();
+            let mut smtp_host = smtp_host.clone();
+            let mut smtp_port = smtp_port.clone();
+            let mut detecting = detecting.clone();
+            let mut detect_status = detect_status.clone();
+            move || {
+                let addr = email.read().trim().to_string();
+
+                // Try built-in database first (instant, offline)
+                if let Some(settings) = crate::mail::config::discover_settings(&addr) {
+                    host.set(settings.imap.host.to_string());
+                    port.set(settings.imap.port.to_string());
+                    smtp_host.set(settings.smtp.host.to_string());
+                    smtp_port.set(settings.smtp.port.to_string());
+                    detect_status.set("✓ Settings found from provider database".to_string());
+                    return;
+                }
+
+                // Not in database — run DNS/autoconfig discovery on a background thread
+                // with its own Tokio runtime (hickory-resolver requires Tokio).
+                detecting.set(true);
+                detect_status.set("Looking up server settings…".to_string());
+
+                let mut h = host.clone();
+                let mut p = port.clone();
+                let mut sh = smtp_host.clone();
+                let mut sp = smtp_port.clone();
+                let mut det = detecting.clone();
+                let mut ds = detect_status.clone();
+
+                freya::prelude::spawn(async move {
+                    let result = crate::mail::discovery::discover_sync(&addr);
+                    match result {
+                        crate::mail::discovery::DiscoveryResult::Found(s) => {
+                            h.set(s.imap_host);
+                            p.set(s.imap_port.to_string());
+                            sh.set(s.smtp_host);
+                            sp.set(s.smtp_port.to_string());
+                            ds.set("✓ Server settings detected automatically".to_string());
+                        }
+                        crate::mail::discovery::DiscoveryResult::Failed(msg) => {
+                            ds.set(format!("✗ {msg}"));
+                        }
+                    }
+                    det.set(false);
+                });
             }
         };
 
@@ -140,9 +234,15 @@ impl Component for AddAccountView {
                         secret: false,
                     })
                     .child(AddAccountFormField {
-                        label: "Display name",
-                        placeholder: "Your Name (optional)",
-                        value: display_name.clone(),
+                        label: "Account name",
+                        placeholder: "Work Email (shown in sidebar)",
+                        value: account_name.clone(),
+                        secret: false,
+                    })
+                    .child(AddAccountFormField {
+                        label: "Sender name",
+                        placeholder: "John Doe (shown to recipients)",
+                        value: sender_name.clone(),
                         secret: false,
                     })
                     .child(AddAccountFormField {
@@ -183,7 +283,48 @@ impl Component for AddAccountView {
                                 })
                             )
                     )
-                    .child(
+                    .child(label().text("Configure your SMTP (sending) server settings.").color(DARK.muted).font_size(13.))
+                    .child(AddAccountFormField {
+                        label: "SMTP server",
+                        placeholder: "smtp.example.com",
+                        value: smtp_host.clone(),
+                        secret: false,
+                    })
+                    .child(AddAccountFormField {
+                        label: "SMTP port (465 = SSL/TLS, 587 = STARTTLS)",
+                        placeholder: "587",
+                        value: smtp_port.clone(),
+                        secret: false,
+                    })
+                    .child({
+                        // Auto-detect button
+                        let mut detect = auto_detect.clone();
+                        let is_detecting = detecting.clone();
+                        rect()
+                            .padding((6., 14., 6., 14.))
+                            .corner_radius(6.)
+                            .background(crate::grain::hover())
+                            .cursor(if *is_detecting.read() {
+                                freya::winit::window::CursorIcon::Default
+                            } else {
+                                freya::winit::window::CursorIcon::Pointer
+                            })
+                            .opacity(if *is_detecting.read() { 0.6 } else { 1.0 })
+                            .horizontal()
+                            .cross_align(Alignment::Center)
+                            .spacing(6.)
+                            .on_press(move |_| {
+                                if !*is_detecting.read() {
+                                    detect();
+                                }
+                            })
+                            .child(icon(SEARCH, 14., DARK.muted))
+                            .child(label().text(if *is_detecting.read() { "Detecting…" } else { "Auto-detect server settings" }).color(DARK.muted).font_size(12.))
+                    })
+                    .child({
+                        // Status message for auto-detect
+                        let status = detect_status.clone();
+                        let is_detecting = detecting.clone();
                         rect()
                             .padding(10.)
                             .corner_radius(8.)
@@ -194,16 +335,28 @@ impl Component for AddAccountView {
                                     .cross_align(Alignment::Center)
                                     .spacing(8.)
                                     .child(icon(SETTINGS, 14., DARK.muted))
-                                    .child(label().text("Common providers are auto-detected from your email address.").color(DARK.muted).font_size(12.))
+                                    .child(label().text({
+                                        let s = status.read().clone();
+                                        if *is_detecting.read() {
+                                            "Looking up DNS records and provider settings…".to_string()
+                                        } else if s.is_empty() {
+                                            "Click to look up server settings for your email provider.".to_string()
+                                        } else {
+                                            s
+                                        }
+                                    }).color(DARK.muted).font_size(12.))
                             )
-                    )
+                    })
             }
             SetupStep::Verify => {
                 let addr = email.read().clone();
-                let name = display_name.read().clone();
+                let acct_nm = account_name.read().clone();
+                let sndr_nm = sender_name.read().clone();
                 let srv = host.read().clone();
                 let p = port.read().clone();
-                let name_display = if name.is_empty() { addr.split('@').next().unwrap_or(&addr).to_string() } else { name };
+                let smtp_srv = format!("{}:{}", smtp_host.read().trim(), smtp_port.read().trim());
+                let acct_display = if acct_nm.is_empty() { addr.split('@').next().unwrap_or(&addr).to_string() } else { acct_nm };
+                let sndr_display = if sndr_nm.is_empty() { acct_display.clone() } else { sndr_nm };
 
                 rect().spacing(12.)
                     .child(label().text("Review your settings before connecting.").color(DARK.muted).font_size(13.))
@@ -214,8 +367,10 @@ impl Component for AddAccountView {
                             .background(Fill::from((30, 30, 46)))
                             .spacing(10.)
                             .child(VerifyRow { label: "Account", value: addr.clone() })
-                            .child(VerifyRow { label: "Name", value: name_display })
+                            .child(VerifyRow { label: "Account name", value: acct_display })
+                            .child(VerifyRow { label: "Sender name", value: sndr_display })
                             .child(VerifyRow { label: "IMAP server", value: format!("{}:{}", srv, p) })
+                            .child(VerifyRow { label: "SMTP server", value: smtp_srv })
                             .child(VerifyRow { label: "Auth", value: "Password".to_string() })
                     )
             }
@@ -244,14 +399,16 @@ impl Component for AddAccountView {
         // Navigation buttons
         let can_next = match *current_step.read() {
             SetupStep::Account => email.read().contains('@') && password.read().len() > 0,
-            SetupStep::Server => host.read().trim().len() > 0,
+            SetupStep::Server => host.read().trim().len() > 0 && smtp_host.read().trim().len() > 0,
             SetupStep::Verify => true,
         };
 
         // Action button (Next or Connect)
         let action_button = if *current_step.read() == SetupStep::Verify {
             let (email, password, host, port) = (email.clone(), password.clone(), host.clone(), port.clone());
-            let display_name = display_name.clone();
+            let (smtp_host, smtp_port) = (smtp_host.clone(), smtp_port.clone());
+            let account_name = account_name.clone();
+            let sender_name = sender_name.clone();
             let btn_handler = {
                 let mut state = state;
                 EventHandler::new(move |_| {
@@ -262,7 +419,8 @@ impl Component for AddAccountView {
                     let server = host.read().trim().to_string();
                     let port_num: u16 = port.read().trim().parse().unwrap_or(993);
                     let pw = password.read().clone();
-                    let name = display_name.read().trim().to_string();
+                    let acct_nm = account_name.read().trim().to_string();
+                    let sndr_nm = sender_name.read().trim().to_string();
                     if !addr.contains('@') || server.is_empty() || pw.is_empty() {
                         state.store.write().add_error =
                             Some("Enter your email, password and IMAP server.".to_string());
@@ -270,13 +428,20 @@ impl Component for AddAccountView {
                     }
                     state.store.write().add_error = None;
                     working.set(true);
+                    let smtp_host = smtp_host.read().trim().to_string();
+                    let smtp_port: u16 = smtp_port.read().trim().parse().unwrap_or(587);
+                    let name_val = if acct_nm.is_empty() { addr.split('@').next().unwrap_or(&addr).to_string() } else { acct_nm };
+                    let sender_name_val = if sndr_nm.is_empty() { name_val.clone() } else { sndr_nm };
                     let cfg = crate::mail::AccountConfig {
                         id: crate::mail::config::new_id(),
-                        name: if name.is_empty() { addr.split('@').next().unwrap_or(&addr).to_string() } else { name },
+                        name: name_val,
+                        sender_name: sender_name_val,
                         email: addr.clone(),
                         username: addr,
                         host: server,
                         port: port_num,
+                        smtp_host,
+                        smtp_port,
                     };
                     state
                         .engine
@@ -357,7 +522,7 @@ impl Component for AddAccountView {
     }
 }
 
-/// Edit an existing account's name, email, and IMAP server settings.
+/// Edit an existing account's name, email, IMAP server, and SMTP settings.
 #[derive(PartialEq)]
 pub struct EditAccountView {
     pub state: AppState,
@@ -369,18 +534,26 @@ impl Component for EditAccountView {
         let mut state = self.state;
         let index = self.index;
 
-        // Pre-fill from the existing account
-        let existing = {
-            let store = state.store.read();
-            store.accounts.get(index).cloned()
+        // Pre-fill from the persisted config (has SMTP fields)
+        let persisted_cfg = {
+            let configs = crate::mail::config::load_accounts();
+            configs.into_iter().nth(index)
         };
-        let Some(account) = existing else {
+        let Some(cfg) = persisted_cfg else {
             return rect().child(label().text("Account not found").color(DARK.danger));
         };
 
-        let email = use_state(|| account.addr.clone());
-        let display_name = use_state(|| account.name.clone());
-        let host = use_state(|| account.host.clone());
+        let email = use_state(|| cfg.email.clone());
+        let account_name = use_state(|| cfg.name.clone());
+        let sender_name = use_state(|| cfg.sender_name.clone());
+        let host = use_state(|| cfg.host.clone());
+        let port = use_state(|| cfg.port.to_string());
+        let smtp_host = use_state(|| cfg.smtp_host.clone());
+        let smtp_port = use_state(|| cfg.smtp_port.to_string());
+
+        // Auto-detect status for Edit Account
+        let edit_detecting = use_state(|| false);
+        let edit_detect_status = use_state(|| String::new());
 
         let mut col = rect()
             .width(Size::fill())
@@ -396,29 +569,160 @@ impl Component for EditAccountView {
                     .child(label().text("Edit Account").color(DARK.text).font_size(20.).font_weight(FontWeight::BOLD))
             );
 
-        // Form fields
+        // Form fields (scrollable so buttons aren't cut off on small windows)
         col = col.child(
-            rect()
+            ScrollView::new()
                 .width(Size::fill())
-                .spacing(12.)
-                .child(AddAccountFormField {
-                    label: "Email address",
-                    placeholder: "you@example.com",
-                    value: email.clone(),
-                    secret: false,
-                })
-                .child(AddAccountFormField {
-                    label: "Display name",
-                    placeholder: "Your name",
-                    value: display_name.clone(),
-                    secret: false,
-                })
-                .child(AddAccountFormField {
-                    label: "IMAP server",
-                    placeholder: "imap.example.com",
-                    value: host.clone(),
-                    secret: false,
-                })
+                .height(Size::flex(1.))
+                .child(
+                    rect()
+                        .width(Size::fill())
+                        .spacing(12.)
+                        .child(label().text("Account details").color(DARK.muted).font_size(13.))
+                        .child(AddAccountFormField {
+                            label: "Email address",
+                            placeholder: "you@example.com",
+                            value: email.clone(),
+                            secret: false,
+                        })
+                        .child(AddAccountFormField {
+                            label: "Account name",
+                            placeholder: "Work Email (shown in sidebar)",
+                            value: account_name.clone(),
+                            secret: false,
+                        })
+                        .child(AddAccountFormField {
+                            label: "Sender name",
+                            placeholder: "John Doe (shown to recipients)",
+                            value: sender_name.clone(),
+                            secret: false,
+                        })
+                        .child(label().text("IMAP server settings").color(DARK.muted).font_size(13.))
+                        .child(AddAccountFormField {
+                            label: "IMAP server",
+                            placeholder: "imap.example.com",
+                            value: host.clone(),
+                            secret: false,
+                        })
+                        .child(
+                            rect()
+                                .horizontal()
+                                .spacing(8.)
+                                .child(
+                                    rect().width(Size::flex(1.)).child(AddAccountFormField {
+                                        label: "Port",
+                                        placeholder: "993",
+                                        value: port.clone(),
+                                        secret: false,
+                                    })
+                                )
+                        )
+                        .child(label().text("SMTP (sending) server settings").color(DARK.muted).font_size(13.))
+                        .child(AddAccountFormField {
+                            label: "SMTP server",
+                            placeholder: "smtp.example.com",
+                            value: smtp_host.clone(),
+                            secret: false,
+                        })
+                        .child(AddAccountFormField {
+                            label: "SMTP port (465 = SSL/TLS, 587 = STARTTLS)",
+                            placeholder: "587",
+                            value: smtp_port.clone(),
+                            secret: false,
+                        })
+                        .child({
+                            // Auto-detect button for Edit Account — supports async DNS discovery
+                            let email = email.clone();
+                            let mut host = host.clone();
+                            let mut port = port.clone();
+                            let mut smtp_host = smtp_host.clone();
+                            let mut smtp_port = smtp_port.clone();
+                            let mut is_detecting = edit_detecting.clone();
+                            let mut detect_status = edit_detect_status.clone();
+                            rect()
+                                .padding((6., 14., 6., 14.))
+                                .corner_radius(6.)
+                                .background(crate::grain::hover())
+                                .cursor(if *is_detecting.read() {
+                                    freya::winit::window::CursorIcon::Default
+                                } else {
+                                    freya::winit::window::CursorIcon::Pointer
+                                })
+                                .opacity(if *is_detecting.read() { 0.6 } else { 1.0 })
+                                .horizontal()
+                                .cross_align(Alignment::Center)
+                                .spacing(6.)
+                                .on_press(move |_| {
+                                    if *is_detecting.read() {
+                                        return;
+                                    }
+                                    let addr = email.read().trim().to_string();
+                                    // Try built-in database first
+                                    if let Some(settings) = crate::mail::config::discover_settings(&addr) {
+                                        host.set(settings.imap.host.to_string());
+                                        port.set(settings.imap.port.to_string());
+                                        smtp_host.set(settings.smtp.host.to_string());
+                                        smtp_port.set(settings.smtp.port.to_string());
+                                        detect_status.set("✓ Settings found from provider database".to_string());
+                                        return;
+                                    }
+                                    // DNS/autoconfig discovery — runs on a background thread with its own
+                                    // Tokio runtime (hickory-resolver requires Tokio).
+                                    is_detecting.set(true);
+                                    detect_status.set("Looking up server settings…".to_string());
+                                    let mut h = host.clone();
+                                    let mut p = port.clone();
+                                    let mut sh = smtp_host.clone();
+                                    let mut sp = smtp_port.clone();
+                                    let mut det = is_detecting.clone();
+                                    let mut ds = detect_status.clone();
+                                    freya::prelude::spawn(async move {
+                                        let result = crate::mail::discovery::discover_sync(&addr);
+                                        match result {
+                                            crate::mail::discovery::DiscoveryResult::Found(s) => {
+                                                h.set(s.imap_host);
+                                                p.set(s.imap_port.to_string());
+                                                sh.set(s.smtp_host);
+                                                sp.set(s.smtp_port.to_string());
+                                                ds.set("✓ Server settings detected automatically".to_string());
+                                            }
+                                            crate::mail::discovery::DiscoveryResult::Failed(msg) => {
+                                                ds.set(format!("✗ {msg}"));
+                                            }
+                                        }
+                                        det.set(false);
+                                    });
+                                })
+                                .child(icon(SEARCH, 14., DARK.muted))
+                                .child(label().text(if *is_detecting.read() { "Detecting…" } else { "Auto-detect server settings" }).color(DARK.muted).font_size(12.))
+                        })
+                        .child({
+                            // Status message for Edit Account auto-detect
+                            let status = edit_detect_status.clone();
+                            let is_detecting = edit_detecting.clone();
+                            rect()
+                                .padding(10.)
+                                .corner_radius(8.)
+                                .background(Fill::from((30, 30, 46)))
+                                .child(
+                                    rect()
+                                        .horizontal()
+                                        .cross_align(Alignment::Center)
+                                        .spacing(8.)
+                                        .child(icon(SETTINGS, 14., DARK.muted))
+                                        .child(label().text({
+                                            let s = status.read().clone();
+                                            if *is_detecting.read() {
+                                                "Looking up DNS records and provider settings…".to_string()
+                                            } else if s.is_empty() {
+                                                "Click to look up server settings for your email provider.".to_string()
+                                            } else {
+                                                s
+                                            }
+                                        }).color(DARK.muted).font_size(12.))
+                                )
+                        })
+                )
         );
 
         // Navigation buttons
@@ -442,24 +746,51 @@ impl Component for EditAccountView {
                 let save_handler = {
                     EventHandler::new(move |_| {
                         let addr = email.read().trim().to_string();
-                        let name = display_name.read().trim().to_string();
+                        let acct_nm = account_name.read().trim().to_string();
+                        let sndr_nm = sender_name.read().trim().to_string();
                         let server = host.read().trim().to_string();
+                        let port_num: u16 = port.read().trim().parse().unwrap_or(993);
+                        let smtp_srv = smtp_host.read().trim().to_string();
+                        let smtp_port_num: u16 = smtp_port.read().trim().parse().unwrap_or(587);
 
-                        if !addr.contains('@') || server.is_empty() {
+                        if !addr.contains('@') || server.is_empty() || smtp_srv.is_empty() {
                             return;
                         }
 
+                        let name_val = if acct_nm.is_empty() {
+                            addr.split('@').next().unwrap_or(&addr).to_string()
+                        } else {
+                            acct_nm
+                        };
+                        let sender_name_val = if sndr_nm.is_empty() {
+                            name_val.clone()
+                        } else {
+                            sndr_nm
+                        };
+
+                        // Update the in-memory UI model
                         let mut store = state.store.write();
                         if let Some(acc) = store.accounts.get_mut(index) {
-                            acc.name = if name.is_empty() {
-                                addr.split('@').next().unwrap_or(&addr).to_string()
-                            } else {
-                                name
-                            };
-                            acc.addr = addr;
-                            acc.host = server;
+                            acc.name = name_val.clone();
+                            acc.sender_name = sender_name_val.clone();
+                            acc.addr = addr.clone();
+                            acc.host = server.clone();
                         }
                         drop(store);
+
+                        // Persist the full config to disk
+                        let updated_cfg = crate::mail::AccountConfig {
+                            id: cfg.id.clone(),
+                            name: name_val,
+                            sender_name: sender_name_val,
+                            email: addr,
+                            username: cfg.username.clone(),
+                            host: server,
+                            port: port_num,
+                            smtp_host: smtp_srv,
+                            smtp_port: smtp_port_num,
+                        };
+                        state.update_account_config(index, updated_cfg);
                         state.view.set(crate::state::View::Settings(index));
                     })
                 };

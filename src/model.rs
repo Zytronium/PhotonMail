@@ -24,7 +24,10 @@ const PALETTE: [Rgb; 6] = [
 #[derive(Clone)]
 pub struct Account {
     pub id: String,
+    /// Display name shown in the sidebar (account label).
     pub name: String,
+    /// Sender display name — the name recipients see in the From header.
+    pub sender_name: String,
     pub addr: String,
     pub host: String,
     pub color: Rgb,
@@ -111,6 +114,8 @@ pub struct Store {
     pub notice: Option<String>,
     /// Set by a failed "Add account"; shown on the form.
     pub add_error: Option<String>,
+    /// Set when sending fails; shown as a dismissible banner until the user closes it.
+    pub send_error: Option<String>,
 }
 
 impl Store {
@@ -130,6 +135,7 @@ impl Store {
             .map(|a| Account {
                 id: a.addr.to_string(),
                 name: a.name.to_string(),
+                sender_name: a.name.to_string(),
                 addr: a.addr.to_string(),
                 host: "demo".to_string(),
                 color: a.color,
@@ -168,6 +174,7 @@ impl Store {
         self.accounts.push(Account {
             id: cfg.id.clone(),
             name: cfg.name.clone(),
+            sender_name: cfg.sender_name.clone(),
             addr: cfg.email.clone(),
             host: cfg.host.clone(),
             color,
@@ -264,6 +271,12 @@ impl Store {
             Event::AddAccountFailed { error } => self.add_error = Some(error),
             Event::DraftSaved { .. } => {
                 // Handled by the event pump in state.rs, nothing to do in the store.
+            }
+            Event::EmailSent { .. } => {
+                // Cleared in state.rs event pump to show a success notice.
+            }
+            Event::EmailSendFailed { .. } => {
+                // Cleared in state.rs event pump to show an error notice.
             }
         }
         false

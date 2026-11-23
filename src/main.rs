@@ -75,6 +75,14 @@ fn app() -> impl IntoElement {
         })
     };
 
+    let send_error = state.store.read().send_error.clone();
+    let dismiss_send_error = {
+        let mut store = state.store.clone();
+        EventHandler::new(move |_| {
+            store.write().send_error = None;
+        })
+    };
+
     rect()
         .expanded()
         .background(DARK.bg)
@@ -93,6 +101,22 @@ fn app() -> impl IntoElement {
             state.focus_state.set(fs);
         })
         .child(Titlebar)
+        .maybe_child(send_error.map(|msg| {
+            rect()
+                .horizontal()
+                .width(Size::fill())
+                .padding(8.)
+                .spacing(12.)
+                .background(DARK.danger)
+                .child(label().text(msg).color((255, 255, 255)).font_size(13.))
+                .child(
+                    rect()
+                        .padding((2., 10., 2., 10.))
+                        .corner_radius(4.)
+                        .on_press(dismiss_send_error)
+                        .child(label().text("Dismiss").color((255, 255, 255)).font_size(13.)),
+                )
+        }))
         .child(
             rect()
                 .horizontal()

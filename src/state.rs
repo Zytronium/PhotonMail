@@ -116,6 +116,22 @@ fn start_event_pump(app: AppState) {
                     }
                 }
             }
+            // Handle email send results: show a notice and close the compose window on success.
+            if let crate::mail::Event::EmailSent { account: _ } = &event {
+                app.store.write().send_error = None;
+                app.store.write().notice = Some("Message sent successfully.".to_string());
+                // Clear the notice after a delay — use futures-timer instead of tokio::time::sleep
+                // because Freya's spawn runs on futures-lite, not a Tokio runtime.
+                let mut app_clone = app.clone();
+                freya::prelude::spawn(async move {
+                    futures_timer::Delay::new(std::time::Duration::from_secs(3)).await;
+                    app_clone.store.write().notice = None;
+                });
+            }
+            if let crate::mail::Event::EmailSendFailed { error, .. } = &event {
+                // Persistent banner (the footer notice is wiped by the next sync status).
+                app.store.write().send_error = Some(format!("Message not sent: {error}"));
+            }
             let added = app.store.write().apply(event);
             if added {
                 // A new account just finished signing in: show its inbox.
@@ -355,5 +371,15 @@ impl AppState {
         // We just need to signal that the draft should be moved.
         // The actual move happens when the draft is saved.
         self.send(old_account, WorkerCmd::UpdateDraft { uid, raw: String::new() });
+    }
+
+    /// Send an email via SMTP. `raw` is the RFC-2822 message.
+    pub fn send_email(&self, account: usize, raw: String) {
+        self.send(account, WorkerCmd::SendEmail { raw });
+    }
+
+    /// Update an account's persisted config (e.g. SMTP settings) and save to disk.
+    pub fn update_account_config(&self, index: usize, cfg: crate::mail::AccountConfig) {
+        self.engine.peek().send(crate::mail::Command::UpdateAccount { index, cfg });
     }
 }

@@ -239,9 +239,144 @@ impl Component for ComposePane {
         };
 
         let send_on_press: EventHandler<Event<PressEventData>> = {
-            let mut s = state.clone();
+            let s = state.clone();
+            let to = to.clone();
+            let cc = cc.clone();
+            let bcc = bcc.clone();
+            let subject = subject.clone();
+            let editable = editable.clone();
+            let formats = formats.clone();
+            let links = links.clone();
+            let images = images.clone();
+            let selected_account = selected_account.clone();
             EventHandler::new(move |_| {
-                // TODO: actually send the message
+                let mut s = s.clone();
+                let to_val = to.read().trim().to_string();
+                if to_val.is_empty() {
+                    // No recipient — don't send
+                    return;
+                }
+                let cc_val = cc.read().trim().to_string();
+                let bcc_val = bcc.read().trim().to_string();
+                let subject_val = subject.read().clone();
+                let body_val = editable.editor().read().to_string();
+                let all_formats = formats.read().clone();
+                let all_links = links.read().clone();
+                let all_images = images.read().clone();
+                let account = *selected_account.read();
+
+                // Look up the sender's address and name from the selected account
+                let from_addr = {
+                    let store = s.store.read();
+                    store.accounts.get(account)
+                        .map(|a| {
+                            if a.sender_name.is_empty() {
+                                a.addr.clone()
+                            } else {
+                                format!("{} <{}>", a.sender_name, a.addr)
+                            }
+                        })
+                        .unwrap_or_default()
+                };
+
+                // Build HTML body from the editor text + formatting flags (with inline images)
+                let html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
+                let plain_body = &body_val;
+
+                // Build a multipart/alternative RFC-2822 message with embedded images
+                let boundary = "000000000000abcdef1234";
+                let boundary_related = "000000000000fedcba4321";
+                let mut raw = String::new();
+                if !from_addr.is_empty() {
+                    raw.push_str(&format!("From: {}\r\n", from_addr));
+                }
+                raw.push_str(&format!("To: {}\r\n", to_val));
+                if !cc_val.is_empty() {
+                    raw.push_str(&format!("Cc: {}\r\n", cc_val));
+                }
+                // Bcc is stripped from the headers by the SMTP layer before transmission
+                if !bcc_val.is_empty() {
+                    raw.push_str(&format!("Bcc: {}\r\n", bcc_val));
+                }
+                raw.push_str(&format!("Subject: {}\r\n", subject_val));
+                raw.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
+                raw.push_str("MIME-Version: 1.0\r\n");
+
+                // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
+                let has_images = !all_images.is_empty();
+                raw.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n", boundary));
+                raw.push_str("\r\n");
+
+                // Plain text part (image placeholders removed)
+                let plain_clean: String = plain_body.chars().filter(|c| !is_placeholder(*c)).collect();
+                raw.push_str(&format!("--{}\r\n", boundary));
+                raw.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
+                raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                raw.push_str("\r\n");
+                raw.push_str(&plain_clean);
+                raw.push_str("\r\n");
+
+                if has_images {
+                    raw.push_str(&format!("--{}\r\n", boundary));
+                    raw.push_str(&format!("Content-Type: multipart/related; type=\"text/html\"; boundary=\"{}\"\r\n", boundary_related));
+                    raw.push_str("\r\n");
+
+                    // HTML part
+                    raw.push_str(&format!("--{}\r\n", boundary_related));
+                    raw.push_str("Content-Type: text/html; charset=UTF-8\r\n");
+                    raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                    raw.push_str("\r\n");
+                    raw.push_str(&html_body);
+                    raw.push_str("\r\n");
+
+                    // Embedded images
+                    for (ch, path) in &all_images {
+                        let Ok(data) = std::fs::read(path) else { continue };
+                        let p = std::path::Path::new(path);
+                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
+                        let content_type = match ext.as_str() {
+                            "jpg" | "jpeg" => "image/jpeg",
+                            "gif" => "image/gif",
+                            "webp" => "image/webp",
+                            "bmp" => "image/bmp",
+                            _ => "image/png",
+                        };
+                        let img_id = format!("img_{}@photonmail", u32::from(*ch));
+                        let filename = p
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("image.png")
+                            .replace('"', "");
+                        use base64::Engine;
+                        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                        raw.push_str(&format!("--{}\r\n", boundary_related));
+                        raw.push_str(&format!("Content-Type: {}; name=\"{}\"\r\n", content_type, filename));
+                        raw.push_str("Content-Transfer-Encoding: base64\r\n");
+                        raw.push_str(&format!("Content-ID: <{}>\r\n", img_id));
+                        raw.push_str(&format!("Content-Disposition: inline; filename=\"{}\"\r\n", filename));
+                        raw.push_str("\r\n");
+                        for chunk in encoded.as_bytes().chunks(76) {
+                            raw.push_str(std::str::from_utf8(chunk).unwrap_or(""));
+                            raw.push_str("\r\n");
+                        }
+                    }
+                    raw.push_str(&format!("--{}--\r\n", boundary_related));
+                } else {
+                    raw.push_str(&format!("--{}\r\n", boundary));
+                    raw.push_str("Content-Type: text/html; charset=UTF-8\r\n");
+                    raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                    raw.push_str("\r\n");
+                    raw.push_str(&html_body);
+                    raw.push_str("\r\n");
+                }
+
+                // Closing boundary
+                raw.push_str(&format!("--{}--\r\n", boundary));
+
+                // Send the email via SMTP
+                s.send_email(account, raw);
+
+                // Close the compose window
                 s.draft_mail.set(None);
                 s.draft_pin.set(None);
                 s.view.set(crate::state::View::Mail);
@@ -274,6 +409,20 @@ impl Component for ComposePane {
                 let all_images = images.read().clone();
                 let account = *selected_account.read();
 
+                // Look up the sender's address and name from the selected account
+                let from_addr = {
+                    let store = s.store.read();
+                    store.accounts.get(account)
+                        .map(|a| {
+                            if a.sender_name.is_empty() {
+                                a.addr.clone()
+                            } else {
+                                format!("{} <{}>", a.sender_name, a.addr)
+                            }
+                        })
+                        .unwrap_or_default()
+                };
+
                 // Build HTML body from the editor text + formatting flags (with inline images)
                 let html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
                 let plain_body = &body_val;
@@ -282,6 +431,9 @@ impl Component for ComposePane {
                 let boundary = "000000000000abcdef1234";
                 let boundary_related = "000000000000fedcba4321";
                 let mut raw = String::new();
+                if !from_addr.is_empty() {
+                    raw.push_str(&format!("From: {}\r\n", from_addr));
+                }
                 raw.push_str(&format!("To: {}\r\n", to_val));
                 if !cc_val.is_empty() {
                     raw.push_str(&format!("Cc: {}\r\n", cc_val));
@@ -290,6 +442,7 @@ impl Component for ComposePane {
                     raw.push_str(&format!("Bcc: {}\r\n", bcc_val));
                 }
                 raw.push_str(&format!("Subject: {}\r\n", subject_val));
+                raw.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
                 raw.push_str("MIME-Version: 1.0\r\n");
 
                 // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
@@ -1465,7 +1618,6 @@ fn html_escape(s: &str) -> String {
     out
 }
 
-/// Build an HTML body fragment from the editor text + per-character formatting flags.
 /// Converts bold, italic, underline, and links to inline HTML tags.
 /// Images are rendered as `<img src="cid:...">` references.
 fn build_html_body_with_images(

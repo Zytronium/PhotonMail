@@ -6,7 +6,7 @@ use crate::{
     mail::DRAFTS,
     state::AppState,
     theme::DARK,
-    widgets::{avatar, Chip, divider, icon, IconButton},
+    widgets::{avatar, Chip, divider, icon},
 };
 
 pub struct MessageList {
@@ -156,22 +156,52 @@ impl Component for MessageRow {
         let mut s_read = state;
 
         // Date, or quick actions while hovering. Same fixed height in both states.
+        // Use inline buttons without pointer handlers to avoid flicker — IconButton's
+        // on_pointer_enter/leave conflicts with the row's hover detection.
         let trailing = if hovering() {
             rect()
                 .horizontal()
-                .height(Size::px(28.))
-                .child(IconButton { bytes: ARCHIVE, color: DARK.muted, on_press: (move |e: Event<PressEventData>| {
-                    e.stop_propagation();
-                    s_archive.archive(i);
-                }).into() })
-                .child(IconButton { bytes: TRASH, color: DARK.muted, on_press: (move |e: Event<PressEventData>| {
-                    e.stop_propagation();
-                    s_trash.trash(i);
-                }).into() })
-                .child(IconButton { bytes: MAIL, color: DARK.muted, on_press: (move |e: Event<PressEventData>| {
-                    e.stop_propagation();
-                    s_read.toggle_read(i);
-                }).into() })
+                .content(Content::Flex)
+                .spacing(4.)
+                .child(
+                    rect()
+                        .width(Size::px(28.))
+                        .height(Size::px(28.))
+                        .corner_radius(6.)
+                        .center()
+                        .cursor(freya::winit::window::CursorIcon::Pointer)
+                        .on_press(move |e: Event<PressEventData>| {
+                            e.stop_propagation();
+                            s_archive.archive(i);
+                        })
+                        .child(icon(ARCHIVE, 16., DARK.muted)),
+                )
+                .child(
+                    rect()
+                        .width(Size::px(28.))
+                        .height(Size::px(28.))
+                        .corner_radius(6.)
+                        .center()
+                        .cursor(freya::winit::window::CursorIcon::Pointer)
+                        .on_press(move |e: Event<PressEventData>| {
+                            e.stop_propagation();
+                            s_trash.trash(i);
+                        })
+                        .child(icon(TRASH, 16., DARK.muted)),
+                )
+                .child(
+                    rect()
+                        .width(Size::px(28.))
+                        .height(Size::px(28.))
+                        .corner_radius(6.)
+                        .center()
+                        .cursor(freya::winit::window::CursorIcon::Pointer)
+                        .on_press(move |e: Event<PressEventData>| {
+                            e.stop_propagation();
+                            s_read.toggle_read(i);
+                        })
+                        .child(icon(MAIL, 16., DARK.muted)),
+                )
         } else {
             rect()
                 .height(Size::px(28.))
@@ -191,11 +221,15 @@ impl Component for MessageRow {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .child(label().text(display_name).color(DARK.text).font_size(15.).font_weight(weight));
+            .child(
+                rect()
+                    .width(Size::flex(1.))
+                    .child(label().text(display_name).color(DARK.text).font_size(15.).font_weight(weight).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis))
+            );
         if unified {
             name_row = name_row.child(label().text(account.name.clone()).color(account.color).font_size(11.));
         }
-        let name_row = name_row.child(rect().width(Size::flex(1.))).child(trailing);
+        let name_row = name_row.child(trailing);
 
         let email_row = rect()
             .width(Size::fill())
@@ -203,7 +237,7 @@ impl Component for MessageRow {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .child(label().text(display_email).color(DARK.muted).font_size(12.))
+            .child(label().text(display_email).color(DARK.muted).font_size(12.).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis))
             .child(rect().width(Size::flex(1.)));
 
         let top = rect()
@@ -241,8 +275,8 @@ impl Component for MessageRow {
                     .width(Size::flex(1.))
                     .spacing(2.)
                     .child(top)
-                    .child(label().text(m.subject.clone()).color(DARK.text).font_weight(weight))
-                    .child(label().text(m.preview.clone()).color(DARK.muted).font_size(12.)),
+                    .child(label().text(m.subject.clone()).color(DARK.text).font_weight(weight).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis))
+                    .child(label().text(m.preview.clone()).color(DARK.muted).font_size(12.).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis)),
             )
     }
 }

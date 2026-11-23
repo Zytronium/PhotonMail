@@ -13,9 +13,11 @@
 //! ```
 
 pub mod config;
+pub mod discovery;
 pub mod engine;
 mod imap;
 pub mod parse;
+mod smtp;
 
 pub use config::AccountConfig;
 pub use engine::Engine;
@@ -100,6 +102,10 @@ pub enum Event {
     AddAccountFailed { error: String },
     /// A draft was saved on the server; `uid` is the (possibly new) UID of the draft.
     DraftSaved { account: usize, uid: u32 },
+    /// Email was sent successfully.
+    EmailSent { account: usize },
+    /// Email sending failed.
+    EmailSendFailed { account: usize, error: String },
 }
 
 /// UI → one account's worker.
@@ -117,12 +123,16 @@ pub enum WorkerCmd {
     AppendDraft { raw: String },
     /// Update an existing draft: delete the old one (by UID) and append the new content.
     UpdateDraft { uid: u32, raw: String },
+    /// Send an email via SMTP. `raw` is the RFC-2822 message.
+    SendEmail { raw: String },
 }
 
 /// UI → manager.
 pub enum Command {
     Account { account: usize, cmd: WorkerCmd },
     AddAccount { cfg: AccountConfig, password: String },
+    /// Update an existing account's config (e.g. SMTP settings) and persist to disk.
+    UpdateAccount { index: usize, cfg: AccountConfig },
 }
 
 pub fn now() -> i64 {

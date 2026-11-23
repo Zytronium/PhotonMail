@@ -27,6 +27,7 @@ async-imap = { version = "0.11", default-features = false, features = ["runtime-
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "6"
 futures = { version = "0.3", default-features = false, features = ["std"] }
+futures-timer = "3"
 # Password storage in the OS keyring. On Linux this uses Secret Service over D-Bus
 # (needs libdbus at build time; on Arch/CachyOS the `dbus` package has it).
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
@@ -37,6 +38,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 # `ring` provider + bundled Mozilla roots: no C toolchain, no system OpenSSL.
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "1"
+# SMTP email sending — uses tokio1 + rustls (ring) + webpki-roots to match the existing TLS setup
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "ring", "builder", "hostname", "webpki-roots"] }
+# DNS resolver for auto-discovering email server settings (MX/SRV records)
+hickory-resolver = { version = "0.25", default-features = false, features = ["system-config", "tokio"] }
+# HTTP client for fetching autoconfig XML from provider servers
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [patch.crates-io]
 freya-html = { path = "freya-html-patch" }
