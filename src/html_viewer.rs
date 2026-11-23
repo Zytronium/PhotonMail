@@ -17,6 +17,7 @@ use regex::Regex;
 use crate::grain;
 use crate::state::AppState;
 use crate::theme::DARK;
+use crate::widgets::QuoteToggle;
 
 /// Precompiled regex patterns for HTML sanitization.
 static RE_SCRIPT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap());
@@ -25,7 +26,7 @@ static RE_EVENT_SQ: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\s+on\w+
 static RE_JS_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)javascript:").unwrap());
 static RE_TRACKING_IMG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"(?is)<img[^>]*(?:width=["']?1["']?\s+height=["']?1["']?|height=["']?1["']?\s+width=["']?1["']?|style=["'][^"']*(?:width:\s*1px|height:\s*1px|display:\s*none|visibility:\s*hidden|opacity:\s*0)[^"']*["'][^>]*|src=["'][^"']*(?:track|pixel|beacon|analytics|collect|__utm)[^"']*["'][^>]*|class=["'][^"']*(?:track|pixel|beacon|analytics)[^"']*["'][^>]*|id=["'][^"']*(?:track|pixel|beacon|analytics)[^"']*["'][^>]*).*?>\s*"#
+        r#"(?is)<img[^>]*(?:width=["']?1["']?\s+height=["']?1["']?|height=["']?1["']?\s+width=["']?1["']?|src=["'][^"']*(?:track|pixel|beacon|analytics|collect|__utm)[^"']*["][^>]*|class=["'][^"']*(?:track|pixel|beacon|analytics)[^"']*["][^>]*|id=["'][^"']*(?:track|pixel|beacon|analytics)[^"']*["][^>]*).*?>\s*"#
     ).unwrap()
 });
 static RE_TRACKING_FRAME: LazyLock<Regex> = LazyLock::new(|| {
@@ -208,6 +209,10 @@ pub struct SecureHtmlViewer {
     pub sender_email: String,
     /// Shared app state for link dialog and preferences.
     pub state: AppState,
+    /// Index of the message being shown when its HTML contains the quote-button spacer
+    /// (see `mail::quoting::prepare_html_quotes`). The native "..." button is drawn over the
+    /// spacer and flips this message in `AppState::quoted_expanded`.
+    pub quote_toggle_idx: Option<usize>,
 }
 
 impl Component for SecureHtmlViewer {
@@ -215,6 +220,7 @@ impl Component for SecureHtmlViewer {
         let html = self.html.clone();
         let sender_email = self.sender_email.clone();
         let state = self.state;
+        let quote_toggle_idx = self.quote_toggle_idx;
 
         // Sanitize the HTML content
         let analysis = use_memo(move || sanitize_html(&html));
@@ -271,6 +277,12 @@ impl Component for SecureHtmlViewer {
         // where elements_at() hit testing fails.
         let cursor_icon = use_state(|| CursorIcon::Default);
 
+        let mut viewer = HtmlViewer::new(handle).expanded();
+        if quote_toggle_idx.is_some() {
+            // Report where the spacer is so the native button can be drawn over it
+            viewer = viewer.track(crate::mail::quoting::ANCHOR_ID);
+        }
+
         let mut col = rect()
             .height(Size::fill())
             .width(Size::fill())
@@ -291,9 +303,20 @@ impl Component for SecureHtmlViewer {
                     }
                 }
             })
-            .child(
-                HtmlViewer::new(handle).expanded(),
+            .child(viewer);
+
+        // Native "..." button, drawn over the spacer at the end of the new content.
+        if let (Some(idx), Some(anchor)) = (quote_toggle_idx, handle.anchor_rect()) {
+            col = col.child(
+                rect()
+                    .position(Position::new_absolute().top(anchor.y).left(anchor.x))
+                    .width(Size::px(anchor.width))
+                    .height(Size::px(anchor.height))
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .child(QuoteToggle { state, mail_idx: idx }),
             );
+        }
 
         if has_warnings {
             col = col.child(
@@ -303,11 +326,6 @@ impl Component for SecureHtmlViewer {
                     .horizontal()
                     .spacing(6.)
                     .cross_align(Alignment::Center)
-                    .child(
-                        label()
-                            .text("🛡️")
-                            .font_size(12.),
-                    )
                     .child(
                         label()
                             .text(format!(

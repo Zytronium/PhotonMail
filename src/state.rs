@@ -45,6 +45,38 @@ pub struct AppState {
     /// `(key, Some(uid))` = the save finished and `uid` is the draft's new UID. While the
     /// pin matches `draft_mail`, the compose pane keeps its key and is NOT remounted.
     pub draft_pin: State<Option<(String, Option<u32>)>>,
+    /// Pre-filled compose data for Reply/Reply All/Forward. When Some, the compose pane
+    /// uses these values instead of starting with a blank message.
+    pub compose_pre: State<Option<ComposePre>>,
+    /// Monotonically increasing counter that changes whenever `compose_pre` is set to `Some`.
+    /// Used as part of the compose pane's mount key so the pane remounts for new replies/forwards
+    /// but stays stable after `.take()` consumes the data.
+    pub compose_pre_gen: State<u32>,
+    /// Set of message indices that have their quoted text expanded.
+    pub quoted_expanded: State<std::collections::HashSet<usize>>,
+}
+
+/// Pre-filled compose data for reply and forward actions.
+#[derive(Clone, Default)]
+pub struct ComposePre {
+    pub to: String,
+    pub cc: String,
+    pub subject: String,
+    /// Plain text body pre-filled in the editor (replies, plain-text forwards).
+    /// When `html_body` is Some (HTML forward), this field is empty so the editor starts blank.
+    pub body: String,
+    /// HTML body for forwarded messages. When present, the compose pane sends
+    /// a multipart/alternative message with this HTML as the forwarded content.
+    pub html_body: Option<String>,
+    /// Plain-text version of the forwarded content (for the text/plain part of the MIME message).
+    /// Used only when `html_body` is Some, so the plain-text alternative still carries the forwarded text.
+    pub forwarded_plain: Option<String>,
+    /// Account index to send from (the account that received the original email).
+    pub from_account: usize,
+    /// Original message's Message-ID (for In-Reply-To/References headers).
+    pub original_message_id: String,
+    /// Original message's In-Reply-To (for building References chain).
+    pub original_in_reply_to: String,
 }
 
 pub fn use_app_state() -> AppState {
@@ -87,6 +119,9 @@ pub fn use_app_state() -> AppState {
         attachment_preview_fullscreen: use_state(|| false),
         draft_mail: use_state(|| None),
         draft_pin: use_state(|| None),
+        compose_pre: use_state(|| None),
+        compose_pre_gen: use_state(|| 0),
+        quoted_expanded: use_state(|| std::collections::HashSet::new()),
     };
 
     // Drain worker events into the store, once, for the life of the app.

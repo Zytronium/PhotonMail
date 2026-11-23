@@ -43,6 +43,7 @@ pub use cache::ResourceCache;
 pub use component::HtmlViewer;
 pub use content::HtmlContent;
 pub use handle::{
+    AnchorRect,
     ElementHit,
     HtmlHandle,
     HtmlSource,
@@ -55,6 +56,7 @@ pub mod prelude {
         component::HtmlViewer,
         content::HtmlContent,
         handle::{
+            AnchorRect,
             ElementHit,
             HtmlHandle,
             HtmlSource,

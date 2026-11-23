@@ -35,6 +35,18 @@ pub struct ElementHit {
     pub attributes: HashMap<String, String>,
 }
 
+/// Position of a tracked element (see [`HtmlViewer::track`](crate::HtmlViewer::track)),
+/// in the viewer's own coordinate space: logical pixels from its top-left corner, with the
+/// document's current scroll already applied. Lets a Freya widget be drawn on top of the
+/// document exactly where an element of the HTML is.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct AnchorRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
 struct HtmlHistory {
     entries: Vec<HtmlSource>,
     index: usize,
@@ -57,6 +69,7 @@ struct HtmlHistory {
 pub struct HtmlHandle {
     history: State<HtmlHistory>,
     view: State<Option<Rc<RefCell<BlitzState>>>>,
+    anchor: State<Option<AnchorRect>>,
 }
 
 impl HtmlHandle {
@@ -75,6 +88,7 @@ impl HtmlHandle {
                 index: 0,
             }),
             view: State::create(None),
+            anchor: State::create(None),
         }
     }
 
@@ -86,6 +100,21 @@ impl HtmlHandle {
                 index: 0,
             }),
             view: State::create_global(None),
+            anchor: State::create_global(None),
+        }
+    }
+
+    /// Where the element tracked with [`HtmlViewer::track`](crate::HtmlViewer::track) currently
+    /// is, or `None` when it doesn't exist or is scrolled out of view. Reading this subscribes
+    /// the calling component, so it re-renders when the element moves (scroll, resize, reload).
+    pub fn anchor_rect(&self) -> Option<AnchorRect> {
+        *self.anchor.read()
+    }
+
+    /// Used by the viewer to publish the tracked element's position.
+    pub(crate) fn set_anchor_rect(&mut self, rect: Option<AnchorRect>) {
+        if *self.anchor.peek() != rect {
+            self.anchor.set(rect);
         }
     }
 

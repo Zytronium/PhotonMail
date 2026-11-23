@@ -92,6 +92,10 @@ pub struct Mail {
     pub date: String,
     /// For sorting; higher = newer.
     pub ts: i64,
+    /// RFC 2822 Message-ID (without angle brackets). Used for In-Reply-To/References.
+    pub message_id: String,
+    /// RFC 2822 In-Reply-To (without angle brackets). Used for building References chain.
+    pub in_reply_to: String,
     /// Tombstone: deleted or moved away. Kept so indices stay stable.
     pub removed: bool,
 }
@@ -163,6 +167,8 @@ impl Store {
                 attachments: Vec::new(),
                 date: m.date.to_string(),
                 ts: m.ts as i64,
+                message_id: String::new(),
+                in_reply_to: String::new(),
                 removed: false,
             })
             .collect();
@@ -305,6 +311,8 @@ impl Store {
             attachments: Vec::new(),
             date: fmt_date(row.ts),
             ts: row.ts,
+            message_id: row.message_id,
+            in_reply_to: row.in_reply_to,
             removed: false,
         });
         self.index.insert(key, self.mails.len() - 1);

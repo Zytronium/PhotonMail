@@ -13,6 +13,7 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
   - Undo send timer
   - Mark as read after X duration after opening message
   - Send notifications (globally or per account)
+  - Force dark mode email rendering
 - Notifications
 - Auto-updater
 - Mailing list banner on messages from a mailing list
@@ -21,5 +22,5 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
 - Encryption key support
 - Starring emails
 - Phishing link detection
-- Replying to emails
-- Forwarding emails
+- More advanced rich text editor for composing emails
+- Smarter email dark mode rendering

@@ -277,6 +277,16 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
         from = format!("To: {from}");
     }
 
+    // Extract Message-ID and In-Reply-To from the ENVELOPE (used for reply threading)
+    let message_id = env
+        .and_then(|e| e.message_id.as_deref())
+        .map(|m| String::from_utf8_lossy(m).into_owned())
+        .unwrap_or_default();
+    let in_reply_to = env
+        .and_then(|e| e.in_reply_to.as_deref())
+        .map(|m| String::from_utf8_lossy(m).into_owned())
+        .unwrap_or_default();
+
     Some(HeaderRow {
         uid,
         unread: is_unread(f),
@@ -285,6 +295,8 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
         subject,
         ts: f.internal_date().map(|d| d.timestamp()).unwrap_or(0),
         size: f.size.unwrap_or(0),
+        message_id,
+        in_reply_to,
     })
 }
 

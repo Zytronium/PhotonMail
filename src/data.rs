@@ -3,7 +3,7 @@ use crate::theme::Rgb;
 pub struct DemoAccount { pub name: &'static str, pub addr: &'static str, pub color: Rgb, pub sync: &'static str }
 
 /// Content type of the mail body.
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub enum MailContentType {
     #[default]
     PlainText,
@@ -40,7 +40,7 @@ pub const LABELS: [(&str, Rgb); 3] = [
     ("Travel", (0, 150, 136)),
     ("Important", (220, 70, 90)),
 ];
-pub const DEMO_MAILS: [DemoMail; 16] = [
+pub const DEMO_MAILS: [DemoMail; 18] = [
     // 1. Simple plain-text email
     DemoMail {
         account: 0, folder: 0, unread: true,
@@ -990,5 +990,66 @@ zytronium/api-gateway</pre>
 </html>"##,
         content_type: MailContentType::Html,
         date: "Nov 22", ts: 95,
+    },
+    // 17. Plain-text reply with quoted text (nested quotes), to exercise reply collapsing
+    DemoMail {
+        account: 0, folder: 0, unread: true,
+        from: "Alice", from_email: "im.a@femail.com",
+        to: "", to_email: "",
+        subject: "Re: Weekend plans",
+        preview: "Saturday works great! How about 2pm at the usual spot?",
+        body: "Saturday works great! How about 2pm at the usual spot? I'll bring the board games.\n\nBest,\nAlice\n\nOn Sat, Nov 21, 2026 at 6:14 PM, Foogle User <foogle_user@femail.com> wrote:\n> Hi Alice,\n>\n> Saturday works for me. What time were you thinking?\n>\n> On Fri, Nov 20, 2026 at 10:42 AM, Alice <im.a@femail.com> wrote:\n> > Hey!\n> >\n> > Are we still on for Saturday? Let me know what time works for you.\n> >\n> > Best,\n> > Alice",
+        content_type: MailContentType::PlainText,
+        date: "11:05", ts: 99,
+    },
+    // 18. HTML reply with quoted text (Gmail-style quote container + nested blockquotes)
+    DemoMail {
+        account: 1, folder: 0, unread: true,
+        from: "Jordan Lee", from_email: "jordan@it.work",
+        to: "", to_email: "",
+        subject: "Re: Q4 roadmap review",
+        preview: "Thanks for sending the draft over. The timeline looks solid...",
+        body: r##"<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #ffffff; color: #1a1a2e; font-size: 14px; line-height: 1.5; }
+  .signature { color: #666; font-size: 12px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div dir="ltr">
+  <p>Thanks for sending the draft over. The timeline looks solid, and I have a couple of notes:</p>
+  <ul>
+    <li>Can we move the <strong>beta launch</strong> up a week?</li>
+    <li>The Q4 budget slide needs the updated numbers from finance.</li>
+  </ul>
+  <p>Happy to jump on a call tomorrow if that's easier.</p>
+  <div class="signature">Jordan Lee<br>Product Lead</div>
+</div>
+<br>
+<div class="gmail_quote">
+  <div dir="ltr" class="gmail_attr">On Mon, Nov 23, 2026 at 9:30 AM Foogle User &lt;why.wont@it.work&gt; wrote:<br></div>
+  <blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">
+    <div dir="ltr">
+      <p>Hi Jordan,</p>
+      <p>Here's the draft Q4 roadmap. Could you take a look before Wednesday's review?</p>
+      <p>Thanks,<br>Foogle User</p>
+    </div>
+    <br>
+    <div class="gmail_quote">
+      <div dir="ltr" class="gmail_attr">On Fri, Nov 20, 2026 at 4:02 PM Jordan Lee &lt;jordan@it.work&gt; wrote:<br></div>
+      <blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">
+        <div dir="ltr">
+          <p>Can you share the Q4 roadmap draft when it's ready?</p>
+        </div>
+      </blockquote>
+    </div>
+  </blockquote>
+</div>
+</body>
+</html>"##,
+        content_type: MailContentType::Html,
+        date: "11:20", ts: 100,
     },
 ];

@@ -104,6 +104,12 @@ fn gradient(base: Rgb) -> (Rgb, Rgb) {
     )
 }
 
+/// Top-left and bottom-right colours of the hover / secondary-button surface. For places
+/// that cannot use the shader (e.g. inside an HTML email) to approximate it with a CSS gradient.
+pub fn hover_colors() -> (Rgb, Rgb) {
+    gradient(DARK.hover)
+}
+
 // Cached per thread: `ShaderFill` compares by pointer, so building a new one on
 // every render would make Freya think the background changed every frame.
 thread_local! {

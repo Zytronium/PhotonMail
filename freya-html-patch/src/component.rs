@@ -35,6 +35,7 @@ pub struct HtmlViewer {
     handle: HtmlHandle,
     layout: LayoutData,
     fonts: Vec<Bytes>,
+    track: Option<String>,
 }
 
 impl HtmlViewer {
@@ -44,8 +45,16 @@ impl HtmlViewer {
             handle,
             layout: LayoutData::default(),
             fonts: Vec::new(),
+            track: None,
         }
-        .expanded()
+            .expanded()
+    }
+
+    /// Track the element with this HTML `id`: its position is published through
+    /// [`HtmlHandle::anchor_rect`], so a Freya widget can be drawn exactly over it.
+    pub fn track(mut self, id: impl Into<String>) -> Self {
+        self.track = Some(id.into());
+        self
     }
 
     /// Adds a font to the document's font collection.
@@ -68,6 +77,7 @@ impl Component for HtmlViewer {
         let platform = Platform::get().current_window();
         let mut handle = self.handle;
         let fonts = self.fonts.clone();
+        let track = self.track.clone();
 
         let state = use_hook(move || {
             let platform = Platform::get().current_window();
@@ -75,6 +85,8 @@ impl Component for HtmlViewer {
             let (wake_tx, mut wake_rx) = futures_channel::mpsc::unbounded::<()>();
             let (nav_tx, mut nav_rx) = futures_channel::mpsc::unbounded::<String>();
             let (fetch_tx, mut fetch_rx) = futures_channel::mpsc::unbounded::<FetchRequest>();
+            let (anchor_tx, mut anchor_rx) =
+                futures_channel::mpsc::unbounded::<Option<crate::handle::AnchorRect>>();
 
             let state = Rc::new(RefCell::new(BlitzState::new(
                 wake_tx,
@@ -82,8 +94,18 @@ impl Component for HtmlViewer {
                 fetch_tx,
                 resource_cache.clone(),
                 fonts,
+                track,
+                anchor_tx,
             )));
             handle.attach(state.clone());
+
+            // Paint reports the tracked element's position; publish it from the component's
+            // own runtime so subscribers re-render.
+            spawn(async move {
+                while let Some(rect) = anchor_rx.next().await {
+                    handle.set_anchor_rect(rect);
+                }
+            });
 
             spawn(async move {
                 while wake_rx.next().await.is_some() {

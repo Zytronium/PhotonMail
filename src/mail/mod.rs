@@ -17,6 +17,7 @@ pub mod discovery;
 pub mod engine;
 mod imap;
 pub mod parse;
+pub mod quoting;
 mod smtp;
 
 pub use config::AccountConfig;
@@ -57,6 +58,10 @@ pub struct HeaderRow {
     /// INTERNALDATE as a unix timestamp.
     pub ts: i64,
     pub size: u32,
+    /// RFC 2822 Message-ID from the ENVELOPE (without angle brackets).
+    pub message_id: String,
+    /// RFC 2822 In-Reply-To from the ENVELOPE (without angle brackets).
+    pub in_reply_to: String,
 }
 
 /// Metadata about a single email attachment.

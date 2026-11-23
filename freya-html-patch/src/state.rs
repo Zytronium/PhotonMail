@@ -73,7 +73,10 @@ use crate::{
     },
     cache::ResourceCache,
     fonts::font_context,
-    handle::ElementHit,
+    handle::{
+        AnchorRect,
+        ElementHit,
+    },
     net::{
         FetchRequest,
         FreyaNavigationProvider,
@@ -98,6 +101,10 @@ pub(crate) struct BlitzState {
     buttons: MouseEventButtons,
     active_pointers: Arc<AtomicRefCell<Vec<BlitzPointerEvent>>>,
     created: Instant,
+    /// `id` of the element whose position is reported through `anchor_tx`.
+    anchor_id: Option<String>,
+    anchor_tx: UnboundedSender<Option<AnchorRect>>,
+    last_anchor: Option<AnchorRect>,
 }
 
 impl BlitzState {
@@ -107,6 +114,8 @@ impl BlitzState {
         fetch: UnboundedSender<FetchRequest>,
         resource_cache: ResourceCache,
         fonts: Vec<Bytes>,
+        anchor_id: Option<String>,
+        anchor_tx: UnboundedSender<Option<AnchorRect>>,
     ) -> Self {
         let redraw = Arc::new(AtomicBool::new(true));
         Self {
@@ -128,6 +137,9 @@ impl BlitzState {
             buttons: MouseEventButtons::empty(),
             active_pointers: Arc::new(AtomicRefCell::new(Vec::new())),
             created: Instant::now(),
+            anchor_id,
+            anchor_tx,
+            last_anchor: None,
         }
     }
 
@@ -143,6 +155,7 @@ impl BlitzState {
         self.document = Some(HtmlDocument::from_html(html, config));
         self.active_pointers.borrow_mut().clear();
         self.paint_key = None;
+        self.last_anchor = None;
         self.shell_provider.request_redraw();
     }
 
@@ -165,6 +178,29 @@ impl BlitzState {
                 document.set_viewport(Viewport::new(width, height, scale, ColorScheme::Light));
             }
             document.resolve(self.created.elapsed().as_secs_f64());
+
+            // Report where the tracked element is (relative to this view, scroll applied),
+            // or None when it is missing or entirely scrolled out of view.
+            if let Some(id) = self.anchor_id.as_deref() {
+                let view_height = height as f32 / scale;
+                let rect = document.get_element_by_id(id).and_then(|node_id| {
+                    let node = document.get_node(node_id)?;
+                    let position = node.absolute_position(0.0, 0.0);
+                    let size = node.final_layout().size;
+                    let scroll = document.viewport_scroll();
+                    let rect = AnchorRect {
+                        x: position.x,
+                        y: position.y - scroll.y as f32,
+                        width: size.width,
+                        height: size.height,
+                    };
+                    (rect.y + rect.height > 0.0 && rect.y < view_height).then_some(rect)
+                });
+                if rect != self.last_anchor {
+                    self.last_anchor = rect;
+                    let _ = self.anchor_tx.unbounded_send(rect);
+                }
+            }
 
             if document.is_animating() {
                 self.shell_provider.request_redraw();
@@ -258,13 +294,13 @@ impl BlitzState {
             match data.force {
                 Some(Force::Normalized(force)) => force,
                 Some(Force::Calibrated {
-                    force,
-                    max_possible_force,
-                    ..
-                }) if max_possible_force > 0.0 => force / max_possible_force,
+                         force,
+                         max_possible_force,
+                         ..
+                     }) if max_possible_force > 0.0 => force / max_possible_force,
                 _ => 0.5,
             }
-            .clamp(0.0, 1.0)
+                .clamp(0.0, 1.0)
         } else {
             0.0
         };

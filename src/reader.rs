@@ -8,11 +8,11 @@ use crate::{
     data::MailContentType,
     html_viewer::SecureHtmlViewer,
     icons::{CHEVRON_LEFT, *},
-    mail::{AttachmentInfo, DRAFTS},
+    mail::{quoting, AttachmentInfo, DRAFTS},
     model::BodyState,
-    state::{AppState, View},
+    state::{AppState, ComposePre, View},
     theme::DARK,
-    widgets::{Action, avatar, divider, icon, IconButton},
+    widgets::{Action, avatar, divider, icon, IconButton, QuoteToggle},
 };
 
 /// Generate a fake http URL for caching attachment image data in the ResourceCache.
@@ -56,9 +56,12 @@ impl Component for Reader {
         // Compute a key for ComposePane so it remounts when the draft body loads.
         // This is essential because use_editable initializes once on mount, and we
         // need the component to remount with the new body text when the async fetch completes.
+        // Also include compose_pre state so the pane remounts when forwarding/replying,
+        // ensuring compose_pre.take() runs on a fresh mount.
         let compose_key = {
             if matches!(view, View::Compose) {
                 let draft_info = *state.draft_mail.read();
+                let pre_gen = *state.compose_pre_gen.read();
                 if let Some((account, folder, uid)) = draft_info {
                     let store = state.store.read();
                     let body_loaded = store.mails.iter().any(|m| {
@@ -66,9 +69,9 @@ impl Component for Reader {
                             && !m.removed
                             && matches!(m.body, crate::model::BodyState::Loaded { .. })
                     });
-                    format!("draft-{}-{}-{}-loaded={}", account, folder, uid, body_loaded)
+                    format!("draft-{}-{}-{}-loaded={}-gen={}", account, folder, uid, body_loaded, pre_gen)
                 } else {
-                    "new".to_string()
+                    format!("new-gen={}", pre_gen)
                 }
             } else {
                 String::new()
@@ -168,10 +171,163 @@ impl Component for MailView {
                     .spacing(8.);
 
                 if !is_draft {
-                    actions = actions
-                        .child(Action { bytes: REPLY, text: "Reply".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
-                        .child(Action { bytes: REPLY_ALL, text: "Reply all".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) })
-                        .child(Action { bytes: FORWARD, text: "Forward".to_string(), color: DARK.text, on_press: EventHandler::new(|_| {}) });
+                    let reply_account = m.account;
+                    let orig_message_id = m.message_id.clone();
+                    let orig_in_reply_to = m.in_reply_to.clone();
+                    let orig_from_name = m.from.clone();
+                    let orig_date = m.date.clone();
+
+                    // Reply button — look up body at click time so async-loaded content is available.
+                    let mut s_reply = state;
+                    let reply_mail_idx = i;
+                    let reply_to = m.from_email.clone();
+                    let reply_subject = m.subject.clone();
+                    let reply_from_name = orig_from_name.clone();
+                    let reply_date = orig_date.clone();
+                    let reply_msg_id = orig_message_id.clone();
+                    let reply_in_reply = orig_in_reply_to.clone();
+                    actions = actions.child(
+                        Action {
+                            bytes: REPLY,
+                            text: "Reply".to_string(),
+                            color: DARK.text,
+                            on_press: EventHandler::new(move |_| {
+                                let reply_body = {
+                                    let store = s_reply.store.read();
+                                    if let Some(mail) = store.mails.get(reply_mail_idx) {
+                                        match &mail.body {
+                                            BodyState::Loaded { text, content_type } => {
+                                                if *content_type == MailContentType::Html {
+                                                    crate::mail::parse::strip_html_tags(text)
+                                                } else {
+                                                    text.to_string()
+                                                }
+                                            }
+                                            _ => String::new(),
+                                        }
+                                    } else {
+                                        String::new()
+                                    }
+                                };
+                                s_reply.compose_pre.set(Some(ComposePre {
+                                    to: reply_to.clone(),
+                                    cc: String::new(),
+                                    subject: format!("Re: {}", reply_subject),
+                                    body: build_reply_body(&reply_from_name, &reply_date, &reply_body),
+                                    html_body: None,
+                                    forwarded_plain: None,
+                                    from_account: reply_account,
+                                    original_message_id: reply_msg_id.clone(),
+                                    original_in_reply_to: reply_in_reply.clone(),
+                                }));
+                                *s_reply.compose_pre_gen.write() += 1;
+                                s_reply.draft_mail.set(None);
+                                s_reply.draft_pin.set(None);
+                                s_reply.view.set(View::Compose);
+                            }),
+                        }
+                    );
+
+                    // Reply All button — look up body at click time.
+                    let mut s_reply_all = state;
+                    let reply_all_mail_idx = i;
+                    let reply_all_to = m.from_email.clone();
+                    let reply_all_cc = if m.to_email.is_empty() { String::new() } else { m.to_email.clone() };
+                    let reply_all_subject = m.subject.clone();
+                    let reply_all_from_name = orig_from_name.clone();
+                    let reply_all_date = orig_date.clone();
+                    let reply_all_msg_id = orig_message_id.clone();
+                    let reply_all_in_reply = orig_in_reply_to.clone();
+                    actions = actions.child(
+                        Action {
+                            bytes: REPLY_ALL,
+                            text: "Reply all".to_string(),
+                            color: DARK.text,
+                            on_press: EventHandler::new(move |_| {
+                                let reply_all_body = {
+                                    let store = s_reply_all.store.read();
+                                    if let Some(mail) = store.mails.get(reply_all_mail_idx) {
+                                        match &mail.body {
+                                            BodyState::Loaded { text, content_type } => {
+                                                if *content_type == MailContentType::Html {
+                                                    crate::mail::parse::strip_html_tags(text)
+                                                } else {
+                                                    text.to_string()
+                                                }
+                                            }
+                                            _ => String::new(),
+                                        }
+                                    } else {
+                                        String::new()
+                                    }
+                                };
+                                s_reply_all.compose_pre.set(Some(ComposePre {
+                                    to: reply_all_to.clone(),
+                                    cc: reply_all_cc.clone(),
+                                    subject: format!("Re: {}", reply_all_subject),
+                                    body: build_reply_body(&reply_all_from_name, &reply_all_date, &reply_all_body),
+                                    html_body: None,
+                                    forwarded_plain: None,
+                                    from_account: reply_account,
+                                    original_message_id: reply_all_msg_id.clone(),
+                                    original_in_reply_to: reply_all_in_reply.clone(),
+                                }));
+                                *s_reply_all.compose_pre_gen.write() += 1;
+                                s_reply_all.draft_mail.set(None);
+                                s_reply_all.draft_pin.set(None);
+                                s_reply_all.view.set(View::Compose);
+                            }),
+                        }
+                    );
+
+                    // Forward button — look up the body at click time so async-loaded HTML is available.
+                    let mut s_forward = state;
+                    let forward_mail_idx = i;
+                    let forward_account = m.account;
+                    let forward_subject = m.subject.clone();
+                    actions = actions.child(
+                        Action {
+                            bytes: FORWARD,
+                            text: "Forward".to_string(),
+                            color: DARK.text,
+                            on_press: EventHandler::new(move |_| {
+                                // Look up the latest body from the store at click time
+                                let (forward_body_text, forward_html_body) = {
+                                    let store = s_forward.store.read();
+                                    if let Some(mail) = store.mails.get(forward_mail_idx) {
+                                        match &mail.body {
+                                            BodyState::Loaded { text, content_type } => {
+                                                if *content_type == MailContentType::Html {
+                                                    (crate::mail::parse::strip_html_tags(text), Some(text.to_string()))
+                                                } else {
+                                                    (text.to_string(), None)
+                                                }
+                                            }
+                                            _ => (String::new(), None),
+                                        }
+                                    } else {
+                                        (String::new(), None)
+                                    }
+                                };
+                                let html_body_val = forward_html_body.as_ref().map(|h| build_forward_body_html(h));
+                                s_forward.compose_pre.set(Some(ComposePre {
+                                    to: String::new(),
+                                    cc: String::new(),
+                                    subject: format!("Fwd: {}", forward_subject),
+                                    body: if forward_html_body.is_some() { String::new() } else { build_forward_body(&forward_body_text) },
+                                    html_body: html_body_val,
+                                    forwarded_plain: forward_html_body.as_ref().map(|_| build_forward_body(&forward_body_text)),
+                                    from_account: forward_account,
+                                    original_message_id: String::new(),
+                                    original_in_reply_to: String::new(),
+                                }));
+                                *s_forward.compose_pre_gen.write() += 1;
+                                s_forward.draft_mail.set(None);
+                                s_forward.draft_pin.set(None);
+                                s_forward.view.set(View::Compose);
+                            }),
+                        }
+                    );
                 }
 
                 actions = actions
@@ -289,30 +445,35 @@ impl Component for MailView {
                     None
                 };
 
+                // Quoted-text collapsing only applies to actual replies.
+                let is_reply = quoting::is_reply(&m.in_reply_to, &m.subject);
+
                 let body_content = match &m.body {
-                    BodyState::Loaded { content_type: MailContentType::Html, text } => rect()
-                        .height(Size::fill())
-                        .width(Size::fill())
-                        .key(i)
-                        .child(SecureHtmlViewer {
-                            html: text.to_string(),
-                            sender_email: m.from_email.clone(),
-                            state,
-                        }),
-                    BodyState::Loaded { text, .. } => rect()
-                        .height(Size::fill())
-                        .width(Size::fill())
-                        .child(
-                            ScrollView::new()
-                                .height(Size::fill())
-                                .child(paragraph().span(text.to_string()).color(DARK.text)),
-                        ),
+                    BodyState::Loaded { content_type: MailContentType::Html, text } => {
+                        let expanded = state.quoted_expanded.read().contains(&i);
+                        // For replies, put a "..." button inside the email where the quote starts
+                        match is_reply.then(|| quoting::prepare_html_quotes(text, expanded)).flatten() {
+                            Some(html) => build_collapsed_html_body(state, i, html, m.from_email.clone()),
+                            None => render_full_body(text.to_string(), true, state, m.from_email.clone()),
+                        }
+                    }
+                    BodyState::Loaded { text, .. } => {
+                        // For plain-text replies, split into new content and quoted content
+                        let split = if is_reply { quoting::split_plain_text(text) } else { quoting::QuotedSplit::default() };
+                        if split.has_quotes {
+                            build_collapsed_text_body(state, i, split.new_content, split.quoted_content)
+                        } else {
+                            render_full_body(text.to_string(), false, state, String::new())
+                        }
+                    }
                     BodyState::Failed(err) => rect()
                         .width(Size::fill())
-                        .child(label().text(format!("Couldn't load this message: {err}")).color(DARK.danger)),
+                        .child(label().text(format!("Couldn't load this message: {err}")).color(DARK.danger))
+                        .into(),
                     BodyState::NotLoaded | BodyState::Loading => rect()
                         .width(Size::fill())
-                        .child(label().text("Loading message…").color(DARK.muted)),
+                        .child(label().text("Loading message…").color(DARK.muted))
+                        .into(),
                 };
 
                 let mut col = rect()
@@ -326,7 +487,16 @@ impl Component for MailView {
                     col = col.child(att_section);
                 }
 
-                col = col.child(body_content);
+                // The HTML viewer loads its document once, so key the body by message and
+                // quote state to rebuild it when either changes.
+                let body_key = format!("body-{}-{}", i, state.quoted_expanded.read().contains(&i));
+                col = col.child(
+                    rect()
+                        .key(body_key)
+                        .width(Size::fill())
+                        .height(Size::fill())
+                        .child(body_content),
+                );
 
                 col
             }
@@ -337,6 +507,157 @@ impl Component for MailView {
                 .child(icon(INBOX, 48., DARK.muted))
                 .child(label().text(empty_text).color(DARK.muted)),
         }
+    }
+}
+
+/// Build the quoted reply body with the original message below.
+/// Format: "On {date}, {sender} wrote:"
+fn build_reply_body(from_name: &str, date: &str, body: &str) -> String {
+    if body.trim().is_empty() {
+        String::new()
+    } else {
+        let mut quoted = String::with_capacity(body.len() + 256);
+        quoted.push_str(&format!("On {}, {} wrote:\n", date, from_name));
+        for line in body.lines() {
+            quoted.push('>');
+            quoted.push_str(line);
+            quoted.push('\n');
+        }
+        quoted
+    }
+}
+
+/// Build the forwarded message body with the original message below.
+fn build_forward_body(body: &str) -> String {
+    if body.trim().is_empty() {
+        String::new()
+    } else {
+        let mut forwarded = String::with_capacity(body.len() + 64);
+        forwarded.push_str("--- Forwarded message ---\n");
+        for line in body.lines() {
+            forwarded.push('>');
+            forwarded.push_str(line);
+            forwarded.push('\n');
+        }
+        forwarded
+    }
+}
+
+/// Build the forwarded message HTML body with the original HTML wrapped in a blockquote.
+fn build_forward_body_html(html: &str) -> String {
+    if html.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<p>--- Forwarded message ---</p><blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex\">{}</blockquote>",
+            html
+        )
+    }
+}
+
+/// Render a reply's HTML body. `html` already contains the spacer where the "..." button goes
+/// (at the end of the new content) and, when collapsed, the CSS hiding the quoted part; see
+/// `quoting::prepare_html_quotes`. `SecureHtmlViewer` draws the native button over the spacer.
+fn build_collapsed_html_body(state: AppState, mail_idx: usize, html: String, sender_email: String) -> Element {
+    rect()
+        .height(Size::fill())
+        .width(Size::fill())
+        .child(SecureHtmlViewer {
+            html,
+            sender_email,
+            state,
+            quote_toggle_idx: Some(mail_idx),
+        })
+        .into()
+}
+
+/// Render a plain-text reply: new content → "..." button → quoted content (when expanded).
+fn build_collapsed_text_body(
+    state: AppState,
+    mail_idx: usize,
+    new_content: String,
+    quoted_content: String,
+) -> Element {
+    let is_expanded = state.quoted_expanded.read().contains(&mail_idx);
+
+    let mut col = rect().vertical().spacing(4.);
+
+    // New content
+    if !new_content.is_empty() {
+        let text = quoting::strip_quote_chars(&new_content);
+        col = col.child(
+            rect()
+                .width(Size::fill())
+                .padding(8.)
+                .child(paragraph().span(text).color(DARK.text)),
+        );
+    }
+
+    // "..." button directly below the new content
+    col = col.child(
+        rect()
+            .width(Size::fill())
+            .padding((4., 0., 4., 0.))
+            .horizontal()
+            .child(QuoteToggle { state, mail_idx }),
+    );
+
+    // Quoted content (when expanded)
+    if is_expanded && !quoted_content.is_empty() {
+        let text = quoting::strip_quote_chars(&quoted_content);
+        col = col.child(
+            rect()
+                .width(Size::fill())
+                .padding((8., 12., 8., 12.))
+                .background((28, 28, 38))
+                .corner_radius(4.)
+                .horizontal()
+                .child(
+                    rect()
+                        .width(Size::px(3.))
+                        .height(Size::fill())
+                        .background((80, 80, 110))
+                        .corner_radius(2.),
+                )
+                .child(
+                    rect().width(Size::fill()).child(
+                        label()
+                            .text(text)
+                            .color((140, 140, 160))
+                            .font_size(12.)
+                            .font_family("monospace"),
+                    ),
+                ),
+        );
+    }
+
+    rect()
+        .height(Size::fill())
+        .width(Size::fill())
+        .child(ScrollView::new().height(Size::fill()).child(col))
+        .into()
+}
+
+/// Render a full email body (HTML or plain text) without quote collapsing.
+fn render_full_body(content: String, is_html: bool, state: AppState, sender_email: String) -> Element {
+    if is_html {
+        rect()
+            .height(Size::fill())
+            .width(Size::fill())
+            .child(SecureHtmlViewer {
+                html: content,
+                sender_email,
+                state,
+                quote_toggle_idx: None,
+            })
+            .into()
+    } else {
+        let text = quoting::strip_quote_chars(&content);
+        rect()
+            .width(Size::fill())
+            .padding(8.)
+            .child(paragraph().span(text).color(DARK.text))
+            .into()
     }
 }
 

@@ -1,7 +1,10 @@
 use freya::prelude::*;
 use freya::winit::window::CursorIcon;
 
-use crate::theme::{Rgb, DARK};
+use crate::{
+    state::AppState,
+    theme::{Rgb, DARK, HOVER_STRONG},
+};
 
 pub fn icon(bytes: &'static [u8], size: f32, color: Rgb) -> SvgViewer {
     SvgViewer::new(bytes)
@@ -131,6 +134,44 @@ impl Component for Action {
             r = r.background(crate::grain::hover());
         }
         r.child(icon(bytes, 14., color))
-         .child(label().text(text).color(DARK.text).font_size(13.))
+            .child(label().text(text).color(DARK.text).font_size(13.))
+    }
+}
+
+/// The "..." button that shows/hides the quoted part of a reply. Styled like the other
+/// secondary buttons (`Action`): grain `hover` surface, stronger colour on hover.
+#[derive(PartialEq)]
+pub struct QuoteToggle {
+    pub state: AppState,
+    pub mail_idx: usize,
+}
+
+impl Component for QuoteToggle {
+    fn render(&self) -> impl IntoElement {
+        let mut hovering = use_state(|| false);
+        let mut state = self.state;
+        let mail_idx = self.mail_idx;
+        let bg = if hovering() {
+            Fill::from(HOVER_STRONG)
+        } else {
+            crate::grain::hover()
+        };
+
+        rect()
+            .padding((4., 14., 4., 14.))
+            .corner_radius(6.)
+            .background(bg)
+            .center()
+            .cursor(CursorIcon::Pointer)
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
+            .on_press(EventHandler::new(move |_| {
+                let mut expanded = state.quoted_expanded.read().clone();
+                if !expanded.remove(&mail_idx) {
+                    expanded.insert(mail_idx);
+                }
+                state.quoted_expanded.set(expanded);
+            }))
+            .child(icon(crate::icons::ELLIPSIS, 16., DARK.text))
     }
 }

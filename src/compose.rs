@@ -12,11 +12,19 @@ use freya::text_edit::{
 use freya_components::input::InputColorsThemePartial;
 
 use crate::{
+    html_viewer::SecureHtmlViewer,
     icons::{CHEVRON_DOWN, CHEVRON_LEFT, DISK, SEND},
-    state::AppState,
+    state::{AppState, ComposePre},
     theme::DARK,
     widgets::{divider, icon, IconButton},
 };
+
+/// Threading headers extracted from ComposePre before it's consumed.
+#[derive(Clone, Default)]
+struct ComposePreThreading {
+    original_message_id: String,
+    original_in_reply_to: String,
+}
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
@@ -80,42 +88,103 @@ pub struct ComposePane {
 
 impl Component for ComposePane {
     fn render(&self) -> impl IntoElement {
-        let state = self.state.clone();
+        let mut state = self.state.clone();
+
+        // Check for pre-filled compose data (Reply/Reply All/Forward).
+        // If present, consume it immediately so it doesn't persist across compose sessions.
+        let compose_pre: Option<ComposePre> = {
+            let mut pre = state.compose_pre.write();
+            pre.take()
+        };
+
+        // Extract threading headers early so the send closure can use them.
+        // These are needed for In-Reply-To and References headers when replying.
+        let threading = compose_pre.as_ref().map(|p| ComposePreThreading {
+            original_message_id: p.original_message_id.clone(),
+            original_in_reply_to: p.original_in_reply_to.clone(),
+        });
+
+        // Extract forwarded HTML body so the send closure can append it and render it in the preview.
+        // Stored in use_state so it persists across renders after compose_pre is consumed by .take().
+        let mut forwarded_html_body: State<Option<String>> = use_state(|| {
+            compose_pre.as_ref().and_then(|p| p.html_body.clone())
+        });
+        // Plain-text version of forwarded content for the text/plain MIME part.
+        let mut forwarded_plain_body: State<Option<String>> = use_state(|| {
+            compose_pre.as_ref().and_then(|p| p.forwarded_plain.clone())
+        });
 
         // Pre-fill from draft if editing an existing draft.
         // We read the draft info from the store using (account, folder, uid).
         // Since the UID may change after saving (old draft deleted, new one appended),
         // we also check the tombstoned entries in case the UID hasn't been updated yet.
         let draft_info = *state.draft_mail.read();
-        let (draft_to, draft_cc, draft_bcc, draft_subject, draft_body, _draft_uid, needs_fetch) = {
-            if let Some((account, folder, uid)) = draft_info {
+        let (draft_to, draft_cc, draft_bcc, draft_subject, draft_body, _draft_uid, needs_fetch, draft_fwd_html, draft_fwd_plain) = {
+            // Reply/Forward pre-fill takes priority over draft editing.
+            if let Some(pre) = &compose_pre {
+                // When forwarding an HTML email, the editor body is left empty so the user
+                // can type their message. The forwarded HTML renders in a preview section below.
+                // For plain-text forwards or replies, the body contains the quoted text.
+                let body_text = if pre.html_body.is_some() {
+                    String::new()
+                } else {
+                    pre.body.clone()
+                };
+                let body = DraftBody {
+                    formats: body_text.chars().map(|_| FormatFlags::default()).collect(),
+                    text: body_text,
+                    links: Vec::new(),
+                    images: Vec::new(),
+                };
+                (pre.to.clone(), pre.cc.clone(), String::new(), pre.subject.clone(), body, 0u32, None, None, None)
+            } else if let Some((account, folder, uid)) = draft_info {
                 let store = state.store.read();
                 let mail_opt = store.mails.iter().enumerate().find(|(_, m)| {
                     m.account == account && m.folder == folder && m.uid == uid && !m.removed
                 });
                 if let Some((_, m)) = mail_opt {
-                    let body_text = match &m.body {
+                    let (body_text, draft_forwarded_html) = match &m.body {
                         crate::model::BodyState::Loaded { text, content_type, .. } => {
-                            // HTML drafts are converted back into editor text + formatting
-                            // (bold / italic / underline / links) instead of being stripped.
                             if *content_type == crate::data::MailContentType::Html {
-                                html_to_editor(text, &m.attachments)
+                                // Check if this HTML draft contains a forwarded <blockquote> section.
+                                // When a forward-draft is saved, the HTML body has the user's content
+                                // followed by the forwarded HTML in a <blockquote>. Split them so the
+                                // editor shows only the user's content and the preview shows the forwarded HTML.
+                                if let Some((user_html, fwd_html)) = split_draft_forwarded_html(text) {
+                                    let user_body = html_to_editor(&user_html, &m.attachments);
+                                    (user_body, Some(fwd_html))
+                                } else {
+                                    (html_to_editor(text, &m.attachments), None)
+                                }
                             } else {
                                 let t = text.to_string();
-                                DraftBody {
-                                    formats: t.chars().map(|_| FormatFlags::default()).collect(),
-                                    text: t,
-                                    links: Vec::new(),
-                                    images: Vec::new(),
-                                }
+                                (
+                                    DraftBody {
+                                        formats: t.chars().map(|_| FormatFlags::default()).collect(),
+                                        text: t,
+                                        links: Vec::new(),
+                                        images: Vec::new(),
+                                    },
+                                    None,
+                                )
                             }
                         }
-                        _ => DraftBody::default(),
+                        _ => (DraftBody::default(), None),
                     };
                     let body_loaded = matches!(m.body, crate::model::BodyState::Loaded { .. });
                     let needs_fetch = !body_loaded && uid != 0;
                     let fetch_info = if needs_fetch {
                         Some((account, folder, uid))
+                    } else {
+                        None
+                    };
+                    // Collect draft forwarded HTML info to apply after use_state initialization.
+                    let draft_fwd_plain = if let crate::model::BodyState::Loaded { text, content_type, .. } = &m.body {
+                        if *content_type == crate::data::MailContentType::PlainText {
+                            Some(text.to_string())
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     };
@@ -127,6 +196,8 @@ impl Component for ComposePane {
                         body_text,
                         uid,
                         fetch_info,
+                        draft_forwarded_html,
+                        draft_fwd_plain,
                     )
                 } else {
                     // Mail not found in store (e.g. UID changed after save, or not synced yet).
@@ -143,6 +214,8 @@ impl Component for ComposePane {
                             DraftBody::default(),
                             uid,
                             None,
+                            None,
+                            None,
                         )
                     } else {
                         (
@@ -153,13 +226,34 @@ impl Component for ComposePane {
                             DraftBody::default(),
                             uid,
                             if uid != 0 { Some((account, folder, uid)) } else { None },
+                            None,
+                            None,
                         )
                     }
                 }
             } else {
-                (String::new(), String::new(), String::new(), String::new(), DraftBody::default(), 0u32, None)
+                (String::new(), String::new(), String::new(), String::new(), DraftBody::default(), 0u32, None, None, None)
             }
         };
+
+        // If we used compose_pre, clear draft_mail so this is a new message, not a draft edit.
+        if compose_pre.is_some() {
+            state.draft_mail.set(None);
+        }
+
+        // Apply draft forwarded HTML to State if compose_pre didn't already set it.
+        if draft_fwd_html.is_some() {
+            let mut fwd = forwarded_html_body.write();
+            if fwd.is_none() {
+                *fwd = draft_fwd_html;
+            }
+        }
+        if draft_fwd_plain.is_some() {
+            let mut fwd = forwarded_plain_body.write();
+            if fwd.is_none() {
+                *fwd = draft_fwd_plain;
+            }
+        }
 
         // Trigger body fetch only once, using a use_state guard to avoid re-sending.
         let mut fetch_guard = use_state(|| None::<(usize, usize, u32)>);
@@ -173,14 +267,22 @@ impl Component for ComposePane {
             fetch_guard.set(None);
         }
 
-        let show_cc = use_state(|| false);
+        let show_cc = use_state(|| !draft_cc.is_empty());
         let show_bcc = use_state(|| false);
 
+
         // Account selector: which account to send from.
-        // For existing drafts, default to the draft's account. For new messages,
-        // default to the currently selected account (or first account).
+        // Priority: reply/forward from_account > draft's account > currently selected account > first account.
         let selected_account: State<usize> = use_state(|| {
-            if let Some((account, _, _)) = draft_info {
+            // Reply/Forward pre-fill takes priority for the from account.
+            if let Some(pre) = &compose_pre {
+                let store = state.store.read();
+                if store.accounts.is_empty() {
+                    0
+                } else {
+                    pre.from_account.min(store.accounts.len() - 1)
+                }
+            } else if let Some((account, _, _)) = draft_info {
                 account
             } else {
                 let store = state.store.read();
@@ -234,6 +336,7 @@ impl Component for ComposePane {
             EventHandler::new(move |_| {
                 s.draft_mail.set(None);
                 s.draft_pin.set(None);
+                s.compose_pre.set(None);
                 s.view.set(crate::state::View::Mail);
             })
         };
@@ -249,6 +352,9 @@ impl Component for ComposePane {
             let links = links.clone();
             let images = images.clone();
             let selected_account = selected_account.clone();
+            let threading = threading.clone();
+            let forwarded_html = forwarded_html_body.clone();
+            let forwarded_plain = forwarded_plain_body.clone();
             EventHandler::new(move |_| {
                 let mut s = s.clone();
                 let to_val = to.read().trim().to_string();
@@ -264,6 +370,8 @@ impl Component for ComposePane {
                 let all_links = links.read().clone();
                 let all_images = images.read().clone();
                 let account = *selected_account.read();
+                let forwarded_html_val = forwarded_html.read().clone();
+                let forwarded_plain_val = forwarded_plain.read().clone();
 
                 // Look up the sender's address and name from the selected account
                 let from_addr = {
@@ -280,8 +388,23 @@ impl Component for ComposePane {
                 };
 
                 // Build HTML body from the editor text + formatting flags (with inline images)
-                let html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
-                let plain_body = &body_val;
+                let mut html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
+                let mut plain_body = body_val.chars().filter(|c| !is_placeholder(*c)).collect::<String>();
+
+                // Append forwarded content
+                if let Some(ref fwd_html) = forwarded_html_val {
+                    if !html_body.is_empty() {
+                        html_body.push_str(fwd_html);
+                    } else {
+                        html_body = fwd_html.clone();
+                    }
+                }
+                if let Some(ref fwd_plain) = forwarded_plain_val {
+                    if !plain_body.is_empty() {
+                        plain_body.push('\n');
+                    }
+                    plain_body.push_str(fwd_plain);
+                }
 
                 // Build a multipart/alternative RFC-2822 message with embedded images
                 let boundary = "000000000000abcdef1234";
@@ -300,6 +423,18 @@ impl Component for ComposePane {
                 }
                 raw.push_str(&format!("Subject: {}\r\n", subject_val));
                 raw.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
+                // Add In-Reply-To and References headers for reply threading
+                if let Some(ref thr) = threading {
+                    if !thr.original_message_id.is_empty() {
+                        raw.push_str(&format!("In-Reply-To: <{}>\r\n", thr.original_message_id));
+                        let mut refs = Vec::new();
+                        if !thr.original_in_reply_to.is_empty() {
+                            refs.push(format!("<{}>", thr.original_in_reply_to));
+                        }
+                        refs.push(format!("<{}>", thr.original_message_id));
+                        raw.push_str(&format!("References: {}\r\n", refs.join(" ")));
+                    }
+                }
                 raw.push_str("MIME-Version: 1.0\r\n");
 
                 // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
@@ -307,13 +442,12 @@ impl Component for ComposePane {
                 raw.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n", boundary));
                 raw.push_str("\r\n");
 
-                // Plain text part (image placeholders removed)
-                let plain_clean: String = plain_body.chars().filter(|c| !is_placeholder(*c)).collect();
+                // Plain text part
                 raw.push_str(&format!("--{}\r\n", boundary));
                 raw.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
                 raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
                 raw.push_str("\r\n");
-                raw.push_str(&plain_clean);
+                raw.push_str(&plain_body);
                 raw.push_str("\r\n");
 
                 if has_images {
@@ -379,6 +513,7 @@ impl Component for ComposePane {
                 // Close the compose window
                 s.draft_mail.set(None);
                 s.draft_pin.set(None);
+                s.compose_pre.set(None);
                 s.view.set(crate::state::View::Mail);
             })
         };
@@ -395,6 +530,9 @@ impl Component for ComposePane {
             let images = images.clone();
             let compose_key = self.compose_key.clone();
             let selected_account = selected_account.clone();
+            let threading = threading.clone();
+            let forwarded_html = forwarded_html_body.clone();
+            let forwarded_plain = forwarded_plain_body.clone();
             EventHandler::new(move |_| {
                 let mut s = s.clone();
                 // Keep this pane mounted when the server hands back the saved draft's new UID.
@@ -408,6 +546,8 @@ impl Component for ComposePane {
                 let all_links = links.read().clone();
                 let all_images = images.read().clone();
                 let account = *selected_account.read();
+                let forwarded_html_val = forwarded_html.read().clone();
+                let forwarded_plain_val = forwarded_plain.read().clone();
 
                 // Look up the sender's address and name from the selected account
                 let from_addr = {
@@ -424,8 +564,23 @@ impl Component for ComposePane {
                 };
 
                 // Build HTML body from the editor text + formatting flags (with inline images)
-                let html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
-                let plain_body = &body_val;
+                let mut html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
+                let mut plain_body = body_val.chars().filter(|c| !is_placeholder(*c)).collect::<String>();
+
+                // Append forwarded content
+                if let Some(ref fwd_html) = forwarded_html_val {
+                    if !html_body.is_empty() {
+                        html_body.push_str(fwd_html);
+                    } else {
+                        html_body = fwd_html.clone();
+                    }
+                }
+                if let Some(ref fwd_plain) = forwarded_plain_val {
+                    if !plain_body.is_empty() {
+                        plain_body.push('\n');
+                    }
+                    plain_body.push_str(fwd_plain);
+                }
 
                 // Build a multipart/alternative RFC-2822 message with embedded images
                 let boundary = "000000000000abcdef1234";
@@ -443,6 +598,18 @@ impl Component for ComposePane {
                 }
                 raw.push_str(&format!("Subject: {}\r\n", subject_val));
                 raw.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
+                // Add In-Reply-To and References headers for reply threading
+                if let Some(ref thr) = threading {
+                    if !thr.original_message_id.is_empty() {
+                        raw.push_str(&format!("In-Reply-To: <{}>\r\n", thr.original_message_id));
+                        let mut refs = Vec::new();
+                        if !thr.original_in_reply_to.is_empty() {
+                            refs.push(format!("<{}>", thr.original_in_reply_to));
+                        }
+                        refs.push(format!("<{}>", thr.original_message_id));
+                        raw.push_str(&format!("References: {}\r\n", refs.join(" ")));
+                    }
+                }
                 raw.push_str("MIME-Version: 1.0\r\n");
 
                 // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
@@ -450,13 +617,12 @@ impl Component for ComposePane {
                 raw.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n", boundary));
                 raw.push_str("\r\n");
 
-                // Plain text part (image placeholders removed)
-                let plain_clean: String = plain_body.chars().filter(|c| !is_placeholder(*c)).collect();
+                // Plain text part
                 raw.push_str(&format!("--{}\r\n", boundary));
                 raw.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
                 raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
                 raw.push_str("\r\n");
-                raw.push_str(&plain_clean);
+                raw.push_str(&plain_body);
                 raw.push_str("\r\n");
 
                 if has_images {
@@ -1157,8 +1323,8 @@ impl Component for ComposePane {
 
         let editor_container = rect()
             .width(Size::fill())
-            .height(Size::flex(1.))
-            .padding(10.)
+            .height(Size::px(if forwarded_html_body.read().is_some() { 110. } else { 80. }))
+            .padding(6.)
             .corner_radius(8.)
             .background(crate::grain::surface())
             // Clicking empty space (e.g. below the last line) focuses the editor and
@@ -1170,15 +1336,97 @@ impl Component for ComposePane {
             })
             .child(ScrollView::new().height(Size::fill()).child(lines_column));
 
-        let body_area = rect()
-            .width(Size::fill())
-            .height(Size::flex(1.))
-            .vertical()
-            .content(Content::Flex) // needed so flex(1.) children resolve
-            .spacing(6.)
-            .child(toolbar)
-            .child(link_bar)
-            .child(editor_container);
+        // --- Forwarded message (shown inline under the editor, like a traditional client) ---
+        let forwarded_html_val = forwarded_html_body.read().clone();
+        let forwarded_preview = if let Some(ref fwd_html) = forwarded_html_val {
+            // Preview-only cleanup (the sent message still uses the untouched HTML):
+            // drop the leading "--- Forwarded message ---" paragraph (the divider below says
+            // it) and zero the body margin so the content sits flush.
+            let html = {
+                let trimmed = fwd_html.trim_start();
+                let marker = "<p>--- Forwarded message ---</p>";
+                let body = trimmed.strip_prefix(marker).unwrap_or(trimmed);
+                format!("<style>html,body{{margin:0;padding:0}}</style>{}", body)
+            };
+            let line = || {
+                rect()
+                    .width(Size::flex(1.))
+                    .height(Size::px(1.))
+                    .background(Fill::from((58, 58, 78)))
+            };
+            // "---- Forwarded message ----" divider
+            let divider_row = rect()
+                .width(Size::fill())
+                .padding((10., 0., 8., 0.))
+                .horizontal()
+                .content(Content::Flex) // needed so the flex(1.) lines share the width
+                .cross_align(Alignment::Center)
+                .spacing(10.)
+                .child(line())
+                .child(
+                    label()
+                        .text("Forwarded message")
+                        .color(DARK.muted)
+                        .font_size(12.),
+                )
+                .child(line());
+            // HtmlViewer paints a viewport-sized window and scrolls the document itself
+            // (mouse wheel), so it must not sit inside a ScrollView.
+            Some(
+                rect()
+                    .width(Size::fill())
+                    .height(Size::flex(1.))
+                    .vertical()
+                    .child(divider_row)
+                    .child(
+                        rect()
+                            .width(Size::fill())
+                            .height(Size::fill())
+                            .background(Fill::from((28, 28, 38)))
+                            .key(&html)
+                            .child(SecureHtmlViewer {
+                                html,
+                                sender_email: String::new(),
+                                state: state.clone(),
+                                quote_toggle_idx: None,
+                            }),
+                    ),
+            )
+        } else {
+            None
+        };
+
+        let body_area = if forwarded_html_val.is_some() {
+            // Forwarding: no outer ScrollView. The editor keeps its fixed height and the
+            // forwarded preview fills the rest, scrolling internally.
+            rect()
+                .width(Size::fill())
+                .height(Size::flex(1.))
+                .vertical()
+                .content(Content::Flex)
+                .child(toolbar)
+                .child(link_bar)
+                .child(editor_container)
+                .maybe_child(forwarded_preview)
+        } else {
+            rect()
+                .width(Size::fill())
+                .height(Size::flex(1.))
+                .child(
+                    ScrollView::new()
+                        .height(Size::fill())
+                        .child(
+                            rect()
+                                .width(Size::fill())
+                                .min_height(Size::fill())
+                                .vertical()
+                                .child(toolbar)
+                                .child(link_bar)
+                                .child(editor_container)
+                                .maybe_child(forwarded_preview),
+                        ),
+                )
+        };
 
         // Main container. Dropping image files anywhere on the pane embeds them at the cursor.
         rect()
@@ -1706,27 +1954,58 @@ fn build_html_body_with_images(
         html.push_str("</a>");
     }
 
-    // Wrap lines in <p> tags for proper HTML structure
+    // Wrap lines in <p> tags for proper HTML structure.
+    // Lines starting with ">" are quoted text and wrapped in <blockquote>.
     let mut final_html = String::with_capacity(html.len() + 128);
     let mut in_paragraph = false;
+    let mut in_blockquote = false;
     for line in html.split('\n') {
+        let is_quoted = line.trim_start().starts_with('&') && line.trim_start().starts_with("&gt;");
         if line.is_empty() {
             if in_paragraph {
                 final_html.push_str("</p>");
                 in_paragraph = false;
             }
+            if in_blockquote {
+                final_html.push_str("</blockquote>");
+                in_blockquote = false;
+            }
         } else {
+            // Close blockquote if this line is not quoted
+            if in_blockquote && !is_quoted {
+                final_html.push_str("</blockquote>");
+                in_blockquote = false;
+            }
+            // Open blockquote if this line is quoted
+            if is_quoted && !in_blockquote {
+                final_html.push_str("<blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex\">");
+                in_blockquote = true;
+            }
             if !in_paragraph {
                 final_html.push_str("<p>");
                 in_paragraph = true;
             } else {
                 final_html.push_str("<br>");
             }
-            final_html.push_str(line);
+            // Strip the leading ">" from quoted lines for HTML display
+            if is_quoted {
+                // Find the first "&gt;" and skip it
+                if let Some(pos) = line.find("&gt;") {
+                    let rest = &line[pos + 4..];
+                    final_html.push_str(rest.trim_start());
+                } else {
+                    final_html.push_str(line);
+                }
+            } else {
+                final_html.push_str(line);
+            }
         }
     }
     if in_paragraph {
         final_html.push_str("</p>");
+    }
+    if in_blockquote {
+        final_html.push_str("</blockquote>");
     }
 
     final_html
@@ -2084,4 +2363,24 @@ fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
     let clean: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
     let data = base64::engine::general_purpose::STANDARD.decode(clean).ok()?;
     Some((ct, data))
+}
+
+/// Split a saved draft's HTML body into the user's typed content and the forwarded HTML.
+///
+/// When a forward-draft is saved, the HTML body contains the user's message followed by
+/// the forwarded HTML wrapped in a `<blockquote>`. This function finds the first
+/// `<blockquote>` tag and splits the HTML there, returning (user_html, forwarded_html).
+/// Returns None if no blockquote is found (i.e., not a forwarded draft).
+fn split_draft_forwarded_html(html: &str) -> Option<(String, String)> {
+    // Find the first <blockquote tag (case-insensitive)
+    let lower = html.to_ascii_lowercase();
+    let blockquote_pos = lower.find("<blockquote")?;
+
+    // The user's content is everything before the <blockquote>
+    let user_html = html[..blockquote_pos].trim().to_string();
+
+    // The forwarded content is the <blockquote> and everything after it
+    let forwarded_html = html[blockquote_pos..].to_string();
+
+    Some((user_html, forwarded_html))
 }

@@ -29,3 +29,6 @@ pub const DARK: Theme = Theme {
     danger: (220, 70, 90),
     success: (80, 200, 120),
 };
+
+/// Background of a secondary button while hovered (the app's `Action` / `Chip` hover colour).
+pub const HOVER_STRONG: Rgb = (50, 50, 68);
