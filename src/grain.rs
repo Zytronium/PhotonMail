@@ -91,7 +91,7 @@ fn build(top: Rgb, bottom: Rgb) -> Fill {
         }
         shader
     })
-        .into()
+    .into()
 }
 
 /// Lighten `base` toward the accent at the top-left and darken it toward the

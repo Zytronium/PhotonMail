@@ -2,11 +2,12 @@ use freya::prelude::*;
 use freya_components::input::InputColorsThemePartial;
 
 use crate::{
+    data::FOLDERS,
     icons::*,
     mail::DRAFTS,
     state::AppState,
     theme::DARK,
-    widgets::{avatar, Chip, divider, icon},
+    widgets::{Chip, avatar, divider, dot, icon},
 };
 
 pub struct MessageList {
@@ -24,6 +25,7 @@ impl Component for MessageList {
         let mut state = self.state;
         let unread_only = *state.unread_only.read();
         let mut s_filter = state;
+        let mut s_all = state;
         let search_query = state.search_query.clone();
 
         // Track whether the search input has focus so the keyboard handler can skip navigation
@@ -41,8 +43,9 @@ impl Component for MessageList {
         // Search bar
         let search_bar = rect()
             .width(Size::fill())
-            .padding((6., 10., 6., 10.))
-            .corner_radius(8.)
+            .padding((6., 12., 6., 12.))
+            .corner_radius(10.)
+            .border(freya::prelude::Border::new().width(1.).fill(DARK.divider))
             .background(Color::from_rgb(DARK.bg.0, DARK.bg.1, DARK.bg.2).with_a(128))
             .horizontal()
             .cross_align(Alignment::Center)
@@ -68,13 +71,51 @@ impl Component for MessageList {
         let chip_on_press: EventHandler<Event<PressEventData>> = (move |_| {
             let v = !*s_filter.unread_only.read();
             s_filter.unread_only.set(v);
-        }).into();
+        })
+        .into();
+
+        let all_on_press: EventHandler<Event<PressEventData>> = (move |_| {
+            s_all.unread_only.set(false);
+        })
+        .into();
+
+        let acc = *state.account.read();
+        let fol = *state.folder.read();
+        let title = if acc.is_none() {
+            "All inboxes".to_string()
+        } else {
+            FOLDERS.get(fol).copied().unwrap_or("Inbox").to_string()
+        };
+        let shown = visible.len();
+
+        let heading = rect()
+            .width(Size::fill())
+            .horizontal()
+            .content(Content::Flex)
+            .cross_align(Alignment::Center)
+            .spacing(8.)
+            .padding((6., 4., 2., 4.))
+            .child(
+                label()
+                    .text(title)
+                    .color(DARK.text)
+                    .font_size(18.)
+                    .font_weight(FontWeight::BOLD),
+            )
+            .child(rect().width(Size::flex(1.)))
+            .child(
+                label()
+                    .text(format!("{} shown", shown))
+                    .color(DARK.muted)
+                    .font_size(12.),
+            );
 
         let toolbar = rect()
             .width(Size::fill())
             .vertical()
-            .spacing(6.)
-            .padding((4., 12., 8., 12.))
+            .spacing(8.)
+            .padding((6., 12., 10., 12.))
+            .child(heading)
             .child(search_bar)
             .child(
                 rect()
@@ -82,20 +123,38 @@ impl Component for MessageList {
                     .content(Content::Flex)
                     .cross_align(Alignment::Center)
                     .spacing(8.)
-                    .child(Chip { text: "Unread".to_string(), active: unread_only, on_press: chip_on_press }),
+                    .child(Chip {
+                        text: "All".to_string(),
+                        active: !unread_only,
+                        on_press: all_on_press,
+                    })
+                    .child(Chip {
+                        text: "Unread".to_string(),
+                        active: unread_only,
+                        on_press: chip_on_press,
+                    }),
             );
 
         let body = if visible.is_empty() {
             if query_text.trim().is_empty() {
-                rect().padding(24.).child(label().text("No messages").color(DARK.muted))
+                rect()
+                    .padding(24.)
+                    .child(label().text("No messages").color(DARK.muted))
             } else {
-                rect().padding(24.).child(label().text("No matching messages").color(DARK.muted))
+                rect()
+                    .padding(24.)
+                    .child(label().text("No matching messages").color(DARK.muted))
             }
         } else {
             rect().child(
                 ScrollView::new()
                     .height(Size::fill())
-                    .children(visible.iter().map(|&i| rect().key(i).child(MessageRow { state, i }))),
+                    .children(visible.iter().map(|&i| {
+                        rect()
+                            .key(i)
+                            .padding((1., 6., 1., 6.))
+                            .child(MessageRow { state, i })
+                    })),
             )
         };
 
@@ -107,7 +166,11 @@ impl Component for MessageList {
             .height(Size::fill())
             .background(crate::grain::surface())
             .padding(2.)
-            .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
+            .border(
+                freya::prelude::Border::new()
+                    .width(if has_focus { 2. } else { 0. })
+                    .fill(DARK.accent),
+            )
             .child(toolbar)
             .child(divider())
             .child(body)
@@ -141,7 +204,11 @@ impl Component for MessageRow {
         let selected = *state.selected.read() == i;
         let unread = state.is_unread(i);
         let unified = state.account.read().is_none();
-        let weight = if unread { FontWeight::BOLD } else { FontWeight::NORMAL };
+        let weight = if unread {
+            FontWeight::BOLD
+        } else {
+            FontWeight::NORMAL
+        };
         let bg = if selected {
             Some(crate::grain::selected())
         } else if hovering() {
@@ -203,10 +270,12 @@ impl Component for MessageRow {
                         .child(icon(MAIL, 16., DARK.muted)),
                 )
         } else {
-            rect()
-                .height(Size::px(28.))
-                .center()
-                .child(label().text(m.date.clone()).color(DARK.muted).font_size(12.))
+            rect().height(Size::px(28.)).center().child(
+                label()
+                    .text(m.date.clone())
+                    .color(if unread { DARK.text } else { DARK.muted })
+                    .font_size(12.),
+            )
         };
 
         // For Sent (folder 2) and Drafts (folder 1), show the recipient instead of the sender
@@ -222,12 +291,23 @@ impl Component for MessageRow {
             .cross_align(Alignment::Center)
             .spacing(6.)
             .child(
-                rect()
-                    .width(Size::flex(1.))
-                    .child(label().text(display_name).color(DARK.text).font_size(15.).font_weight(weight).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis))
+                rect().width(Size::flex(1.)).child(
+                    label()
+                        .text(display_name)
+                        .color(DARK.text)
+                        .font_size(15.)
+                        .font_weight(weight)
+                        .max_lines(1)
+                        .text_overflow(freya::prelude::TextOverflow::Ellipsis),
+                ),
             );
         if unified {
-            name_row = name_row.child(label().text(account.name.clone()).color(account.color).font_size(11.));
+            name_row = name_row.child(
+                label()
+                    .text(account.name.clone())
+                    .color(account.color)
+                    .font_size(11.),
+            );
         }
         let name_row = name_row.child(trailing);
 
@@ -237,7 +317,14 @@ impl Component for MessageRow {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .child(label().text(display_email).color(DARK.muted).font_size(12.).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis))
+            .child(
+                label()
+                    .text(display_email)
+                    .color(DARK.muted)
+                    .font_size(12.)
+                    .max_lines(1)
+                    .text_overflow(freya::prelude::TextOverflow::Ellipsis),
+            )
             .child(rect().width(Size::flex(1.)));
 
         let top = rect()
@@ -248,7 +335,8 @@ impl Component for MessageRow {
 
         let row = rect()
             .width(Size::fill())
-            .padding(12.)
+            .padding((10., 10., 10., 8.))
+            .corner_radius(10.)
             .horizontal()
             .content(Content::Flex)
             .spacing(10.);
@@ -256,8 +344,7 @@ impl Component for MessageRow {
             Some(c) => row.background(c),
             None => row,
         };
-        row
-            .on_pointer_enter(move |_| hovering.set(true))
+        row.on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(move |_e: Event<PressEventData>| {
                 if m.folder == DRAFTS {
@@ -269,14 +356,39 @@ impl Component for MessageRow {
                     s_select.select(i);
                 }
             })
+            .child(
+                // Fixed-width gutter so rows line up whether read or not.
+                rect()
+                    .width(Size::px(8.))
+                    .margin((14., 0., 0., 0.))
+                    .child(if unread {
+                        dot(8., DARK.accent)
+                    } else {
+                        rect().width(Size::px(8.)).height(Size::px(8.))
+                    }),
+            )
             .child(avatar(&m.from, account.color, 36.))
             .child(
                 rect()
                     .width(Size::flex(1.))
                     .spacing(2.)
                     .child(top)
-                    .child(label().text(m.subject.clone()).color(DARK.text).font_weight(weight).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis))
-                    .child(label().text(m.preview.clone()).color(DARK.muted).font_size(12.).max_lines(1).text_overflow(freya::prelude::TextOverflow::Ellipsis)),
+                    .child(
+                        label()
+                            .text(m.subject.clone())
+                            .color(DARK.text)
+                            .font_weight(weight)
+                            .max_lines(1)
+                            .text_overflow(freya::prelude::TextOverflow::Ellipsis),
+                    )
+                    .child(
+                        label()
+                            .text(m.preview.clone())
+                            .color(DARK.muted)
+                            .font_size(12.)
+                            .max_lines(1)
+                            .text_overflow(freya::prelude::TextOverflow::Ellipsis),
+                    ),
             )
     }
 }

@@ -2,12 +2,7 @@ use std::path::{Path, PathBuf};
 
 use freya::prelude::*;
 use freya::text_edit::{
-    EditableConfig,
-    EditableEvent,
-    EditorLine,
-    TextEditor,
-    UseEditable,
-    use_editable,
+    EditableConfig, EditableEvent, EditorLine, TextEditor, UseEditable, use_editable,
 };
 use freya_components::input::InputColorsThemePartial;
 
@@ -15,14 +10,14 @@ use crate::{
     html_viewer::SecureHtmlViewer,
     icons::{CHEVRON_DOWN, CHEVRON_LEFT, DISK, SEND},
     mail::formatting::{
-        append_header, clean_header_value, encode_unstructured_header, format_address_list,
-        encode_mime_parameter, format_mailbox_header, generate_mime_boundary,
-        image_content_type, image_extension_for_content_type, quoted_printable_encode,
+        append_header, clean_header_value, encode_mime_parameter, encode_unstructured_header,
+        format_address_list, format_mailbox_header, generate_mime_boundary, image_content_type,
+        image_extension_for_content_type, quoted_printable_encode,
     },
-    state::{AppState, ComposePre},
     model::NoticeSeverity,
+    state::{AppState, ComposePre},
     theme::DARK,
-    widgets::{divider, icon, IconButton},
+    widgets::{IconButton, divider, icon},
 };
 
 /// Threading headers extracted from ComposePre before it's consumed.
@@ -63,7 +58,10 @@ fn generate_message_id(from_addr: &str) -> String {
 /// header stays far below the 998-character line limit.
 fn build_references(ancestors: &str, parent_id: &str) -> String {
     let mut ids: Vec<String> = Vec::new();
-    for id in ancestors.split_whitespace().chain(std::iter::once(parent_id)) {
+    for id in ancestors
+        .split_whitespace()
+        .chain(std::iter::once(parent_id))
+    {
         let id = id.trim_matches(|c| c == '<' || c == '>');
         if id.is_empty() || ids.iter().any(|x| x == id) {
             continue;
@@ -76,7 +74,10 @@ fn build_references(ancestors: &str, parent_id: &str) -> String {
         ids.truncate(1);
         ids.extend(tail);
     }
-    ids.iter().map(|i| format!("<{i}>")).collect::<Vec<_>>().join(" ")
+    ids.iter()
+        .map(|i| format!("<{i}>"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The first embedded image whose file can no longer be read (moved, deleted, temp file
@@ -111,7 +112,10 @@ fn build_raw_message(
     include_message_id: bool,
 ) -> String {
     let mut html_body = build_html_body_with_images(body, formats, links, images);
-    let mut plain_body = body.chars().filter(|character| !is_placeholder(*character)).collect::<String>();
+    let mut plain_body = body
+        .chars()
+        .filter(|character| !is_placeholder(*character))
+        .collect::<String>();
 
     if let Some(forwarded_html) = forwarded_html {
         if !html_body.is_empty() {
@@ -147,7 +151,9 @@ fn build_raw_message(
     append_header(
         &mut raw,
         "Date",
-        &chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000").to_string(),
+        &chrono::Utc::now()
+            .format("%a, %d %b %Y %H:%M:%S +0000")
+            .to_string(),
     );
     if include_message_id {
         append_header(
@@ -208,9 +214,14 @@ fn build_raw_message(
         raw.push_str("\r\n");
 
         for (character, path) in images {
-            let Ok(data) = std::fs::read(path) else { continue };
+            let Ok(data) = std::fs::read(path) else {
+                continue;
+            };
             let path = Path::new(path);
-            let extension = path.extension().and_then(|extension| extension.to_str()).unwrap_or("");
+            let extension = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("");
             let content_type = image_content_type(extension);
             let image_id = format!("img_{}@photonmail", u32::from(*character));
             let filename = path
@@ -334,20 +345,28 @@ impl Component for ComposePane {
 
         // Extract forwarded HTML body so the send closure can append it and render it in the preview.
         // Stored in use_state so it persists across renders after compose_pre is consumed by .take().
-        let mut forwarded_html_body: State<Option<String>> = use_state(|| {
-            compose_pre.as_ref().and_then(|p| p.html_body.clone())
-        });
+        let mut forwarded_html_body: State<Option<String>> =
+            use_state(|| compose_pre.as_ref().and_then(|p| p.html_body.clone()));
         // Plain-text version of forwarded content for the text/plain MIME part.
-        let mut forwarded_plain_body: State<Option<String>> = use_state(|| {
-            compose_pre.as_ref().and_then(|p| p.forwarded_plain.clone())
-        });
+        let mut forwarded_plain_body: State<Option<String>> =
+            use_state(|| compose_pre.as_ref().and_then(|p| p.forwarded_plain.clone()));
 
         // Pre-fill from draft if editing an existing draft.
         // We read the draft info from the store using (account, folder, uid).
         // Since the UID may change after saving (old draft deleted, new one appended),
         // we also check the tombstoned entries in case the UID hasn't been updated yet.
         let draft_info = *state.draft_mail.read();
-        let (draft_to, draft_cc, draft_bcc, draft_subject, draft_body, _draft_uid, needs_fetch, draft_fwd_html, draft_fwd_plain) = {
+        let (
+            draft_to,
+            draft_cc,
+            draft_bcc,
+            draft_subject,
+            draft_body,
+            _draft_uid,
+            needs_fetch,
+            draft_fwd_html,
+            draft_fwd_plain,
+        ) = {
             // Reply/Forward pre-fill takes priority over draft editing.
             if let Some(pre) = &compose_pre {
                 // When forwarding an HTML email, the editor body is left empty so the user
@@ -364,7 +383,17 @@ impl Component for ComposePane {
                     links: Vec::new(),
                     images: Vec::new(),
                 };
-                (pre.to.clone(), pre.cc.clone(), String::new(), pre.subject.clone(), body, 0u32, None, None, None)
+                (
+                    pre.to.clone(),
+                    pre.cc.clone(),
+                    String::new(),
+                    pre.subject.clone(),
+                    body,
+                    0u32,
+                    None,
+                    None,
+                    None,
+                )
             } else if let Some((account, folder, uid)) = draft_info {
                 let store = state.store.read();
                 let mail_opt = store.mails.iter().enumerate().find(|(_, m)| {
@@ -372,13 +401,17 @@ impl Component for ComposePane {
                 });
                 if let Some((_, m)) = mail_opt {
                     let (body_text, draft_forwarded_html) = match &m.body {
-                        crate::model::BodyState::Loaded { text, content_type, .. } => {
+                        crate::model::BodyState::Loaded {
+                            text, content_type, ..
+                        } => {
                             if *content_type == crate::data::MailContentType::Html {
                                 // Check if this HTML draft contains a forwarded <blockquote> section.
                                 // When a forward-draft is saved, the HTML body has the user's content
                                 // followed by the forwarded HTML in a <blockquote>. Split them so the
                                 // editor shows only the user's content and the preview shows the forwarded HTML.
-                                if let Some((user_html, fwd_html)) = split_draft_forwarded_html(text) {
+                                if let Some((user_html, fwd_html)) =
+                                    split_draft_forwarded_html(text)
+                                {
                                     let user_body = html_to_editor(&user_html, &m.attachments);
                                     (user_body, Some(fwd_html))
                                 } else {
@@ -388,7 +421,10 @@ impl Component for ComposePane {
                                 let t = text.to_string();
                                 (
                                     DraftBody {
-                                        formats: t.chars().map(|_| FormatFlags::default()).collect(),
+                                        formats: t
+                                            .chars()
+                                            .map(|_| FormatFlags::default())
+                                            .collect(),
                                         text: t,
                                         links: Vec::new(),
                                         images: Vec::new(),
@@ -407,15 +443,19 @@ impl Component for ComposePane {
                         None
                     };
                     // Collect draft forwarded HTML info to apply after use_state initialization.
-                    let draft_fwd_plain = if let crate::model::BodyState::Loaded { text, content_type, .. } = &m.body {
-                        if *content_type == crate::data::MailContentType::PlainText {
-                            Some(text.to_string())
+                    let draft_fwd_plain =
+                        if let crate::model::BodyState::Loaded {
+                            text, content_type, ..
+                        } = &m.body
+                        {
+                            if *content_type == crate::data::MailContentType::PlainText {
+                                Some(text.to_string())
+                            } else {
+                                None
+                            }
                         } else {
                             None
-                        }
-                    } else {
-                        None
-                    };
+                        };
                     (
                         m.to_email.clone(),
                         m.cc_email.clone(),
@@ -453,14 +493,28 @@ impl Component for ComposePane {
                             String::new(),
                             DraftBody::default(),
                             uid,
-                            if uid != 0 { Some((account, folder, uid)) } else { None },
+                            if uid != 0 {
+                                Some((account, folder, uid))
+                            } else {
+                                None
+                            },
                             None,
                             None,
                         )
                     }
                 }
             } else {
-                (String::new(), String::new(), String::new(), String::new(), DraftBody::default(), 0u32, None, None, None)
+                (
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    DraftBody::default(),
+                    0u32,
+                    None,
+                    None,
+                    None,
+                )
             }
         };
 
@@ -486,7 +540,9 @@ impl Component for ComposePane {
         // Trigger body fetch only once, using a use_state guard to avoid re-sending.
         let mut fetch_guard = use_state(|| None::<(usize, usize, u32)>);
         if let Some((account, folder, uid)) = needs_fetch {
-            let already_fetched = fetch_guard.read().is_some_and(|(a, f, u)| a == account && f == folder && u == uid);
+            let already_fetched = fetch_guard
+                .read()
+                .is_some_and(|(a, f, u)| a == account && f == folder && u == uid);
             if !already_fetched {
                 fetch_guard.set(Some((account, folder, uid)));
                 state.send(account, crate::mail::WorkerCmd::FetchBody { folder, uid });
@@ -497,7 +553,6 @@ impl Component for ComposePane {
 
         let show_cc = use_state(|| !draft_cc.is_empty());
         let show_bcc = use_state(|| !draft_bcc.is_empty());
-
 
         // Account selector: which account to send from.
         // Priority: reply/forward from_account > draft's account > currently selected account > first account.
@@ -518,7 +573,9 @@ impl Component for ComposePane {
                     0
                 } else {
                     // Use the currently selected account, or fall back to the first
-                    (*state.account.read()).unwrap_or(0).min(store.accounts.len() - 1)
+                    (*state.account.read())
+                        .unwrap_or(0)
+                        .min(store.accounts.len() - 1)
                 }
             }
         });
@@ -551,7 +608,12 @@ impl Component for ComposePane {
         let images = use_state(|| draft_body.images.clone());
         let next_img = use_state(|| {
             // Start after the highest placeholder char used in draft images
-            let max_char = draft_body.images.iter().map(|(c, _)| *c as u32).max().unwrap_or(0);
+            let max_char = draft_body
+                .images
+                .iter()
+                .map(|(c, _)| *c as u32)
+                .max()
+                .unwrap_or(0);
             if max_char > 0 {
                 (max_char - 0xE000) + 1
             } else {
@@ -611,13 +673,19 @@ impl Component for ComposePane {
                 // Look up the sender's address and name from the selected account
                 let (from_addr, from_email) = {
                     let store = s.store.read();
-                    store.accounts.get(account).map(|a| (
-                        format_mailbox_header(
-                            (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
-                            &a.addr,
-                        ),
-                        a.addr.clone(),
-                    )).unwrap_or_default()
+                    store
+                        .accounts
+                        .get(account)
+                        .map(|a| {
+                            (
+                                format_mailbox_header(
+                                    (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
+                                    &a.addr,
+                                ),
+                                a.addr.clone(),
+                            )
+                        })
+                        .unwrap_or_default()
                 };
 
                 // The outgoing message gets a Message-ID that is shared with its Sent copy.
@@ -700,13 +768,19 @@ impl Component for ComposePane {
                 // Look up the sender's address and name from the selected account
                 let (from_addr, from_email) = {
                     let store = s.store.read();
-                    store.accounts.get(account).map(|a| (
-                        format_mailbox_header(
-                            (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
-                            &a.addr,
-                        ),
-                        a.addr.clone(),
-                    )).unwrap_or_default()
+                    store
+                        .accounts
+                        .get(account)
+                        .map(|a| {
+                            (
+                                format_mailbox_header(
+                                    (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
+                                    &a.addr,
+                                ),
+                                a.addr.clone(),
+                            )
+                        })
+                        .unwrap_or_default()
                 };
 
                 let raw = build_raw_message(
@@ -791,7 +865,8 @@ impl Component for ComposePane {
                         // touching an unrelated message that has this UID in the new account,
                         // and keep this pane mounted.
                         s.draft_pin.set(Some((compose_key.clone(), Some(0))));
-                        s.draft_mail.set(Some((account_idx, crate::mail::DRAFTS, 0)));
+                        s.draft_mail
+                            .set(Some((account_idx, crate::mail::DRAFTS, 0)));
                     }
                 }
                 sel.set(account_idx);
@@ -799,12 +874,15 @@ impl Component for ComposePane {
             })
         };
 
-        let toggle_bold: EventHandler<Event<PressEventData>> =
-            EventHandler::new(move |_| toggle_format(editable, formats, cursor_format, Style::Bold));
-        let toggle_italic: EventHandler<Event<PressEventData>> =
-            EventHandler::new(move |_| toggle_format(editable, formats, cursor_format, Style::Italic));
-        let toggle_underline: EventHandler<Event<PressEventData>> =
-            EventHandler::new(move |_| toggle_format(editable, formats, cursor_format, Style::Underline));
+        let toggle_bold: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
+            toggle_format(editable, formats, cursor_format, Style::Bold)
+        });
+        let toggle_italic: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
+            toggle_format(editable, formats, cursor_format, Style::Italic)
+        });
+        let toggle_underline: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
+            toggle_format(editable, formats, cursor_format, Style::Underline)
+        });
 
         // --- Link handlers ---
         let toggle_link_bar: EventHandler<Event<PressEventData>> = {
@@ -835,19 +913,18 @@ impl Component for ComposePane {
 
         // --- Image picker (native file dialog, multi-select) ---
         // Note: the dialog is blocking, so the window may pause while it is open.
-        let pick_images_press: EventHandler<Event<PressEventData>> =
-            EventHandler::new(move |_| {
-                if let Some(files) = rfd::FileDialog::new()
-                    .set_title("Embed images")
-                    .add_filter("Images", IMAGE_EXTENSIONS)
-                    .pick_files()
-                {
-                    for f in files {
-                        insert_image_at_cursor(editable, formats, images, next_img, &f);
-                    }
+        let pick_images_press: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
+            if let Some(files) = rfd::FileDialog::new()
+                .set_title("Embed images")
+                .add_filter("Images", IMAGE_EXTENSIONS)
+                .pick_files()
+            {
+                for f in files {
+                    insert_image_at_cursor(editable, formats, images, next_img, &f);
                 }
-                a11y_id.request_focus();
-            });
+            }
+            a11y_id.request_focus();
+        });
 
         // --- Mouse handlers shared by all line paragraphs ---
         let on_line_down: EventHandler<LineMouse> =
@@ -877,27 +954,35 @@ impl Component for ComposePane {
 
         // --- Header bar ---
         let is_editing_draft = draft_info.is_some();
-        let header_title = if is_editing_draft { "Edit draft" } else { "New message" };
+        let header_title = if is_editing_draft {
+            "Edit draft"
+        } else {
+            "New message"
+        };
         let header = rect()
             .width(Size::fill())
             .horizontal()
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(8.)
-            .child(label().text(header_title).font_size(14.).font_weight(FontWeight::BOLD).color(DARK.text))
+            .child(
+                label()
+                    .text(header_title)
+                    .font_size(14.)
+                    .font_weight(FontWeight::BOLD)
+                    .color(DARK.text),
+            )
             .child(rect().width(Size::flex(1.)))
             .child(IconButton {
                 bytes: CHEVRON_LEFT,
                 color: DARK.muted,
                 on_press: close_on_press,
             })
-            .child(
-                IconButton {
-                    bytes: DISK,
-                    color: DARK.muted,
-                    on_press: save_draft_on_press,
-                }
-            )
+            .child(IconButton {
+                bytes: DISK,
+                color: DARK.muted,
+                on_press: save_draft_on_press,
+            })
             .child(
                 rect()
                     .padding((6., 14., 6., 14.))
@@ -909,7 +994,13 @@ impl Component for ComposePane {
                     .cursor(freya::winit::window::CursorIcon::Pointer)
                     .on_press(send_on_press)
                     .child(icon(SEND, 14., DARK.text))
-                    .child(label().text("Send").color(DARK.text).font_size(13.).font_weight(FontWeight::BOLD)),
+                    .child(
+                        label()
+                            .text("Send")
+                            .color(DARK.text)
+                            .font_size(13.)
+                            .font_weight(FontWeight::BOLD),
+                    ),
             );
 
         // --- From (account selector) ---
@@ -917,48 +1008,48 @@ impl Component for ComposePane {
         let (from_label, from_menu): (Rect, Option<Rect>) = if store_accounts.len() > 1 {
             // Show dropdown when multiple accounts exist
             let selected_idx = *selected_account.read();
-            let account_name = store_accounts.get(selected_idx)
+            let account_name = store_accounts
+                .get(selected_idx)
                 .map(|a| a.addr.clone())
                 .unwrap_or_default();
 
             // The From row (label + selectable input). The dropdown is returned separately and
             // added as the LAST child of the fields container so it paints over To / CC / Subject.
-            let from_row =
-                rect()
-                    .width(Size::fill())
-                    .horizontal()
-                    .content(Content::Flex)
-                    .cross_align(Alignment::Center)
-                    .spacing(8.)
-                    .child(
-                        label()
-                            .text("From")
-                            .color(DARK.muted)
-                            .font_size(12.)
-                            .width(Size::px(60.)),
-                    )
-                    .child(
-                        rect()
-                            .width(Size::flex(1.))
-                            .padding((6., 10., 6., 10.))
-                            .corner_radius(6.)
-                            .background(Fill::from((20, 20, 31)))
-                            .border(Border::new().fill((58, 58, 78)).width(1.))
-                            .horizontal()
-                            .content(Content::Flex)
-                            .cross_align(Alignment::Center)
-                            .spacing(6.)
-                            .cursor(freya::winit::window::CursorIcon::Pointer)
-                            .on_press(toggle_account_menu.clone())
-                            .child(
-                                label()
-                                    .text(account_name)
-                                    .color(DARK.text)
-                                    .font_size(13.)
-                                    .max_lines(1),
-                            )
-                            .child(icon(CHEVRON_DOWN, 12., DARK.muted)),
-                    );
+            let from_row = rect()
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::Flex)
+                .cross_align(Alignment::Center)
+                .spacing(8.)
+                .child(
+                    label()
+                        .text("From")
+                        .color(DARK.muted)
+                        .font_size(12.)
+                        .width(Size::px(60.)),
+                )
+                .child(
+                    rect()
+                        .width(Size::flex(1.))
+                        .padding((6., 10., 6., 10.))
+                        .corner_radius(6.)
+                        .background(Fill::from((20, 20, 31)))
+                        .border(Border::new().fill((58, 58, 78)).width(1.))
+                        .horizontal()
+                        .content(Content::Flex)
+                        .cross_align(Alignment::Center)
+                        .spacing(6.)
+                        .cursor(freya::winit::window::CursorIcon::Pointer)
+                        .on_press(toggle_account_menu.clone())
+                        .child(
+                            label()
+                                .text(account_name)
+                                .color(DARK.text)
+                                .font_size(13.)
+                                .max_lines(1),
+                        )
+                        .child(icon(CHEVRON_DOWN, 12., DARK.muted)),
+                );
 
             let from_menu = (*show_account_menu.read()).then(|| {
                 // Dropdown menu — positioned below the From row, on top of other content
@@ -970,11 +1061,7 @@ impl Component for ComposePane {
                     } else {
                         Fill::from((30, 30, 46))
                     };
-                    let text_color = if is_selected {
-                        DARK.accent
-                    } else {
-                        DARK.text
-                    };
+                    let text_color = if is_selected { DARK.accent } else { DARK.text };
                     let account_idx = idx;
                     let addr = acc.addr.clone();
                     let color = acc.color;
@@ -1007,7 +1094,7 @@ impl Component for ComposePane {
                                     .color(text_color)
                                     .font_size(13.)
                                     .max_lines(1),
-                            )
+                            ),
                     );
                 }
                 // Floating overlay (Layer::Overlay paints above the inputs and gets pointer
@@ -1041,7 +1128,8 @@ impl Component for ComposePane {
             (from_row, from_menu)
         } else {
             // Single account — just show "From" like a regular field
-            let account_name = store_accounts.first()
+            let account_name = store_accounts
+                .first()
                 .map(|a| a.addr.clone())
                 .unwrap_or_default();
             let row = rect()
@@ -1064,12 +1152,7 @@ impl Component for ComposePane {
                         .corner_radius(6.)
                         .background(Fill::from((20, 20, 31)))
                         .border(Border::new().fill((58, 58, 78)).width(1.))
-                        .child(
-                            label()
-                                .text(account_name)
-                                .color(DARK.muted)
-                                .font_size(13.),
-                        ),
+                        .child(label().text(account_name).color(DARK.muted).font_size(13.)),
                 );
             (row, None)
         };
@@ -1080,7 +1163,11 @@ impl Component for ComposePane {
             .vertical()
             .spacing(8.)
             .child(from_label)
-            .child(input_field("To".to_string(), to.clone(), dark_input.clone()))
+            .child(input_field(
+                "To".to_string(),
+                to.clone(),
+                dark_input.clone(),
+            ))
             .child({
                 rect()
                     .horizontal()
@@ -1105,19 +1192,31 @@ impl Component for ComposePane {
             })
             .child({
                 if *show_cc.read() {
-                    rect().child(input_field("CC".to_string(), cc.clone(), dark_input.clone()))
+                    rect().child(input_field(
+                        "CC".to_string(),
+                        cc.clone(),
+                        dark_input.clone(),
+                    ))
                 } else {
                     rect()
                 }
             })
             .child({
                 if *show_bcc.read() {
-                    rect().child(input_field("BCC".to_string(), bcc.clone(), dark_input.clone()))
+                    rect().child(input_field(
+                        "BCC".to_string(),
+                        bcc.clone(),
+                        dark_input.clone(),
+                    ))
                 } else {
                     rect()
                 }
             })
-            .child(input_field("Subject".to_string(), subject.clone(), dark_input.clone()))
+            .child(input_field(
+                "Subject".to_string(),
+                subject.clone(),
+                dark_input.clone(),
+            ))
             // Overlay layer: floats above the inputs below the From row instead of pushing them.
             .maybe_child(from_menu);
 
@@ -1158,11 +1257,36 @@ impl Component for ComposePane {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(4.)
-            .child(format_button("B".to_string(), FontWeight::BOLD, toolbar_fmt.bold, toggle_bold))
-            .child(format_button("I".to_string(), FontWeight::NORMAL, toolbar_fmt.italic, toggle_italic))
-            .child(format_button("U".to_string(), FontWeight::NORMAL, toolbar_fmt.underline, toggle_underline))
-            .child(format_button("Link".to_string(), FontWeight::NORMAL, link_active, toggle_link_bar))
-            .child(format_button("Image".to_string(), FontWeight::NORMAL, false, pick_images_press))
+            .child(format_button(
+                "B".to_string(),
+                FontWeight::BOLD,
+                toolbar_fmt.bold,
+                toggle_bold,
+            ))
+            .child(format_button(
+                "I".to_string(),
+                FontWeight::NORMAL,
+                toolbar_fmt.italic,
+                toggle_italic,
+            ))
+            .child(format_button(
+                "U".to_string(),
+                FontWeight::NORMAL,
+                toolbar_fmt.underline,
+                toggle_underline,
+            ))
+            .child(format_button(
+                "Link".to_string(),
+                FontWeight::NORMAL,
+                link_active,
+                toggle_link_bar,
+            ))
+            .child(format_button(
+                "Image".to_string(),
+                FontWeight::NORMAL,
+                false,
+                pick_images_press,
+            ))
             .child(rect().width(Size::flex(1.)));
 
         // --- Link URL bar (shown when the Link button / Ctrl+K is used) ---
@@ -1181,8 +1305,18 @@ impl Component for ComposePane {
                         .width(Size::fill())
                         .theme_colors(dark_input.clone()),
                 ))
-                .child(format_button("Apply".to_string(), FontWeight::NORMAL, false, apply_link_press))
-                .child(format_button("Remove".to_string(), FontWeight::NORMAL, false, remove_link_press))
+                .child(format_button(
+                    "Apply".to_string(),
+                    FontWeight::NORMAL,
+                    false,
+                    apply_link_press,
+                ))
+                .child(format_button(
+                    "Remove".to_string(),
+                    FontWeight::NORMAL,
+                    false,
+                    remove_link_press,
+                ))
         } else {
             rect()
         };
@@ -1306,7 +1440,11 @@ impl Component for ComposePane {
             let highlight = selection.and_then(|(s, e)| {
                 let a = s.max(line_start);
                 let b = e.min(line_end);
-                if a < b { Some((a - line_start, b - line_start)) } else { None }
+                if a < b {
+                    Some((a - line_start, b - line_start))
+                } else {
+                    None
+                }
             });
             let flags: Vec<FormatFlags> = (line_start..line_end)
                 .map(|i| all_formats.get(i).copied().unwrap_or_default())
@@ -1317,15 +1455,20 @@ impl Component for ComposePane {
                 .map(|c| if is_placeholder(*c) { '\u{00A0}' } else { *c })
                 .collect();
 
-            let mut row_rect = rect().width(Size::fill()).vertical().spacing(4.).child(EditorLineView {
-                row,
-                text: display,
-                flags,
-                cursor_col,
-                highlight,
-                on_down: on_line_down.clone(),
-                on_move: on_line_move.clone(),
-            });
+            let mut row_rect =
+                rect()
+                    .width(Size::fill())
+                    .vertical()
+                    .spacing(4.)
+                    .child(EditorLineView {
+                        row,
+                        text: display,
+                        flags,
+                        cursor_col,
+                        highlight,
+                        on_down: on_line_down.clone(),
+                        on_move: on_line_move.clone(),
+                    });
 
             // Images whose placeholder sits on this line are shown right under it.
             for (col, c) in chars.iter().enumerate() {
@@ -1374,7 +1517,11 @@ impl Component for ComposePane {
 
         let editor_container = rect()
             .width(Size::fill())
-            .height(Size::px(if forwarded_html_body.read().is_some() { 110. } else { 80. }))
+            .height(Size::px(if forwarded_html_body.read().is_some() {
+                110.
+            } else {
+                80.
+            }))
             .padding(6.)
             .corner_radius(8.)
             .background(crate::grain::surface())
@@ -1460,23 +1607,18 @@ impl Component for ComposePane {
                 .child(editor_container)
                 .maybe_child(forwarded_preview)
         } else {
-            rect()
-                .width(Size::fill())
-                .height(Size::flex(1.))
-                .child(
-                    ScrollView::new()
-                        .height(Size::fill())
-                        .child(
-                            rect()
-                                .width(Size::fill())
-                                .min_height(Size::fill())
-                                .vertical()
-                                .child(toolbar)
-                                .child(link_bar)
-                                .child(editor_container)
-                                .maybe_child(forwarded_preview),
-                        ),
-                )
+            rect().width(Size::fill()).height(Size::flex(1.)).child(
+                ScrollView::new().height(Size::fill()).child(
+                    rect()
+                        .width(Size::fill())
+                        .min_height(Size::fill())
+                        .vertical()
+                        .child(toolbar)
+                        .child(link_bar)
+                        .child(editor_container)
+                        .maybe_child(forwarded_preview),
+                ),
+            )
         };
 
         // Main container. Dropping image files anywhere on the pane embeds them at the cursor.
@@ -1576,7 +1718,12 @@ fn move_cursor_to(mut editable: UseEditable, target: usize) {
 }
 
 /// Send one key to the editor and keep the format vector in sync with the edit.
-fn send_key(mut editable: UseEditable, mut formats: State<Vec<FormatFlags>>, insert_fmt: FormatFlags, key: Key) {
+fn send_key(
+    mut editable: UseEditable,
+    mut formats: State<Vec<FormatFlags>>,
+    insert_fmt: FormatFlags,
+    key: Key,
+) {
     let before = editable.editor().read().to_string();
     editable.process_event(EditableEvent::KeyDown {
         key: &key,
@@ -1617,9 +1764,21 @@ fn insert_image_at_cursor(
         return;
     }
     let ch = alloc_placeholder(next_img);
-    images.write().push((ch, path.to_string_lossy().to_string()));
-    send_key(editable, formats, FormatFlags::default(), Key::Character(ch.to_string().into()));
-    send_key(editable, formats, FormatFlags::default(), Key::Named(NamedKey::Enter));
+    images
+        .write()
+        .push((ch, path.to_string_lossy().to_string()));
+    send_key(
+        editable,
+        formats,
+        FormatFlags::default(),
+        Key::Character(ch.to_string().into()),
+    );
+    send_key(
+        editable,
+        formats,
+        FormatFlags::default(),
+        Key::Named(NamedKey::Enter),
+    );
 }
 
 /// Delete the image whose placeholder character is at `index` (cursor after it, Backspace).
@@ -1635,7 +1794,12 @@ fn remove_image_at(editable: UseEditable, formats: State<Vec<FormatFlags>>, inde
         return;
     }
     move_cursor_to(editable, index + 1);
-    send_key(editable, formats, FormatFlags::default(), Key::Named(NamedKey::Backspace));
+    send_key(
+        editable,
+        formats,
+        FormatFlags::default(),
+        Key::Named(NamedKey::Backspace),
+    );
 }
 
 /// Toggle a style on the selection, or on the "next typed text" format if no selection.
@@ -1698,7 +1862,12 @@ fn apply_link(
 
 /// Keep the per-character format vector in sync with a text edit.
 /// Finds the changed region via common prefix/suffix; inserted chars get `insert_fmt`.
-fn reconcile_formats(formats: &mut Vec<FormatFlags>, before: &str, after: &str, insert_fmt: FormatFlags) {
+fn reconcile_formats(
+    formats: &mut Vec<FormatFlags>,
+    before: &str,
+    after: &str,
+    insert_fmt: FormatFlags,
+) {
     let b: Vec<char> = before.chars().collect();
     let a: Vec<char> = after.chars().collect();
     formats.resize(b.len(), FormatFlags::default());
@@ -1875,11 +2044,7 @@ fn field_box(input: Input) -> Rect {
         .child(input)
 }
 
-fn input_field(
-    label_text: String,
-    value: State<String>,
-    theme: InputColorsThemePartial,
-) -> Rect {
+fn input_field(label_text: String, value: State<String>, theme: InputColorsThemePartial) -> Rect {
     rect()
         .width(Size::fill())
         .horizontal()
@@ -2062,7 +2227,6 @@ fn build_html_body_with_images(
     final_html
 }
 
-
 /// Escape a single character for HTML, appending to the given string.
 fn html_escape_char(ch: char, out: &mut String) {
     match ch {
@@ -2113,7 +2277,11 @@ fn tag_attr(tag: &str, attr: &str) -> Option<String> {
             let rest = rest[1..].trim_start();
             return Some(match rest.chars().next() {
                 Some(q @ ('"' | '\'')) => rest[1..].split(q).next().unwrap_or("").to_string(),
-                _ => rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or("").to_string(),
+                _ => rest
+                    .split(|c: char| c.is_whitespace() || c == '>')
+                    .next()
+                    .unwrap_or("")
+                    .to_string(),
             });
         }
         from = start + attr.len();
@@ -2162,7 +2330,10 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
         if let Some(end_tag) = skip_until {
             if ch == '<' {
                 let rest: String = chars[i..].iter().take(end_tag.len() + 2).collect();
-                if rest.to_ascii_lowercase().starts_with(&format!("</{}", end_tag)) {
+                if rest
+                    .to_ascii_lowercase()
+                    .starts_with(&format!("</{}", end_tag))
+                {
                     skip_until = None;
                 }
             }
@@ -2209,13 +2380,25 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
                     });
                 }
                 "strong" | "b" => {
-                    if closing { bold = bold.saturating_sub(1) } else { bold += 1 }
+                    if closing {
+                        bold = bold.saturating_sub(1)
+                    } else {
+                        bold += 1
+                    }
                 }
                 "em" | "i" => {
-                    if closing { italic = italic.saturating_sub(1) } else { italic += 1 }
+                    if closing {
+                        italic = italic.saturating_sub(1)
+                    } else {
+                        italic += 1
+                    }
                 }
                 "u" => {
-                    if closing { underline = underline.saturating_sub(1) } else { underline += 1 }
+                    if closing {
+                        underline = underline.saturating_sub(1)
+                    } else {
+                        underline += 1
+                    }
                 }
                 "a" => {
                     if closing {
@@ -2239,7 +2422,8 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
                         formats.push(FormatFlags::default());
                     }
                 }
-                "p" | "div" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "table" => {
+                "p" | "div" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul"
+                | "ol" | "table" => {
                     pending_nl = pending_nl.max(2);
                 }
                 "li" | "tr" => {
@@ -2250,8 +2434,14 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
                     // (or decode `data:` URIs) into temp files, then show them via a placeholder.
                     if let Some(src) = tag_attr(body, "src") {
                         let src = decode_entities(&src);
-                        let path = if src.get(..4).map_or(false, |s| s.eq_ignore_ascii_case("cid:")) {
-                            let cid = src[4..].trim().trim_start_matches('<').trim_end_matches('>');
+                        let path = if src
+                            .get(..4)
+                            .map_or(false, |s| s.eq_ignore_ascii_case("cid:"))
+                        {
+                            let cid = src[4..]
+                                .trim()
+                                .trim_start_matches('<')
+                                .trim_end_matches('>');
                             attachments
                                 .iter()
                                 .find(|a| {
@@ -2260,11 +2450,14 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
                                         .map_or(false, |id| id.eq_ignore_ascii_case(cid))
                                 })
                                 .and_then(|a| {
-                                    a.data
-                                        .as_deref()
-                                        .and_then(|d| store_draft_image(d, &a.content_type, &a.name))
+                                    a.data.as_deref().and_then(|d| {
+                                        store_draft_image(d, &a.content_type, &a.name)
+                                    })
                                 })
-                        } else if src.get(..5).map_or(false, |s| s.eq_ignore_ascii_case("data:")) {
+                        } else if src
+                            .get(..5)
+                            .map_or(false, |s| s.eq_ignore_ascii_case("data:"))
+                        {
                             decode_data_uri(&src)
                                 .and_then(|(ct, d)| store_draft_image(&d, &ct, "image"))
                         } else {
@@ -2272,7 +2465,8 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
                         };
                         if let Some(path) = path {
                             flush(&mut text, &mut formats, &mut pending_nl);
-                            let ch = char::from_u32(0xE000 + (next_img % 6400)).unwrap_or('\u{E000}');
+                            let ch =
+                                char::from_u32(0xE000 + (next_img % 6400)).unwrap_or('\u{E000}');
                             next_img += 1;
                             text.push(ch);
                             formats.push(FormatFlags::default());
@@ -2292,7 +2486,12 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
         let mut c = ch;
         if ch == '&' {
             let mut j = i + 1;
-            while j < chars.len() && j - i <= 10 && chars[j] != ';' && chars[j] != '&' && chars[j] != '<' {
+            while j < chars.len()
+                && j - i <= 10
+                && chars[j] != ';'
+                && chars[j] != '&'
+                && chars[j] != '<'
+            {
                 j += 1;
             }
             if j < chars.len() && chars[j] == ';' {
@@ -2309,7 +2508,10 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
             continue;
         }
         if c.is_whitespace() && c != '\u{a0}' {
-            let prev_ws = text.chars().next_back().map_or(true, |p| p == ' ' || p == '\n');
+            let prev_ws = text
+                .chars()
+                .next_back()
+                .map_or(true, |p| p == ' ' || p == '\n');
             if prev_ws || pending_nl > 0 {
                 continue;
             }
@@ -2394,7 +2596,12 @@ fn store_with_ext(data: &[u8], name: &str, ext: &str) -> Option<String> {
         .collect();
     let dir = std::env::temp_dir().join("photon-mail-draft-images");
     std::fs::create_dir_all(&dir).ok()?;
-    let file = dir.join(format!("{:016x}-{}.{}", h.finish(), if stem.is_empty() { "image" } else { &stem }, ext));
+    let file = dir.join(format!(
+        "{:016x}-{}.{}",
+        h.finish(),
+        if stem.is_empty() { "image" } else { &stem },
+        ext
+    ));
     if !file.exists() {
         std::fs::write(&file, data).ok()?;
     }
@@ -2411,7 +2618,9 @@ fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
     }
     let ct = meta.split(';').next().unwrap_or("image/png").to_string();
     let clean: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
-    let data = base64::engine::general_purpose::STANDARD.decode(clean).ok()?;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(clean)
+        .ok()?;
     Some((ct, data))
 }
 
@@ -2498,7 +2707,11 @@ fn split_draft_forwarded_html(html: &str) -> Option<(String, String)> {
     let new_marker = "<p data-photonmail-forwarded=\"true\">--- forwarded message ---</p>";
     let (split_pos, forwarded_pos) = if let Some(marker_pos) = lower.find(new_marker) {
         let mut forwarded_pos = marker_pos + new_marker.len();
-        while html.as_bytes().get(forwarded_pos).is_some_and(u8::is_ascii_whitespace) {
+        while html
+            .as_bytes()
+            .get(forwarded_pos)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
             forwarded_pos += 1;
         }
         if !lower[forwarded_pos..].starts_with("<blockquote") {
@@ -2511,7 +2724,11 @@ fn split_draft_forwarded_html(html: &str) -> Option<(String, String)> {
         loop {
             let marker_pos = lower[search_from..].find(old_marker)? + search_from;
             let mut forwarded_pos = marker_pos + old_marker.len();
-            while html.as_bytes().get(forwarded_pos).is_some_and(u8::is_ascii_whitespace) {
+            while html
+                .as_bytes()
+                .get(forwarded_pos)
+                .is_some_and(u8::is_ascii_whitespace)
+            {
                 forwarded_pos += 1;
             }
             if lower[forwarded_pos..].starts_with("<blockquote") {

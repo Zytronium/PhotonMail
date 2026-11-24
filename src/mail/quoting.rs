@@ -21,9 +21,8 @@ static RE_GMAIL_QUOTE_OPEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)<(?:div|blockquote)\b[^>]*\bclass\s*=\s*["'][^"']*\bgmail_quote\b"#).unwrap()
 });
 /// A line of an HTML body that starts with an encoded `>` (plain-text style quoting).
-static RE_GT_LINE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:^|<br\s*/?>|<p[^>]*>|<div[^>]*>|\n)\s*&gt;").unwrap()
-});
+static RE_GT_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(?:^|<br\s*/?>|<p[^>]*>|<div[^>]*>|\n)\s*&gt;").unwrap());
 
 /// Whether a message is an actual reply to another message.
 ///
@@ -118,7 +117,10 @@ pub fn split_plain_text(body: &str) -> QuotedSplit {
             while below < len && lines[below].trim().is_empty() {
                 below += 1;
             }
-            if below < len && (lines[below].trim_start().starts_with('>') || is_reply_header(lines[below].trim_start())) {
+            if below < len
+                && (lines[below].trim_start().starts_with('>')
+                    || is_reply_header(lines[below].trim_start()))
+            {
                 quoted_start = i;
                 if i == 0 {
                     break;
@@ -156,7 +158,10 @@ pub fn split_plain_text(body: &str) -> QuotedSplit {
             break;
         }
     }
-    let quoted_content = quoted_lines[first_non_empty..].join("\n").trim_end().to_string();
+    let quoted_content = quoted_lines[first_non_empty..]
+        .join("\n")
+        .trim_end()
+        .to_string();
 
     QuotedSplit {
         new_content,
@@ -200,8 +205,7 @@ pub fn strip_quote_chars(body: &str) -> String {
 fn is_reply_header(line: &str) -> bool {
     let lower = line.to_lowercase();
     // Common patterns: "On {date}, {sender} wrote:", "--- Forwarded message ---"
-    (lower.starts_with("on ") && lower.ends_with("wrote:"))
-        || lower.contains("forwarded message")
+    (lower.starts_with("on ") && lower.ends_with("wrote:")) || lower.contains("forwarded message")
 }
 
 /// Check if an HTML email body contains quoted reply sections.
@@ -230,7 +234,8 @@ fn find_html_quote_start(html: &str) -> Option<usize> {
 
 /// Empty spacer reserving room for the "..." button, which is a native widget drawn over it
 /// (see `SecureHtmlViewer`). Its position in the document is the end of the new content.
-const ANCHOR_HTML: &str = r#"<div id="photon-quote-anchor" style="height:28px;margin:10px 0"></div>"#;
+const ANCHOR_HTML: &str =
+    r#"<div id="photon-quote-anchor" style="height:28px;margin:10px 0"></div>"#;
 /// Hides quoted elements while collapsed.
 const HIDE_QUOTES_CSS: &str = "<style>blockquote,.gmail_quote{display:none!important}</style>";
 
@@ -281,7 +286,9 @@ pub fn normalize_html_quotes(html: &str) -> String {
 
     // Find all <p> tags that contain &gt; at the start
     // Replace <p>...&gt;...</p> with <blockquote><p>...</p></blockquote>
-    let re_p_with_gt = regex::Regex::new(r"(?is)(<p[^>]*>)([^<]*&gt;[^<]*(?:<br[^>]*>\s*[^<]*&gt;[^<]*)*</p>)").unwrap();
+    let re_p_with_gt =
+        regex::Regex::new(r"(?is)(<p[^>]*>)([^<]*&gt;[^<]*(?:<br[^>]*>\s*[^<]*&gt;[^<]*)*</p>)")
+            .unwrap();
     result = re_p_with_gt.replace_all(&result, "<blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex\">$1$2</blockquote>").to_string();
 
     // Also handle bare &gt; patterns not inside <p> tags
@@ -374,7 +381,8 @@ mod tests {
 
     #[test]
     fn test_split_plain_text_forwarded() {
-        let body = "Check this out:\n\n--- Forwarded message ---\n> Forwarded line 1\n> Forwarded line 2";
+        let body =
+            "Check this out:\n\n--- Forwarded message ---\n> Forwarded line 1\n> Forwarded line 2";
         let split = split_plain_text(body);
         assert!(split.has_quotes);
         assert_eq!(split.new_content, "Check this out:");

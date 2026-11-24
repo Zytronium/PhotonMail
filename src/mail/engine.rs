@@ -4,11 +4,12 @@
 //! with a small multi-threaded tokio runtime. The UI talks to it with `Engine::send`
 //! (commands in) and drains `Engine::events` (events out) from a Freya task.
 
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use super::{
+    Command, Event, WorkerCmd,
     config::{self, AccountConfig},
-    imap, Command, Event, WorkerCmd,
+    imap,
 };
 
 #[derive(Clone)]
@@ -21,7 +22,10 @@ impl Engine {
     /// Engine that does nothing (demo mode). Its event channel is already closed.
     pub fn offline() -> Self {
         let (_tx, rx) = async_channel::unbounded();
-        Engine { tx: None, events: rx }
+        Engine {
+            tx: None,
+            events: rx,
+        }
     }
 
     /// Start the I/O thread and connect every saved account.
@@ -42,7 +46,10 @@ impl Engine {
             })
             .expect("failed to spawn the mail I/O thread");
 
-        Engine { tx: Some(cmd_tx), events: event_rx }
+        Engine {
+            tx: Some(cmd_tx),
+            events: event_rx,
+        }
     }
 
     pub fn send(&self, cmd: Command) {

@@ -38,7 +38,11 @@ enum HandleResult {
 /// Handle a global key-down event and mutate app state accordingly.
 ///
 /// Returns `true` when the key was consumed (the caller should stop propagation).
-pub fn handle_key(event: &Event<KeyboardEventData>, state: &mut AppState, focus: &mut FocusState) -> bool {
+pub fn handle_key(
+    event: &Event<KeyboardEventData>,
+    state: &mut AppState,
+    focus: &mut FocusState,
+) -> bool {
     // If the search input is focused, don't handle keyboard navigation
     if focus.search_input_focused {
         return false;
@@ -86,8 +90,14 @@ pub fn handle_key(event: &Event<KeyboardEventData>, state: &mut AppState, focus:
         FocusArea::Compose => HandleResult::Ignored,
     };
     match result {
-        HandleResult::Consumed => { focus.keyboard_active = true; true }
-        HandleResult::Unfocus => { focus.keyboard_active = false; true }
+        HandleResult::Consumed => {
+            focus.keyboard_active = true;
+            true
+        }
+        HandleResult::Unfocus => {
+            focus.keyboard_active = false;
+            true
+        }
         HandleResult::Ignored => false,
     }
 }
@@ -137,12 +147,16 @@ fn handle_message_list(
         if !modifiers.shift() {
             match ch.as_str() {
                 "j" => {
-                    if idx < visible.len() - 1 { idx += 1; }
+                    if idx < visible.len() - 1 {
+                        idx += 1;
+                    }
                     state.select(visible[idx]);
                     return HandleResult::Consumed;
                 }
                 "k" => {
-                    if idx > 0 { idx -= 1; }
+                    if idx > 0 {
+                        idx -= 1;
+                    }
                     state.select(visible[idx]);
                     return HandleResult::Consumed;
                 }
@@ -189,12 +203,16 @@ fn handle_message_list(
     // Named keys
     match key {
         Key::Named(NamedKey::ArrowUp) => {
-            if idx > 0 { idx -= 1; }
+            if idx > 0 {
+                idx -= 1;
+            }
             state.select(visible[idx]);
             HandleResult::Consumed
         }
         Key::Named(NamedKey::ArrowDown) => {
-            if idx < visible.len() - 1 { idx += 1; }
+            if idx < visible.len() - 1 {
+                idx += 1;
+            }
             state.select(visible[idx]);
             HandleResult::Consumed
         }

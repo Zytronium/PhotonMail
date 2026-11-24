@@ -3,6 +3,7 @@ mod compose;
 mod data;
 mod grain;
 mod html_viewer;
+mod icons;
 mod keyboard;
 mod link_prefs;
 mod mail;
@@ -14,7 +15,6 @@ mod sidebar;
 mod state;
 mod theme;
 mod titlebar;
-mod icons;
 mod widgets;
 
 use freya::{borderless::BorderlessPlugin, prelude::*};
@@ -22,9 +22,13 @@ use freya::{borderless::BorderlessPlugin, prelude::*};
 use crate::{
     html_viewer::LinkConfirmDialog,
     keyboard::handle_key,
-    message_list::MessageList, pane_divider::{PaneDivider, DividerTarget},
+    message_list::MessageList,
+    pane_divider::{DividerTarget, PaneDivider},
     reader::{AttachmentPreview, Reader},
-    sidebar::Sidebar, state::use_app_state, theme::DARK, titlebar::Titlebar,
+    sidebar::Sidebar,
+    state::use_app_state,
+    theme::DARK,
+    titlebar::Titlebar,
 };
 
 pub const APP_NAME: &str = "Photon Mail";
@@ -114,7 +118,12 @@ fn app() -> impl IntoElement {
                         .padding((2., 10., 2., 10.))
                         .corner_radius(4.)
                         .on_press(dismiss_send_error)
-                        .child(label().text("Dismiss").color((255, 255, 255)).font_size(13.)),
+                        .child(
+                            label()
+                                .text("Dismiss")
+                                .color((255, 255, 255))
+                                .font_size(13.),
+                        ),
                 )
         }))
         .child(
@@ -124,9 +133,15 @@ fn app() -> impl IntoElement {
                 .width(Size::fill())
                 .height(Size::fill())
                 .child(Sidebar { state })
-                .child(PaneDivider { state, target: DividerTarget::Sidebar })
+                .child(PaneDivider {
+                    state,
+                    target: DividerTarget::Sidebar,
+                })
                 .child(MessageList { state })
-                .child(PaneDivider { state, target: DividerTarget::MessageList })
+                .child(PaneDivider {
+                    state,
+                    target: DividerTarget::MessageList,
+                })
                 .child(Reader { state }),
         )
         .maybe_child(show_link_dialog.then(|| {
@@ -179,9 +194,11 @@ fn app() -> impl IntoElement {
                             .height(Size::window_percent(100.))
                             .center()
                             .on_press({
-                                EventHandler::new(move |e: Event<freya::prelude::PressEventData>| {
-                                    e.stop_propagation();
-                                })
+                                EventHandler::new(
+                                    move |e: Event<freya::prelude::PressEventData>| {
+                                        e.stop_propagation();
+                                    },
+                                )
                             })
                             .child(AttachmentPreview { state }),
                     )

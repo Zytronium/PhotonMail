@@ -1,6 +1,11 @@
 use crate::theme::Rgb;
 
-pub struct DemoAccount { pub name: &'static str, pub addr: &'static str, pub color: Rgb, pub sync: &'static str }
+pub struct DemoAccount {
+    pub name: &'static str,
+    pub addr: &'static str,
+    pub color: Rgb,
+    pub sync: &'static str,
+}
 
 /// Content type of the mail body.
 #[derive(Clone, Copy, PartialEq, Default, Debug)]
@@ -30,9 +35,24 @@ pub struct DemoMail {
 }
 
 pub const DEMO_ACCOUNTS: [DemoAccount; 3] = [
-    DemoAccount { name: "Personal", addr: "foogle_user@femail.com", color: (109, 74, 255), sync: "2 min ago" },
-    DemoAccount { name: "Work", addr: "why.wont@it.work", color: (0, 150, 136), sync: "just now" },
-    DemoAccount { name: "Dev", addr: "still@in.dev", color: (240, 140, 40), sync: "1 hour ago" },
+    DemoAccount {
+        name: "Personal",
+        addr: "foogle_user@femail.com",
+        color: (109, 74, 255),
+        sync: "2 min ago",
+    },
+    DemoAccount {
+        name: "Work",
+        addr: "why.wont@it.work",
+        color: (0, 150, 136),
+        sync: "just now",
+    },
+    DemoAccount {
+        name: "Dev",
+        addr: "still@in.dev",
+        color: (240, 140, 40),
+        sync: "1 hour ago",
+    },
 ];
 pub const FOLDERS: [&str; 6] = ["Inbox", "Drafts", "Sent", "Archive", "Spam", "Trash"];
 pub const LABELS: [(&str, Rgb); 3] = [
@@ -43,20 +63,29 @@ pub const LABELS: [(&str, Rgb); 3] = [
 pub const DEMO_MAILS: [DemoMail; 18] = [
     // 1. Simple plain-text email
     DemoMail {
-        account: 0, folder: 0, unread: true,
-        from: "Alice", from_email: "im.a@femail.com",
-        to: "", to_email: "",
+        account: 0,
+        folder: 0,
+        unread: true,
+        from: "Alice",
+        from_email: "im.a@femail.com",
+        to: "",
+        to_email: "",
         subject: "Weekend plans",
         preview: "Are we still on for Saturday?",
         body: "Hey!\n\nAre we still on for Saturday? Let me know what time works for you.\n\nBest,\nAlice",
         content_type: MailContentType::PlainText,
-        date: "10:42", ts: 90,
+        date: "10:42",
+        ts: 90,
     },
     // 2. HTML marketing email with rich formatting
     DemoMail {
-        account: 0, folder: 0, unread: true,
-        from: "Foogle Store", from_email: "deals@fooglestore.com",
-        to: "", to_email: "",
+        account: 0,
+        folder: 0,
+        unread: true,
+        from: "Foogle Store",
+        from_email: "deals@fooglestore.com",
+        to: "",
+        to_email: "",
         subject: "🔥 Black Friday — Up to 60% Off!",
         preview: "Our biggest sale of the year is here...",
         body: r##"<!DOCTYPE html>
@@ -114,13 +143,18 @@ pub const DEMO_MAILS: [DemoMail; 18] = [
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "10:30", ts: 85,
+        date: "10:30",
+        ts: 85,
     },
     // 3. CI/CD notification with code blocks
     DemoMail {
-        account: 1, folder: 0, unread: true,
-        from: "Build Bot", from_email: "notifications@buildci.io",
-        to: "", to_email: "",
+        account: 1,
+        folder: 0,
+        unread: true,
+        from: "Build Bot",
+        from_email: "notifications@buildci.io",
+        to: "",
+        to_email: "",
         subject: "CI failed on main",
         preview: "Job #482 failed at step 3...",
         body: r##"<!DOCTYPE html>
@@ -177,13 +211,18 @@ note: run with RUST_BACKTRACE=1 for details</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "09:15", ts: 80,
+        date: "09:15",
+        ts: 80,
     },
     // 4. Receipt / invoice email
     DemoMail {
-        account: 0, folder: 0, unread: true,
-        from: "Bob", from_email: "bob.henderson@femail.com",
-        to: "", to_email: "",
+        account: 0,
+        folder: 0,
+        unread: true,
+        from: "Bob",
+        from_email: "bob.henderson@femail.com",
+        to: "",
+        to_email: "",
         subject: "Invoice #2024-0892",
         preview: "Here's the invoice for the Q4 consulting...",
         body: r##"<!DOCTYPE html>
@@ -244,13 +283,18 @@ note: run with RUST_BACKTRACE=1 for details</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Yesterday", ts: 75,
+        date: "Yesterday",
+        ts: 75,
     },
     // 5. Newsletter with images and columns
     DemoMail {
-        account: 2, folder: 0, unread: false,
-        from: "Dev Weekly", from_email: "newsletter@devweekly.io",
-        to: "", to_email: "",
+        account: 2,
+        folder: 0,
+        unread: false,
+        from: "Dev Weekly",
+        from_email: "newsletter@devweekly.io",
+        to: "",
+        to_email: "",
         subject: "Dev Weekly #312: Rust 2024 Edition",
         preview: "This week: Rust 2024, new CSS features...",
         body: r##"<!DOCTYPE html>
@@ -326,13 +370,18 @@ note: run with RUST_BACKTRACE=1 for details</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Yesterday", ts: 70,
+        date: "Yesterday",
+        ts: 70,
     },
     // 6. Deployment notification
     DemoMail {
-        account: 2, folder: 0, unread: false,
-        from: "Vercel", from_email: "ship@vercel.com",
-        to: "", to_email: "",
+        account: 2,
+        folder: 0,
+        unread: false,
+        from: "Vercel",
+        from_email: "ship@vercel.com",
+        to: "",
+        to_email: "",
         subject: "Deployment ready",
         preview: "Your project was deployed successfully.",
         body: r##"<!DOCTYPE html>
@@ -389,13 +438,18 @@ note: run with RUST_BACKTRACE=1 for details</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Yesterday", ts: 65,
+        date: "Yesterday",
+        ts: 65,
     },
     // 7. HR benefits update
     DemoMail {
-        account: 1, folder: 0, unread: false,
-        from: "HR", from_email: "hr@acmecorp.com",
-        to: "", to_email: "",
+        account: 1,
+        folder: 0,
+        unread: false,
+        from: "HR",
+        from_email: "hr@acmecorp.com",
+        to: "",
+        to_email: "",
         subject: "Benefits update",
         preview: "Open enrollment starts next week...",
         body: r##"<!DOCTYPE html>
@@ -463,13 +517,18 @@ note: run with RUST_BACKTRACE=1 for details</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 12", ts: 55,
+        date: "Nov 12",
+        ts: 55,
     },
     // 8. GitHub security advisory
     DemoMail {
-        account: 2, folder: 0, unread: false,
-        from: "GitHub Security", from_email: "security-noreply@github.com",
-        to: "", to_email: "",
+        account: 2,
+        folder: 0,
+        unread: false,
+        from: "GitHub Security",
+        from_email: "security-noreply@github.com",
+        to: "",
+        to_email: "",
         subject: "⚠️ Security advisory: dependency vulnerability",
         preview: "A critical vulnerability was found in a dependency...",
         body: r##"<!DOCTYPE html>
@@ -513,35 +572,50 @@ zytronium/api-gateway</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 8", ts: 45,
+        date: "Nov 8",
+        ts: 45,
     },
     // 9. Plain text reply (Sent)
     DemoMail {
-        account: 0, folder: 2, unread: false,
-        from: "You", from_email: "foogle_user@femail.com",
-        to: "Alice", to_email: "im.a@femail.com",
+        account: 0,
+        folder: 2,
+        unread: false,
+        from: "You",
+        from_email: "foogle_user@femail.com",
+        to: "Alice",
+        to_email: "im.a@femail.com",
         subject: "Re: Weekend plans",
         preview: "Saturday works for me!",
         body: "Saturday works for me! How about 2 PM at the usual spot?\n\nSee you then! :)",
         content_type: MailContentType::PlainText,
-        date: "Nov 11", ts: 40,
+        date: "Nov 11",
+        ts: 40,
     },
     // 10. Draft
     DemoMail {
-        account: 1, folder: 1, unread: false,
-        from: "You", from_email: "why.wont@it.work",
-        to: "Team", to_email: "team@acmecorp.com",
+        account: 1,
+        folder: 1,
+        unread: false,
+        from: "You",
+        from_email: "why.wont@it.work",
+        to: "Team",
+        to_email: "team@acmecorp.com",
         subject: "Q4 report",
         preview: "Hi team, attached is the Q4 summary...",
         body: "Hi team,\n\nAttached is the Q4 summary report. Please review before our meeting on Friday.\n\nKey highlights:\n- Revenue up 15% YoY\n- New customer acquisition exceeded targets\n- Infrastructure costs reduced by 22%\n\nBest regards",
         content_type: MailContentType::PlainText,
-        date: "Nov 10", ts: 35,
+        date: "Nov 10",
+        ts: 35,
     },
     // 11. HTML event invitation
     DemoMail {
-        account: 1, folder: 0, unread: false,
-        from: "Events", from_email: "events@acmecorp.com",
-        to: "", to_email: "",
+        account: 1,
+        folder: 0,
+        unread: false,
+        from: "Events",
+        from_email: "events@acmecorp.com",
+        to: "",
+        to_email: "",
         subject: "🎉 Company All-Hands — Dec 5",
         preview: "Join us for the quarterly all-hands meeting...",
         body: r##"<!DOCTYPE html>
@@ -628,13 +702,18 @@ zytronium/api-gateway</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 9", ts: 30,
+        date: "Nov 9",
+        ts: 30,
     },
     // 12. HTML password reset
     DemoMail {
-        account: 0, folder: 0, unread: false,
-        from: "Foogle Security", from_email: "no-reply@security.foogle.com",
-        to: "", to_email: "",
+        account: 0,
+        folder: 0,
+        unread: false,
+        from: "Foogle Security",
+        from_email: "no-reply@security.foogle.com",
+        to: "",
+        to_email: "",
         subject: "Password reset requested",
         preview: "We received a request to reset your password...",
         body: r##"<!DOCTYPE html>
@@ -675,24 +754,34 @@ zytronium/api-gateway</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 7", ts: 25,
+        date: "Nov 7",
+        ts: 25,
     },
     // 13. Plain text archived message
     DemoMail {
-        account: 2, folder: 3, unread: false,
-        from: "GitHub", from_email: "security-noreply@github.com",
-        to: "", to_email: "",
+        account: 2,
+        folder: 3,
+        unread: false,
+        from: "GitHub",
+        from_email: "security-noreply@github.com",
+        to: "",
+        to_email: "",
         subject: "Security advisory (archived)",
         preview: "A dependency in your repo had a vulnerability...",
         body: "A dependency in your repo had a vulnerability that has since been resolved.\n\nThis message has been archived.",
         content_type: MailContentType::PlainText,
-        date: "Nov 8", ts: 20,
+        date: "Nov 8",
+        ts: 20,
     },
     // 14. HTML table / data report
     DemoMail {
-        account: 1, folder: 0, unread: false,
-        from: "Analytics", from_email: "reports@analytics.io",
-        to: "", to_email: "",
+        account: 1,
+        folder: 0,
+        unread: false,
+        from: "Analytics",
+        from_email: "reports@analytics.io",
+        to: "",
+        to_email: "",
         subject: "📊 Weekly Traffic Report",
         preview: "Your weekly analytics summary is ready...",
         body: r##"<!DOCTYPE html>
@@ -780,13 +869,18 @@ zytronium/api-gateway</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 6", ts: 15,
+        date: "Nov 6",
+        ts: 15,
     },
     // 15. Stellicast — email confirmation (dark theme)
     DemoMail {
-        account: 0, folder: 0, unread: true,
-        from: "Stellicast", from_email: "noreply@stellicast.com",
-        to: "", to_email: "",
+        account: 0,
+        folder: 0,
+        unread: true,
+        from: "Stellicast",
+        from_email: "noreply@stellicast.com",
+        to: "",
+        to_email: "",
         subject: "Welcome to Stellicast",
         preview: "Confirm your email address to activate your account...",
         body: r##"<html>
@@ -865,13 +959,18 @@ zytronium/api-gateway</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 5", ts: 10,
+        date: "Nov 5",
+        ts: 10,
     },
     // 16. Order confirmation with rich text formatting (moved to Inbox — user receives this, doesn't send it)
     DemoMail {
-        account: 0, folder: 0, unread: true,
-        from: "Foogle Store", from_email: "orders@fooglestore.com",
-        to: "", to_email: "",
+        account: 0,
+        folder: 0,
+        unread: true,
+        from: "Foogle Store",
+        from_email: "orders@fooglestore.com",
+        to: "",
+        to_email: "",
         subject: "Order #FS-2024-8842 Confirmed",
         preview: "Thank you for your order! Here are the details...",
         body: r##"<!DOCTYPE html>
@@ -989,24 +1088,34 @@ zytronium/api-gateway</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "Nov 22", ts: 95,
+        date: "Nov 22",
+        ts: 95,
     },
     // 17. Plain-text reply with quoted text (nested quotes), to exercise reply collapsing
     DemoMail {
-        account: 0, folder: 0, unread: true,
-        from: "Alice", from_email: "im.a@femail.com",
-        to: "", to_email: "",
+        account: 0,
+        folder: 0,
+        unread: true,
+        from: "Alice",
+        from_email: "im.a@femail.com",
+        to: "",
+        to_email: "",
         subject: "Re: Weekend plans",
         preview: "Saturday works great! How about 2pm at the usual spot?",
         body: "Saturday works great! How about 2pm at the usual spot? I'll bring the board games.\n\nBest,\nAlice\n\nOn Sat, Nov 21, 2026 at 6:14 PM, Foogle User <foogle_user@femail.com> wrote:\n> Hi Alice,\n>\n> Saturday works for me. What time were you thinking?\n>\n> On Fri, Nov 20, 2026 at 10:42 AM, Alice <im.a@femail.com> wrote:\n> > Hey!\n> >\n> > Are we still on for Saturday? Let me know what time works for you.\n> >\n> > Best,\n> > Alice",
         content_type: MailContentType::PlainText,
-        date: "11:05", ts: 99,
+        date: "11:05",
+        ts: 99,
     },
     // 18. HTML reply with quoted text (Gmail-style quote container + nested blockquotes)
     DemoMail {
-        account: 1, folder: 0, unread: true,
-        from: "Jordan Lee", from_email: "jordan@it.work",
-        to: "", to_email: "",
+        account: 1,
+        folder: 0,
+        unread: true,
+        from: "Jordan Lee",
+        from_email: "jordan@it.work",
+        to: "",
+        to_email: "",
         subject: "Re: Q4 roadmap review",
         preview: "Thanks for sending the draft over. The timeline looks solid...",
         body: r##"<!DOCTYPE html>
@@ -1050,6 +1159,7 @@ zytronium/api-gateway</pre>
 </body>
 </html>"##,
         content_type: MailContentType::Html,
-        date: "11:20", ts: 100,
+        date: "11:20",
+        ts: 100,
     },
 ];

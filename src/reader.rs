@@ -1,5 +1,5 @@
-use freya::prelude::*;
 use freya::html::*;
+use freya::prelude::*;
 use freya::winit::window::CursorIcon;
 
 use crate::{
@@ -8,11 +8,11 @@ use crate::{
     data::MailContentType,
     html_viewer::SecureHtmlViewer,
     icons::{CHEVRON_LEFT, *},
-    mail::{quoting, AttachmentInfo, DRAFTS},
+    mail::{AttachmentInfo, DRAFTS, quoting},
     model::BodyState,
     state::{AppState, ComposePre, View},
     theme::DARK,
-    widgets::{Action, avatar, divider, icon, IconButton, QuoteToggle},
+    widgets::{Action, IconButton, QuoteToggle, avatar, divider, icon},
 };
 
 /// Generate a fake http URL for caching attachment image data in the ResourceCache.
@@ -31,7 +31,10 @@ impl Component for Reader {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
         let view = *state.view.read();
-        let show_back = matches!(view, View::AddAccount | View::Settings(_) | View::EditAccount(_));
+        let show_back = matches!(
+            view,
+            View::AddAccount | View::Settings(_) | View::EditAccount(_)
+        );
 
         let mut col = rect().spacing(16.).padding(10.);
 
@@ -65,11 +68,16 @@ impl Component for Reader {
                 if let Some((account, folder, uid)) = draft_info {
                     let store = state.store.read();
                     let body_loaded = store.mails.iter().any(|m| {
-                        m.account == account && m.folder == folder && m.uid == uid
+                        m.account == account
+                            && m.folder == folder
+                            && m.uid == uid
                             && !m.removed
                             && matches!(m.body, crate::model::BodyState::Loaded { .. })
                     });
-                    format!("draft-{}-{}-{}-loaded={}-gen={}", account, folder, uid, body_loaded, pre_gen)
+                    format!(
+                        "draft-{}-{}-{}-loaded={}-gen={}",
+                        account, folder, uid, body_loaded, pre_gen
+                    )
                 } else {
                     format!("new-gen={}", pre_gen)
                 }
@@ -86,9 +94,10 @@ impl Component for Reader {
 
         let body = match view {
             View::Mail => rect().child(MailView { state }),
-            View::Compose => rect()
-                .key(&compose_key)
-                .child(ComposePane { state, compose_key: compose_key.clone() }),
+            View::Compose => rect().key(&compose_key).child(ComposePane {
+                state,
+                compose_key: compose_key.clone(),
+            }),
             View::AddAccount => rect().child(AddAccountView { state }),
             View::Settings(index) => rect().child(AccountSettings { state, index }),
             View::EditAccount(index) => rect().child(EditAccountView { state, index }),
@@ -104,7 +113,11 @@ impl Component for Reader {
             .height(Size::fill())
             .background(crate::grain::panel())
             .padding(26.)
-            .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
+            .border(
+                freya::prelude::Border::new()
+                    .width(if has_focus { 2. } else { 0. })
+                    .fill(DARK.accent),
+            )
             .child(col.width(Size::fill()).height(Size::fill()))
     }
 }
@@ -117,6 +130,8 @@ struct MailView {
 impl Component for MailView {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
+        let details_open = use_state(|| false);
+        let source_mail = use_state(|| None::<usize>);
         let empty_text = if state.store.read().accounts.is_empty() {
             "Add an account to get started"
         } else {
@@ -133,6 +148,52 @@ impl Component for MailView {
                 let mut s_archive = state;
                 let mut s_trash = state;
                 let mut s_unread = state;
+                let details_expanded = details_open();
+                let source_visible = source_mail() == Some(i);
+                let source = match &m.body {
+                    BodyState::Loaded { source, .. } => Some(source.as_ref()),
+                    _ => None,
+                };
+                let header_value =
+                    |name: &str| source.and_then(|raw| crate::mail::parse::header_value(raw, name));
+
+                let sent_like = m.folder == 1 || m.folder == 2;
+                let details_from = if sent_like {
+                    format_detail_address(&account.sender_name, &account.addr)
+                } else {
+                    format_detail_address(&m.from, &m.from_email)
+                };
+                let details_to = if sent_like {
+                    let name = m.from.strip_prefix("To: ").unwrap_or(&m.from);
+                    format_detail_address(name, &m.from_email)
+                } else if !m.to.is_empty() {
+                    format_detail_address(&m.to, &m.to_email)
+                } else if !m.to_email.is_empty() {
+                    m.to_email.clone()
+                } else {
+                    account.addr.clone()
+                };
+                let date = header_value("Date").unwrap_or_else(|| m.date.clone());
+                let mailed_by = header_value("Return-Path")
+                    .and_then(|value| return_path_domain(&value))
+                    .unwrap_or_else(|| "Not available".to_string());
+                let signed_by = header_value("DKIM-Signature")
+                    .and_then(|value| dkim_signing_domain(&value))
+                    .map(|domain| format!("{domain} (not verified)"))
+                    .unwrap_or_else(|| "Not available".to_string());
+
+                let mut details_toggle = details_open;
+                let details_button = rect()
+                    .width(Size::px(52.))
+                    .cursor(CursorIcon::Pointer)
+                    .on_press(move |_| details_toggle.set(!details_expanded))
+                    .child(
+                        label()
+                            .text("Details")
+                            .color(DARK.accent)
+                            .font_size(12.)
+                            .max_lines(1),
+                    );
 
                 // For Sent/Drafts show "You → Recipient", otherwise "Sender → You"
                 let direction_label = if m.folder == 1 || m.folder == 2 {
@@ -149,17 +210,114 @@ impl Component for MailView {
                 } else {
                     &m.from
                 };
+                // Subject on its own line, then the sender row (Proton-style).
                 let header = rect()
-                    .horizontal()
+                    .width(Size::fill())
                     .spacing(12.)
-                    .child(avatar(display_from, account.color, 44.))
+                    .child(
+                        label()
+                            .text(m.subject.clone())
+                            .font_size(22.)
+                            .font_weight(FontWeight::BOLD)
+                            .color(DARK.text),
+                    )
                     .child(
                         rect()
-                            .spacing(2.)
-                            .child(label().text(m.subject.clone()).font_size(24.).font_weight(FontWeight::BOLD).color(DARK.text))
-                            .child(label().text(direction_label).color(DARK.muted))
-                            .child(label().text(m.date.clone()).color(DARK.muted).font_size(12.)),
+                            .width(Size::fill())
+                            .horizontal()
+                            .content(Content::Flex)
+                            .cross_align(Alignment::Center)
+                            .spacing(12.)
+                            .child(avatar(display_from, account.color, 40.))
+                            .child(
+                                rect()
+                                    .width(Size::flex(1.))
+                                    .spacing(2.)
+                                    .child(
+                                        label()
+                                            .text(direction_label)
+                                            .color(DARK.text)
+                                            .font_size(13.),
+                                    )
+                                    .child(
+                                        label()
+                                            .text(m.date.clone())
+                                            .color(DARK.muted)
+                                            .font_size(12.),
+                                    ),
+                            )
+                            .child(details_button),
                     );
+
+                let details_panel = if details_expanded {
+                    let mut details = rect()
+                        .width(Size::fill())
+                        .padding(12.)
+                        .corner_radius(8.)
+                        .background((35, 35, 48))
+                        .vertical()
+                        .spacing(7.);
+                    let mut rows = vec![
+                        ("from", details_from),
+                        ("to", details_to),
+                        ("date", date),
+                        ("subject", m.subject.clone()),
+                        ("mailed-by", mailed_by),
+                        ("signed-by", signed_by),
+                        (
+                            "security",
+                            "Transport security cannot be determined from the message".to_string(),
+                        ),
+                    ];
+                    if !m.cc_email.is_empty() {
+                        rows.push(("cc", m.cc_email.clone()));
+                    }
+                    if !m.bcc_email.is_empty() {
+                        rows.push(("bcc", m.bcc_email.clone()));
+                    }
+                    if !m.reply_to.is_empty() {
+                        rows.push(("reply-to", m.reply_to.clone()));
+                    }
+                    for (key, value) in rows {
+                        details =
+                            details.child(
+                                rect()
+                                    .width(Size::fill())
+                                    .horizontal()
+                                    .cross_align(Alignment::Start)
+                                    .spacing(10.)
+                                    .child(
+                                        rect().width(Size::px(86.)).child(
+                                            label().text(key).color(DARK.muted).font_size(12.),
+                                        ),
+                                    )
+                                    .child(rect().width(Size::flex(1.)).child(
+                                        label().text(value).color(DARK.text).font_size(12.),
+                                    )),
+                            );
+                    }
+                    let mut s_source = source_mail;
+                    details = details.child(
+                        rect()
+                            .cursor(CursorIcon::Pointer)
+                            .on_press(move |_| {
+                                s_source.set(if source_visible { None } else { Some(i) })
+                            })
+                            .child(
+                                label()
+                                    .text(if source_visible {
+                                        "Hide source"
+                                    } else {
+                                        "Inspect source"
+                                    })
+                                    .color(DARK.accent)
+                                    .font_size(12.),
+                            ),
+                    );
+                    Some(details)
+                } else {
+                    None
+                };
 
                 // Hide Reply/Reply All/Forward when viewing a draft
                 let is_draft = m.folder == DRAFTS;
@@ -186,55 +344,55 @@ impl Component for MailView {
                     let reply_date = orig_date.clone();
                     let reply_msg_id = orig_message_id.clone();
                     let reply_in_reply = orig_in_reply_to.clone();
-                    actions = actions.child(
-                        Action {
-                            bytes: REPLY,
-                            text: "Reply".to_string(),
-                            color: DARK.text,
-                            on_press: EventHandler::new(move |_| {
-                                let reply_body = {
-                                    let store = s_reply.store.read();
-                                    if let Some(mail) = store.mails.get(reply_mail_idx) {
-                                        match &mail.body {
-                                            BodyState::Loaded { text, content_type } => {
-                                                if *content_type == MailContentType::Html {
-                                                    crate::mail::parse::strip_html_tags(text)
-                                                } else {
-                                                    text.to_string()
-                                                }
+                    actions = actions.child(Action {
+                        bytes: REPLY,
+                        text: "Reply".to_string(),
+                        color: DARK.text,
+                        on_press: EventHandler::new(move |_| {
+                            let reply_body = {
+                                let store = s_reply.store.read();
+                                if let Some(mail) = store.mails.get(reply_mail_idx) {
+                                    match &mail.body {
+                                        BodyState::Loaded {
+                                            text, content_type, ..
+                                        } => {
+                                            if *content_type == MailContentType::Html {
+                                                crate::mail::parse::strip_html_tags(text)
+                                            } else {
+                                                text.to_string()
                                             }
-                                            _ => String::new(),
                                         }
-                                    } else {
-                                        String::new()
+                                        _ => String::new(),
                                     }
-                                };
-                                let reply_refs = s_reply
-                                    .store
-                                    .read()
-                                    .mails
-                                    .get(reply_mail_idx)
-                                    .map(references_chain)
-                                    .unwrap_or_default();
-                                s_reply.compose_pre.set(Some(ComposePre {
-                                    to: reply_to.clone(),
-                                    cc: String::new(),
-                                    subject: subject_with_prefix("Re", &reply_subject),
-                                    body: build_reply_body(&reply_from_name, &reply_date, &reply_body),
-                                    html_body: None,
-                                    forwarded_plain: None,
-                                    from_account: reply_account,
-                                    original_message_id: reply_msg_id.clone(),
-                                    original_in_reply_to: reply_in_reply.clone(),
-                                    original_references: reply_refs,
-                                }));
-                                *s_reply.compose_pre_gen.write() += 1;
-                                s_reply.draft_mail.set(None);
-                                s_reply.draft_pin.set(None);
-                                s_reply.view.set(View::Compose);
-                            }),
-                        }
-                    );
+                                } else {
+                                    String::new()
+                                }
+                            };
+                            let reply_refs = s_reply
+                                .store
+                                .read()
+                                .mails
+                                .get(reply_mail_idx)
+                                .map(references_chain)
+                                .unwrap_or_default();
+                            s_reply.compose_pre.set(Some(ComposePre {
+                                to: reply_to.clone(),
+                                cc: String::new(),
+                                subject: subject_with_prefix("Re", &reply_subject),
+                                body: build_reply_body(&reply_from_name, &reply_date, &reply_body),
+                                html_body: None,
+                                forwarded_plain: None,
+                                from_account: reply_account,
+                                original_message_id: reply_msg_id.clone(),
+                                original_in_reply_to: reply_in_reply.clone(),
+                                original_references: reply_refs,
+                            }));
+                            *s_reply.compose_pre_gen.write() += 1;
+                            s_reply.draft_mail.set(None);
+                            s_reply.draft_pin.set(None);
+                            s_reply.view.set(View::Compose);
+                        }),
+                    });
 
                     // Reply All button — look up body at click time.
                     let mut s_reply_all = state;
@@ -246,125 +404,147 @@ impl Component for MailView {
                     let reply_all_date = orig_date.clone();
                     let reply_all_msg_id = orig_message_id.clone();
                     let reply_all_in_reply = orig_in_reply_to.clone();
-                    actions = actions.child(
-                        Action {
-                            bytes: REPLY_ALL,
-                            text: "Reply all".to_string(),
-                            color: DARK.text,
-                            on_press: EventHandler::new(move |_| {
-                                let reply_all_body = {
-                                    let store = s_reply_all.store.read();
-                                    if let Some(mail) = store.mails.get(reply_all_mail_idx) {
-                                        match &mail.body {
-                                            BodyState::Loaded { text, content_type } => {
-                                                if *content_type == MailContentType::Html {
-                                                    crate::mail::parse::strip_html_tags(text)
-                                                } else {
-                                                    text.to_string()
-                                                }
+                    actions = actions.child(Action {
+                        bytes: REPLY_ALL,
+                        text: "Reply all".to_string(),
+                        color: DARK.text,
+                        on_press: EventHandler::new(move |_| {
+                            let reply_all_body = {
+                                let store = s_reply_all.store.read();
+                                if let Some(mail) = store.mails.get(reply_all_mail_idx) {
+                                    match &mail.body {
+                                        BodyState::Loaded {
+                                            text, content_type, ..
+                                        } => {
+                                            if *content_type == MailContentType::Html {
+                                                crate::mail::parse::strip_html_tags(text)
+                                            } else {
+                                                text.to_string()
                                             }
-                                            _ => String::new(),
                                         }
-                                    } else {
-                                        String::new()
+                                        _ => String::new(),
                                     }
-                                };
-                                let reply_all_refs = s_reply_all
-                                    .store
-                                    .read()
-                                    .mails
-                                    .get(reply_all_mail_idx)
-                                    .map(references_chain)
-                                    .unwrap_or_default();
-                                s_reply_all.compose_pre.set(Some(ComposePre {
-                                    to: reply_all_to.clone(),
-                                    cc: reply_all_cc.clone(),
-                                    subject: subject_with_prefix("Re", &reply_all_subject),
-                                    body: build_reply_body(&reply_all_from_name, &reply_all_date, &reply_all_body),
-                                    html_body: None,
-                                    forwarded_plain: None,
-                                    from_account: reply_account,
-                                    original_message_id: reply_all_msg_id.clone(),
-                                    original_in_reply_to: reply_all_in_reply.clone(),
-                                    original_references: reply_all_refs,
-                                }));
-                                *s_reply_all.compose_pre_gen.write() += 1;
-                                s_reply_all.draft_mail.set(None);
-                                s_reply_all.draft_pin.set(None);
-                                s_reply_all.view.set(View::Compose);
-                            }),
-                        }
-                    );
+                                } else {
+                                    String::new()
+                                }
+                            };
+                            let reply_all_refs = s_reply_all
+                                .store
+                                .read()
+                                .mails
+                                .get(reply_all_mail_idx)
+                                .map(references_chain)
+                                .unwrap_or_default();
+                            s_reply_all.compose_pre.set(Some(ComposePre {
+                                to: reply_all_to.clone(),
+                                cc: reply_all_cc.clone(),
+                                subject: subject_with_prefix("Re", &reply_all_subject),
+                                body: build_reply_body(
+                                    &reply_all_from_name,
+                                    &reply_all_date,
+                                    &reply_all_body,
+                                ),
+                                html_body: None,
+                                forwarded_plain: None,
+                                from_account: reply_account,
+                                original_message_id: reply_all_msg_id.clone(),
+                                original_in_reply_to: reply_all_in_reply.clone(),
+                                original_references: reply_all_refs,
+                            }));
+                            *s_reply_all.compose_pre_gen.write() += 1;
+                            s_reply_all.draft_mail.set(None);
+                            s_reply_all.draft_pin.set(None);
+                            s_reply_all.view.set(View::Compose);
+                        }),
+                    });
 
                     // Forward button — look up the body at click time so async-loaded HTML is available.
                     let mut s_forward = state;
                     let forward_mail_idx = i;
                     let forward_account = m.account;
                     let forward_subject = m.subject.clone();
-                    actions = actions.child(
-                        Action {
-                            bytes: FORWARD,
-                            text: "Forward".to_string(),
-                            color: DARK.text,
-                            on_press: EventHandler::new(move |_| {
-                                // Look up the latest body from the store at click time
-                                let (forward_body_text, forward_html_body) = {
-                                    let store = s_forward.store.read();
-                                    if let Some(mail) = store.mails.get(forward_mail_idx) {
-                                        match &mail.body {
-                                            BodyState::Loaded { text, content_type } => {
-                                                if *content_type == MailContentType::Html {
-                                                    (crate::mail::parse::strip_html_tags(text), Some(text.to_string()))
-                                                } else {
-                                                    (text.to_string(), None)
-                                                }
+                    actions = actions.child(Action {
+                        bytes: FORWARD,
+                        text: "Forward".to_string(),
+                        color: DARK.text,
+                        on_press: EventHandler::new(move |_| {
+                            // Look up the latest body from the store at click time
+                            let (forward_body_text, forward_html_body) = {
+                                let store = s_forward.store.read();
+                                if let Some(mail) = store.mails.get(forward_mail_idx) {
+                                    match &mail.body {
+                                        BodyState::Loaded {
+                                            text, content_type, ..
+                                        } => {
+                                            if *content_type == MailContentType::Html {
+                                                (
+                                                    crate::mail::parse::strip_html_tags(text),
+                                                    Some(text.to_string()),
+                                                )
+                                            } else {
+                                                (text.to_string(), None)
                                             }
-                                            _ => (String::new(), None),
                                         }
-                                    } else {
-                                        (String::new(), None)
+                                        _ => (String::new(), None),
                                     }
-                                };
-                                let html_body_val = forward_html_body.as_ref().map(|h| build_forward_body_html(h));
-                                s_forward.compose_pre.set(Some(ComposePre {
-                                    to: String::new(),
-                                    cc: String::new(),
-                                    subject: subject_with_prefix("Fwd", &forward_subject),
-                                    body: if forward_html_body.is_some() { String::new() } else { build_forward_body(&forward_body_text) },
-                                    html_body: html_body_val,
-                                    forwarded_plain: forward_html_body.as_ref().map(|_| build_forward_body(&forward_body_text)),
-                                    from_account: forward_account,
-                                    original_message_id: String::new(),
-                                    original_in_reply_to: String::new(),
-                                    original_references: String::new(),
-                                }));
-                                *s_forward.compose_pre_gen.write() += 1;
-                                s_forward.draft_mail.set(None);
-                                s_forward.draft_pin.set(None);
-                                s_forward.view.set(View::Compose);
-                            }),
-                        }
-                    );
+                                } else {
+                                    (String::new(), None)
+                                }
+                            };
+                            let html_body_val = forward_html_body
+                                .as_ref()
+                                .map(|h| build_forward_body_html(h));
+                            s_forward.compose_pre.set(Some(ComposePre {
+                                to: String::new(),
+                                cc: String::new(),
+                                subject: subject_with_prefix("Fwd", &forward_subject),
+                                body: if forward_html_body.is_some() {
+                                    String::new()
+                                } else {
+                                    build_forward_body(&forward_body_text)
+                                },
+                                html_body: html_body_val,
+                                forwarded_plain: forward_html_body
+                                    .as_ref()
+                                    .map(|_| build_forward_body(&forward_body_text)),
+                                from_account: forward_account,
+                                original_message_id: String::new(),
+                                original_in_reply_to: String::new(),
+                                original_references: String::new(),
+                            }));
+                            *s_forward.compose_pre_gen.write() += 1;
+                            s_forward.draft_mail.set(None);
+                            s_forward.draft_pin.set(None);
+                            s_forward.view.set(View::Compose);
+                        }),
+                    });
                 }
 
                 actions = actions
                     .child(rect().width(Size::flex(1.)))
-                    .child(
-                        IconButton { bytes: ARCHIVE, color: DARK.muted, on_press: (move |_| s_archive.archive(i)).into() }
-                    )
-                    .child(
-                        IconButton { bytes: TRASH, color: DARK.muted, on_press: (move |_| s_trash.trash(i)).into() }
-                    )
-                    .child(
-                        IconButton { bytes: MAIL, color: DARK.muted, on_press: (move |_| s_unread.toggle_read(i)).into() }
-                    );
+                    .child(IconButton {
+                        bytes: ARCHIVE,
+                        color: DARK.muted,
+                        on_press: (move |_| s_archive.archive(i)).into(),
+                    })
+                    .child(IconButton {
+                        bytes: TRASH,
+                        color: DARK.muted,
+                        on_press: (move |_| s_trash.trash(i)).into(),
+                    })
+                    .child(IconButton {
+                        bytes: MAIL,
+                        color: DARK.muted,
+                        on_press: (move |_| s_unread.toggle_read(i)).into(),
+                    });
 
                 // Attachments section — clone the list so we own the data for closures
                 let attachments = m.attachments.clone();
                 let mail_index = i;
                 let attachments_section = if !attachments.is_empty() {
                     let count = attachments.len();
-                    let label_text = format!("{} attachment{}", count, if count == 1 { "" } else { "s" });
+                    let label_text =
+                        format!("{} attachment{}", count, if count == 1 { "" } else { "s" });
 
                     // Build the items container by chaining children
                     let mut items_col = rect().vertical().spacing(4.);
@@ -389,13 +569,11 @@ impl Component for MailView {
                                 .center()
                                 .cursor(CursorIcon::Pointer)
                                 .background(crate::grain::hover())
-                                .on_press(
-                                    EventHandler::new(move |_| {
-                                        s_preview.attachment_preview_mail.set(Some(mi));
-                                        s_preview.attachment_preview_index.set(ai);
-                                        s_preview.attachment_preview_open.set(true);
-                                    })
-                                )
+                                .on_press(EventHandler::new(move |_| {
+                                    s_preview.attachment_preview_mail.set(Some(mi));
+                                    s_preview.attachment_preview_index.set(ai);
+                                    s_preview.attachment_preview_open.set(true);
+                                }))
                                 .child(icon(EYE, 14., DARK.text))
                         } else {
                             rect().width(Size::px(28.))
@@ -410,7 +588,12 @@ impl Component for MailView {
                                 .child(
                                     rect()
                                         .vertical()
-                                        .child(label().text(name.clone()).color(DARK.text).font_size(12.))
+                                        .child(
+                                            label()
+                                                .text(name.clone())
+                                                .color(DARK.text)
+                                                .font_size(12.),
+                                        )
                                         .child(label().text(size).color(DARK.muted).font_size(10.)),
                                 )
                                 .child(preview_btn)
@@ -422,7 +605,11 @@ impl Component for MailView {
                                         .corner_radius(6.)
                                         .center()
                                         .cursor(CursorIcon::Pointer)
-                                        .background(if has_data { crate::grain::hover() } else { Fill::from((30, 30, 40)) })
+                                        .background(if has_data {
+                                            crate::grain::hover()
+                                        } else {
+                                            Fill::from((30, 30, 40))
+                                        })
                                         .on_press(if has_data {
                                             EventHandler::new(move |_| {
                                                 download_attachment(&att_clone);
@@ -430,7 +617,11 @@ impl Component for MailView {
                                         } else {
                                             EventHandler::new(|_| {})
                                         })
-                                        .child(icon(DOWNLOAD, 14., if has_data { DARK.text } else { (80, 80, 100) })),
+                                        .child(icon(
+                                            DOWNLOAD,
+                                            14.,
+                                            if has_data { DARK.text } else { (80, 80, 100) },
+                                        )),
                                 ),
                         );
                     }
@@ -450,10 +641,7 @@ impl Component for MailView {
                                     .cross_align(Alignment::Center)
                                     .child(icon(PAPERCLIP, 14., DARK.muted))
                                     .child(
-                                        label()
-                                            .text(label_text)
-                                            .color(DARK.muted)
-                                            .font_size(11.),
+                                        label().text(label_text).color(DARK.muted).font_size(11.),
                                     ),
                             )
                             .child(items_col),
@@ -465,40 +653,104 @@ impl Component for MailView {
                 // Quoted-text collapsing only applies to actual replies.
                 let is_reply = quoting::is_reply(&m.in_reply_to, &m.subject);
 
-                let body_content = match &m.body {
-                    BodyState::Loaded { content_type: MailContentType::Html, text } => {
-                        let expanded = state.quoted_expanded.read().contains(&i);
-                        // For replies, put a "..." button inside the email where the quote starts
-                        match is_reply.then(|| quoting::prepare_html_quotes(text, expanded)).flatten() {
-                            Some(html) => build_collapsed_html_body(state, i, html, m.from_email.clone()),
-                            None => render_full_body(text.to_string(), true, state, m.from_email.clone()),
-                        }
+                let body_content = if source_visible {
+                    match &m.body {
+                        BodyState::Loaded { source, .. } if !source.is_empty() => ScrollView::new()
+                            .height(Size::fill())
+                            .child(
+                                rect().padding(12.).background((35, 35, 48)).child(
+                                    label()
+                                        .text(String::from_utf8_lossy(source).into_owned())
+                                        .color(DARK.text)
+                                        .font_size(12.)
+                                        .font_family("monospace"),
+                                ),
+                            )
+                            .into(),
+                        BodyState::Loaded { .. } => rect()
+                            .width(Size::fill())
+                            .child(
+                                label()
+                                    .text("Original source is unavailable for this message.")
+                                    .color(DARK.muted),
+                            )
+                            .into(),
+                        _ => rect()
+                            .width(Size::fill())
+                            .child(
+                                label()
+                                    .text("Loading original message source…")
+                                    .color(DARK.muted),
+                            )
+                            .into(),
                     }
-                    BodyState::Loaded { text, .. } => {
-                        // For plain-text replies, split into new content and quoted content
-                        let split = if is_reply { quoting::split_plain_text(text) } else { quoting::QuotedSplit::default() };
-                        if split.has_quotes {
-                            build_collapsed_text_body(state, i, split.new_content, split.quoted_content)
-                        } else {
-                            render_full_body(text.to_string(), false, state, String::new())
+                } else {
+                    match &m.body {
+                        BodyState::Loaded {
+                            content_type: MailContentType::Html,
+                            text,
+                            ..
+                        } => {
+                            let expanded = state.quoted_expanded.read().contains(&i);
+                            // For replies, put a "..." button inside the email where the quote starts
+                            match is_reply
+                                .then(|| quoting::prepare_html_quotes(text, expanded))
+                                .flatten()
+                            {
+                                Some(html) => {
+                                    build_collapsed_html_body(state, i, html, m.from_email.clone())
+                                }
+                                None => render_full_body(
+                                    text.to_string(),
+                                    true,
+                                    state,
+                                    m.from_email.clone(),
+                                ),
+                            }
                         }
+                        BodyState::Loaded { text, .. } => {
+                            // For plain-text replies, split into new content and quoted content
+                            let split = if is_reply {
+                                quoting::split_plain_text(text)
+                            } else {
+                                quoting::QuotedSplit::default()
+                            };
+                            if split.has_quotes {
+                                build_collapsed_text_body(
+                                    state,
+                                    i,
+                                    split.new_content,
+                                    split.quoted_content,
+                                )
+                            } else {
+                                render_full_body(text.to_string(), false, state, String::new())
+                            }
+                        }
+                        BodyState::Failed(err) => rect()
+                            .width(Size::fill())
+                            .child(
+                                label()
+                                    .text(format!("Couldn't load this message: {err}"))
+                                    .color(DARK.danger),
+                            )
+                            .into(),
+                        BodyState::NotLoaded | BodyState::Loading => rect()
+                            .width(Size::fill())
+                            .child(label().text("Loading message…").color(DARK.muted))
+                            .into(),
                     }
-                    BodyState::Failed(err) => rect()
-                        .width(Size::fill())
-                        .child(label().text(format!("Couldn't load this message: {err}")).color(DARK.danger))
-                        .into(),
-                    BodyState::NotLoaded | BodyState::Loading => rect()
-                        .width(Size::fill())
-                        .child(label().text("Loading message…").color(DARK.muted))
-                        .into(),
                 };
 
                 let mut col = rect()
                     .height(Size::fill())
                     .spacing(16.)
                     .child(header)
-                    .child(actions)
-                    .child(divider());
+                    .child(actions);
+
+                if let Some(details_panel) = details_panel {
+                    col = col.child(details_panel);
+                }
+                col = col.child(divider());
 
                 if let Some(att_section) = attachments_section {
                     col = col.child(att_section);
@@ -527,6 +779,40 @@ impl Component for MailView {
     }
 }
 
+fn format_detail_address(name: &str, email: &str) -> String {
+    let name = name.trim();
+    let email = email.trim();
+    match (name.is_empty(), email.is_empty()) {
+        (true, true) => "Not available".to_string(),
+        (false, true) => name.to_string(),
+        (true, false) => email.to_string(),
+        (false, false) if name.eq_ignore_ascii_case(email) => email.to_string(),
+        (false, false) => format!("{name} <{email}>"),
+    }
+}
+
+fn return_path_domain(value: &str) -> Option<String> {
+    let address = value
+        .split_once('<')
+        .and_then(|(_, rest)| rest.split_once('>').map(|(address, _)| address))
+        .unwrap_or(value)
+        .trim();
+    let (_, domain) = address.rsplit_once('@')?;
+    let domain = domain.trim().trim_matches('"');
+    (!domain.is_empty()).then(|| domain.to_string())
+}
+
+fn dkim_signing_domain(value: &str) -> Option<String> {
+    value.split(';').find_map(|parameter| {
+        let (name, value) = parameter.split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case("d") {
+            return None;
+        }
+        let domain = value.trim().trim_matches('"');
+        (!domain.is_empty()).then(|| domain.to_string())
+    })
+}
+
 /// Build the quoted reply body with the original message below.
 /// Format: "On {date}, {sender} wrote:"
 fn build_reply_body(from_name: &str, date: &str, body: &str) -> String {
@@ -550,7 +836,10 @@ fn subject_with_prefix(prefix: &str, subject: &str) -> String {
         "Fwd" => &["fwd", "fw"],
         _ => &[prefix],
     };
-    if prefixes.iter().any(|prefix| has_subject_prefix(subject, prefix)) {
+    if prefixes
+        .iter()
+        .any(|prefix| has_subject_prefix(subject, prefix))
+    {
         subject.to_string()
     } else {
         format!("{prefix}: {subject}")
@@ -603,7 +892,12 @@ fn build_forward_body_html(html: &str) -> String {
 /// Render a reply's HTML body. `html` already contains the spacer where the "..." button goes
 /// (at the end of the new content) and, when collapsed, the CSS hiding the quoted part; see
 /// `quoting::prepare_html_quotes`. `SecureHtmlViewer` draws the native button over the spacer.
-fn build_collapsed_html_body(state: AppState, mail_idx: usize, html: String, sender_email: String) -> Element {
+fn build_collapsed_html_body(
+    state: AppState,
+    mail_idx: usize,
+    html: String,
+    sender_email: String,
+) -> Element {
     rect()
         .height(Size::fill())
         .width(Size::fill())
@@ -622,11 +916,26 @@ mod tests {
 
     #[test]
     fn reply_and_forward_subjects_do_not_get_duplicate_prefixes() {
-        assert_eq!(subject_with_prefix("Re", "Re: Project update"), "Re: Project update");
-        assert_eq!(subject_with_prefix("Re", "RE[2]: Project update"), "RE[2]: Project update");
-        assert_eq!(subject_with_prefix("Re", "Project update"), "Re: Project update");
-        assert_eq!(subject_with_prefix("Fwd", "FW: Project update"), "FW: Project update");
-        assert_eq!(subject_with_prefix("Fwd", "Project update"), "Fwd: Project update");
+        assert_eq!(
+            subject_with_prefix("Re", "Re: Project update"),
+            "Re: Project update"
+        );
+        assert_eq!(
+            subject_with_prefix("Re", "RE[2]: Project update"),
+            "RE[2]: Project update"
+        );
+        assert_eq!(
+            subject_with_prefix("Re", "Project update"),
+            "Re: Project update"
+        );
+        assert_eq!(
+            subject_with_prefix("Fwd", "FW: Project update"),
+            "FW: Project update"
+        );
+        assert_eq!(
+            subject_with_prefix("Fwd", "Project update"),
+            "Fwd: Project update"
+        );
     }
 }
 
@@ -698,7 +1007,12 @@ fn build_collapsed_text_body(
 }
 
 /// Render a full email body (HTML or plain text) without quote collapsing.
-fn render_full_body(content: String, is_html: bool, state: AppState, sender_email: String) -> Element {
+fn render_full_body(
+    content: String,
+    is_html: bool,
+    state: AppState,
+    sender_email: String,
+) -> Element {
     if is_html {
         rect()
             .height(Size::fill())
@@ -730,11 +1044,7 @@ fn format_size(bytes: usize) -> String {
 
 /// Pick an icon for an attachment based on its content type.
 fn attachment_icon(att: &AttachmentInfo) -> &'static [u8] {
-    if att.is_image() {
-        IMAGE
-    } else {
-        PAPERCLIP
-    }
+    if att.is_image() { IMAGE } else { PAPERCLIP }
 }
 
 /// Check if the attachment is an image type that can be previewed inline.
@@ -753,9 +1063,7 @@ fn download_attachment(att: &AttachmentInfo) {
     };
 
     // Ask the user where to save the file
-    let path = rfd::FileDialog::new()
-        .set_file_name(&att.name)
-        .save_file();
+    let path = rfd::FileDialog::new().set_file_name(&att.name).save_file();
 
     let Some(path) = path else {
         return;
@@ -828,7 +1136,13 @@ fn preview_dialog(
             .content(Content::Flex)
             .spacing(8.)
             .cross_align(Alignment::Center)
-            .child(label().text("Attachment Preview").font_size(16.).font_weight(FontWeight::BOLD).color(DARK.text))
+            .child(
+                label()
+                    .text("Attachment Preview")
+                    .font_size(16.)
+                    .font_weight(FontWeight::BOLD)
+                    .color(DARK.text),
+            )
             .child(rect().width(Size::flex(1.)))
             .child(
                 rect()
@@ -839,7 +1153,11 @@ fn preview_dialog(
                     .cursor(CursorIcon::Pointer)
                     .background(crate::grain::hover())
                     .on_press(toggle_fullscreen)
-                    .child(icon(if is_fullscreen { MINIMIZE } else { MAXIMIZE }, 14., DARK.text)),
+                    .child(icon(
+                        if is_fullscreen { MINIMIZE } else { MAXIMIZE },
+                        14.,
+                        DARK.text,
+                    )),
             )
             .child(
                 rect()
@@ -880,7 +1198,11 @@ fn preview_dialog(
     // Root dialog rect with fixed dimensions and corner radius
     rect()
         .width(w)
-        .height(if is_fullscreen { Size::window_percent(90.) } else { Size::px(400.) })
+        .height(if is_fullscreen {
+            Size::window_percent(90.)
+        } else {
+            Size::px(400.)
+        })
         .corner_radius(12.)
         .background(crate::grain::dialog())
         .child(body)
@@ -920,7 +1242,11 @@ impl Component for AttachmentPreview {
         let attachment = {
             let store = state.store.read();
             match mail_idx {
-                Some(mi) => store.mails.get(mi).and_then(|m| m.attachments.get(att_idx)).cloned(),
+                Some(mi) => store
+                    .mails
+                    .get(mi)
+                    .and_then(|m| m.attachments.get(att_idx))
+                    .cloned(),
                 None => None,
             }
         };
@@ -963,13 +1289,21 @@ impl Component for AttachmentPreview {
                 None => None,
             };
 
-            let key = format!("{}{}{}", att.name, img_url.clone().unwrap_or_default(), if is_fullscreen { "_fs" } else { "" });
+            let key = format!(
+                "{}{}{}",
+                att.name,
+                img_url.clone().unwrap_or_default(),
+                if is_fullscreen { "_fs" } else { "" }
+            );
 
             rect()
                 .height(Size::fill())
                 .width(Size::fill())
                 .key(key)
-                .child(AttachmentImage { url: img_url, fullscreen: is_fullscreen })
+                .child(AttachmentImage {
+                    url: img_url,
+                    fullscreen: is_fullscreen,
+                })
         } else if is_txt {
             // Render text content
             let text = match &att.data {
@@ -982,27 +1316,26 @@ impl Component for AttachmentPreview {
                 .width(Size::fill())
                 .key(att.name.clone())
                 .child(
-                    ScrollView::new()
-                        .height(Size::fill())
-                        .child(
-                            rect()
-                                .padding(10.)
-                                .background((30, 30, 40))
-                                .corner_radius(6.)
-                                .child(
-                                    label()
-                                        .text(text)
-                                        .color(DARK.text)
-                                        .font_size(12.)
-                                        .font_family("monospace"),
-                                ),
-                        ),
+                    ScrollView::new().height(Size::fill()).child(
+                        rect()
+                            .padding(10.)
+                            .background((30, 30, 40))
+                            .corner_radius(6.)
+                            .child(
+                                label()
+                                    .text(text)
+                                    .color(DARK.text)
+                                    .font_size(12.)
+                                    .font_family("monospace"),
+                            ),
+                    ),
                 )
         } else {
-            rect()
-                .expanded()
-                .center()
-                .child(label().text("Preview not available for this file type").color(DARK.muted))
+            rect().expanded().center().child(
+                label()
+                    .text("Preview not available for this file type")
+                    .color(DARK.muted),
+            )
         };
 
         preview_dialog(

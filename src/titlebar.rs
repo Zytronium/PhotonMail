@@ -1,6 +1,6 @@
 use freya::prelude::*;
 
-use crate::{theme::DARK, APP_NAME};
+use crate::{APP_NAME, theme::DARK};
 
 const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
 const ICON_MIN: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1 5h8" stroke="#ebebf5" stroke-width="1" fill="none"/></svg>"##;
@@ -23,9 +23,18 @@ impl Component for Titlebar {
             .cross_align(Alignment::Center)
             .padding((0., 0., 0., 12.))
             .spacing(8.)
-            .child(SvgViewer::new(LOGO).width(Size::px(18.)).height(Size::px(18.)))
+            .child(
+                SvgViewer::new(LOGO)
+                    .width(Size::px(18.))
+                    .height(Size::px(18.)),
+            )
             .child(label().text(APP_NAME).color(DARK.text).font_size(13.))
-            .child(rect().window_drag().width(Size::flex(1.)).height(Size::fill()))
+            .child(
+                rect()
+                    .window_drag()
+                    .width(Size::flex(1.))
+                    .height(Size::fill()),
+            )
             .child(WinButton(WinAction::Minimize))
             .child(WinButton(WinAction::Maximize))
             .child(WinButton(WinAction::Close))
@@ -33,7 +42,11 @@ impl Component for Titlebar {
 }
 
 #[derive(PartialEq, Clone, Copy)]
-enum WinAction { Minimize, Maximize, Close }
+enum WinAction {
+    Minimize,
+    Maximize,
+    Close,
+}
 
 #[derive(PartialEq)]
 struct WinButton(WinAction);
@@ -56,9 +69,7 @@ impl Component for WinButton {
             WinAction::Close => ICON_CLOSE,
         };
 
-        let button = rect()
-            .width(Size::px(46.))
-            .height(Size::px(36.));
+        let button = rect().width(Size::px(46.)).height(Size::px(36.));
         let button = match bg {
             Some(c) => button.background(c),
             None => button,
@@ -90,6 +101,10 @@ impl Component for WinButton {
                     Platform::get().close_window(Platform::window_id());
                 }
             })
-            .child(SvgViewer::new(icon).width(Size::px(12.)).height(Size::px(12.)))
+            .child(
+                SvgViewer::new(icon)
+                    .width(Size::px(12.))
+                    .height(Size::px(12.)),
+            )
     }
 }

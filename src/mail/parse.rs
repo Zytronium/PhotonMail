@@ -32,6 +32,7 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
             content_type: MailContentType::PlainText,
             preview: make_preview(&text),
             text: Arc::from(text),
+            source: Arc::from(raw),
             attachments: Vec::new(),
             references: Vec::new(),
         };
@@ -44,9 +45,7 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
         .map(|part| {
             // Extract the decoded binary data from the attachment part
             let data = match &part.body {
-                PartType::Binary(data) | PartType::InlineBinary(data) => {
-                    Some(data.to_vec())
-                }
+                PartType::Binary(data) | PartType::InlineBinary(data) => Some(data.to_vec()),
                 PartType::Text(text) => {
                     // Some attachments may be text-based (e.g., CSV, plain text files)
                     Some(text.as_bytes().to_vec())
@@ -71,16 +70,22 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
                     })
                     .unwrap_or_else(|| "application/octet-stream".to_string()),
                 data,
-                content_id: part
-                    .content_id()
-                    .map(|s| s.trim().trim_start_matches('<').trim_end_matches('>').to_string()),
+                content_id: part.content_id().map(|s| {
+                    s.trim()
+                        .trim_start_matches('<')
+                        .trim_end_matches('>')
+                        .to_string()
+                }),
             }
         })
         .collect();
 
     // For HTML-only mail, `body_text` renders the HTML down to plain text, which is
     // what we want for the list preview.
-    let preview = msg.body_text(0).map(|t| make_preview(&t)).unwrap_or_default();
+    let preview = msg
+        .body_text(0)
+        .map(|t| make_preview(&t))
+        .unwrap_or_default();
 
     // `body_html` also fabricates HTML from plain text, so look at the real part type
     // to decide whether this is genuinely an HTML message.
@@ -93,6 +98,7 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
             content_type: MailContentType::Html,
             preview,
             text: Arc::from(html.as_ref()),
+            source: Arc::from(raw),
             attachments,
             references,
         };
@@ -103,9 +109,49 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
         content_type: MailContentType::PlainText,
         preview,
         text: Arc::from(text),
+        source: Arc::from(raw),
         attachments,
         references,
     }
+}
+
+/// Return a header value from a raw RFC 822 message, unfolding continuation lines.
+pub fn header_value(raw: &[u8], wanted: &str) -> Option<String> {
+    let crlf = raw.windows(4).position(|w| w == b"\r\n\r\n");
+    let lf = raw.windows(2).position(|w| w == b"\n\n");
+    let end = match (crlf, lf) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => raw.len(),
+    };
+    let headers = String::from_utf8_lossy(&raw[..end]);
+    let mut value: Option<String> = None;
+    let mut matching = false;
+
+    for line in headers.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.starts_with([' ', '\t']) {
+            if matching {
+                if let Some(value) = &mut value {
+                    value.push(' ');
+                    value.push_str(line.trim());
+                }
+            }
+            continue;
+        }
+        if matching {
+            break;
+        }
+        if let Some((name, field_value)) = line.split_once(':') {
+            matching = name.trim().eq_ignore_ascii_case(wanted);
+            if matching {
+                value = Some(field_value.trim().to_string());
+            }
+        }
+    }
+
+    value.filter(|value| !value.is_empty())
 }
 
 /// All `<id>` tokens in a Message-ID / In-Reply-To / References value, without the angle
@@ -334,5 +380,28 @@ pub fn fmt_date(ts: i64) -> String {
         dt.format("%b %-d").to_string()
     } else {
         dt.format("%b %-d, %Y").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::header_value;
+
+    #[test]
+    fn header_value_is_case_insensitive_and_unfolds_continuations() {
+        let raw =
+            b"Subject: hello\r\nDKIM-Signature: v=1;\r\n d=example.test;\r\n s=mail\r\n\r\nbody";
+
+        assert_eq!(
+            header_value(raw, "dkim-signature").as_deref(),
+            Some("v=1; d=example.test; s=mail")
+        );
+    }
+
+    #[test]
+    fn header_value_does_not_read_into_the_message_body() {
+        let raw = b"Subject: hello\n\nX-Test: body-only";
+
+        assert_eq!(header_value(raw, "X-Test"), None);
     }
 }

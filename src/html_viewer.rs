@@ -11,16 +11,14 @@ use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
     sync::{
-        Arc,
-        LazyLock,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicUsize, Ordering},
-        Mutex,
     },
 };
 
 use ammonia::Builder as HtmlSanitizer;
-use freya::prelude::*;
 use freya::html::*;
+use freya::prelude::*;
 use freya::winit::window::CursorIcon;
 use regex::Regex;
 use url::Url;
@@ -31,44 +29,44 @@ use crate::theme::DARK;
 use crate::widgets::QuoteToggle;
 
 static RE_BG_DECL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)(?:background(?:-(?:color|image))?\s*:\s*|bgcolor\s*=\s*["']?)([^;}"']+)"#).unwrap()
+    Regex::new(r#"(?is)(?:background(?:-(?:color|image))?\s*:\s*|bgcolor\s*=\s*["']?)([^;}"']+)"#)
+        .unwrap()
 });
 static RE_CSS_COLOR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|\b(?:black|white|navy|darkblue|midnightblue|darkslategray|darkslategrey|gray|grey)\b").unwrap()
 });
-static RE_CSS_TEXT_COLOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(^|[^\w-])(color\s*:\s*)([^;{}]+)").unwrap()
-});
+static RE_CSS_TEXT_COLOR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(^|[^\w-])(color\s*:\s*)([^;{}]+)").unwrap());
 static RE_COLOR_SCHEME_DARK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)(?:color-scheme\s*:\s*[^;"}]*\bdark\b|<meta[^>]*name=["']color-scheme["'][^>]*dark|supported-color-schemes[^>]*dark)"#).unwrap()
 });
-static RE_STYLE_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?is)<style\b[^>]*>(.*?)</style\s*>").unwrap()
-});
-static RE_BODY_TAG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)<body\b((?:[^>"']|"[^"]*"|'[^']*')*)>"#).unwrap()
-});
-static RE_STYLE_ATTRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\bstyle="([^"]*)""#).unwrap()
-});
+static RE_STYLE_BLOCK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<style\b[^>]*>(.*?)</style\s*>").unwrap());
+static RE_BODY_TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?is)<body\b((?:[^>"']|"[^"]*"|'[^']*')*)>"#).unwrap());
+static RE_STYLE_ATTRIBUTE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\bstyle="([^"]*)""#).unwrap());
 static RE_RGBA_FUNCTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\brgba\(\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)%?\s*,\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)%?\s*,\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)%?\s*,\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)%?\s*\)").unwrap()
 });
-static RE_IMG_TAG: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)<img\b[^>]*>").unwrap());
+static RE_IMG_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<img\b[^>]*>").unwrap());
 static RE_IMG_SOURCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\bsrc="([^"]*)""#).unwrap());
 static RE_IMG_ALT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\balt="([^"]*)""#).unwrap());
 static RE_HTML_ATTRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)(?:^|\s)([a-z_:][a-z0-9_:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#).unwrap()
+    Regex::new(r#"(?is)(?:^|\s)([a-z_:][a-z0-9_:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#)
+        .unwrap()
 });
 
 /// Parse a CSS/HTML color into (r, g, b). Returns None for unknown / transparent values.
 fn parse_color(v: &str) -> Option<(u8, u8, u8)> {
     let v = v.trim().to_ascii_lowercase();
     if let Some(hex) = v.strip_prefix('#') {
-        let h: Vec<u8> = hex.chars().filter_map(|c| c.to_digit(16).map(|d| d as u8)).collect();
+        let h: Vec<u8> = hex
+            .chars()
+            .filter_map(|c| c.to_digit(16).map(|d| d as u8))
+            .collect();
         return match h.len() {
             3 => Some((h[0] * 17, h[1] * 17, h[2] * 17)),
             4 if h[3] != 0 => Some((h[0] * 17, h[1] * 17, h[2] * 17)),
@@ -218,7 +216,11 @@ fn sanitize_html_with_policy(
     result.push_str(
         "<style>html,body{min-width:0!important}img,video{max-width:100%!important}img{height:auto!important}</style>",
     );
-    HtmlAnalysis { sanitized: result, remote_resources_blocked, tracking_pixels_blocked }
+    HtmlAnalysis {
+        sanitized: result,
+        remote_resources_blocked,
+        tracking_pixels_blocked,
+    }
 }
 
 /// Sanitize HTML before including it in a forwarded message. Remote resources
@@ -295,8 +297,9 @@ fn sanitize_fragment(
                 return None;
             }
             if attribute == "style" {
-                let mut protected_css_values =
-                    protected_css_values_for_filter.lock().expect("CSS value map lock");
+                let mut protected_css_values = protected_css_values_for_filter
+                    .lock()
+                    .expect("CSS value map lock");
                 let style = protect_rgba_functions(value, &mut protected_css_values);
                 return Some(Cow::Owned(sanitize_css_declarations(&style)));
             }
@@ -640,9 +643,9 @@ fn skip_css_comment(bytes: &[u8], start: usize) -> Option<usize> {
 fn is_safe_css_selector(selector: &str) -> bool {
     !selector.is_empty()
         && selector.len() <= 4096
-        && !selector.chars().any(|character| {
-            character.is_control() || matches!(character, '<' | '>' | '\\' | '@')
-        })
+        && !selector
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '<' | '>' | '\\' | '@'))
 }
 
 fn is_safe_media_rule(rule: &str) -> bool {
@@ -653,7 +656,10 @@ fn is_safe_media_rule(rule: &str) -> bool {
         && condition.chars().all(|character| {
             character.is_ascii_alphanumeric()
                 || character.is_ascii_whitespace()
-                || matches!(character, '-' | '_' | ':' | '(' | ')' | '.' | ',' | '%' | '/')
+                || matches!(
+                    character,
+                    '-' | '_' | ':' | '(' | ')' | '.' | ',' | '%' | '/'
+                )
         })
 }
 
@@ -676,7 +682,9 @@ fn sanitize_css_declarations(declarations: &str) -> String {
     };
     let style = decode_style_attribute(&captures[1]);
     let lowercase = style.to_ascii_lowercase();
-    if style.chars().any(|character| matches!(character, '<' | '>'))
+    if style
+        .chars()
+        .any(|character| matches!(character, '<' | '>'))
         || lowercase.contains("url(")
         || lowercase.contains("expression(")
         || lowercase.contains("-moz-binding")
@@ -724,10 +732,7 @@ fn restore_style_attribute_values(
     }
     *html = RE_STYLE_ATTRIBUTE
         .replace_all(html, |captures: &regex::Captures<'_>| {
-            format!(
-                "style=\"{}\"",
-                restore_css_values(&captures[1], &values)
-            )
+            format!("style=\"{}\"", restore_css_values(&captures[1], &values))
         })
         .into_owned();
 }
@@ -785,31 +790,33 @@ fn is_private_network_reference(value: &str) -> bool {
         .strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
         .unwrap_or(&host);
-    ip_host.parse::<IpAddr>().is_ok_and(|address| match address {
-        IpAddr::V4(address) => {
-            address.is_private()
-                || address.is_loopback()
-                || address.is_link_local()
-                || address.is_unspecified()
-                || address.is_broadcast()
-                || address.is_multicast()
-        }
-        IpAddr::V6(address) => {
-            address.is_loopback()
-                || address.is_unique_local()
-                || address.is_unicast_link_local()
-                || address.is_unspecified()
-                || address.is_multicast()
-                || address.to_ipv4_mapped().is_some_and(|mapped| {
-                    mapped.is_private()
-                        || mapped.is_loopback()
-                        || mapped.is_link_local()
-                        || mapped.is_unspecified()
-                        || mapped.is_broadcast()
-                        || mapped.is_multicast()
-                })
-        }
-    })
+    ip_host
+        .parse::<IpAddr>()
+        .is_ok_and(|address| match address {
+            IpAddr::V4(address) => {
+                address.is_private()
+                    || address.is_loopback()
+                    || address.is_link_local()
+                    || address.is_unspecified()
+                    || address.is_broadcast()
+                    || address.is_multicast()
+            }
+            IpAddr::V6(address) => {
+                address.is_loopback()
+                    || address.is_unique_local()
+                    || address.is_unicast_link_local()
+                    || address.is_unspecified()
+                    || address.is_multicast()
+                    || address.to_ipv4_mapped().is_some_and(|mapped| {
+                        mapped.is_private()
+                            || mapped.is_loopback()
+                            || mapped.is_link_local()
+                            || mapped.is_unspecified()
+                            || mapped.is_broadcast()
+                            || mapped.is_multicast()
+                    })
+            }
+        })
 }
 
 fn safe_external_url(raw: &str) -> Option<String> {
@@ -947,13 +954,17 @@ impl Component for SecureHtmlViewer {
                     .height(Size::px(anchor.height))
                     .horizontal()
                     .cross_align(Alignment::Center)
-                    .child(QuoteToggle { state, mail_idx: idx }),
+                    .child(QuoteToggle {
+                        state,
+                        mail_idx: idx,
+                    }),
             );
         }
 
         if has_warnings {
             let warning_text = if allow_remote {
-                let other_blocked = remote_resources_blocked.saturating_sub(tracking_pixels_blocked);
+                let other_blocked =
+                    remote_resources_blocked.saturating_sub(tracking_pixels_blocked);
                 match (tracking_pixels_blocked, other_blocked) {
                     (0, count) => format!("{} unsafe or local resource(s) kept blocked", count),
                     (count, 0) => format!("{} likely tracking pixel(s) kept blocked", count),
@@ -979,7 +990,12 @@ impl Component for SecureHtmlViewer {
                 .horizontal()
                 .spacing(6.)
                 .cross_align(Alignment::Center)
-                .child(label().text(warning_text).color((240, 140, 40)).font_size(11.));
+                .child(
+                    label()
+                        .text(warning_text)
+                        .color((240, 140, 40))
+                        .font_size(11.),
+                );
 
             if !allow_remote {
                 let mut handle = handle;
@@ -996,7 +1012,12 @@ impl Component for SecureHtmlViewer {
                             handle.replace_html(html_with_remote.clone());
                             remote_content_allowed.set(true);
                         })
-                        .child(label().text("Load remote content").color(DARK.text).font_size(11.)),
+                        .child(
+                            label()
+                                .text("Load remote content")
+                                .color(DARK.text)
+                                .font_size(11.),
+                        ),
                 );
             }
             if tracking_pixels_blocked > 0 {
@@ -1137,9 +1158,10 @@ impl Component for LinkConfirmDialog {
             .maybe_child((!sender.trim().is_empty()).then(|| {
                 link_preference_option("Do not show again for this sender", sender_open.clone())
             }))
-            .child(
-                link_preference_option("Do not show again (all senders)", always_open.clone())
-            )
+            .child(link_preference_option(
+                "Do not show again (all senders)",
+                always_open.clone(),
+            ))
             .child(
                 // Divider
                 rect()
@@ -1161,12 +1183,7 @@ impl Component for LinkConfirmDialog {
                             .background((40, 40, 54))
                             .cursor(CursorIcon::Pointer)
                             .on_press(close_dialog.clone())
-                            .child(
-                                label()
-                                    .text("Cancel")
-                                    .font_size(13.)
-                                    .color(DARK.text),
-                            ),
+                            .child(label().text("Cancel").font_size(13.).color(DARK.text)),
                     )
                     .child(
                         // Open button
@@ -1268,15 +1285,35 @@ mod tests {
         assert_eq!(allowed.remote_resources_blocked, 1);
         assert_eq!(allowed.tracking_pixels_blocked, 1);
         assert!(!allowed.sanitized.contains("https://tracker.example/pixel"));
-        assert!(allowed.sanitized.contains("https://example.test/collections/banner.png"));
-        assert!(allowed.sanitized.contains("https://spacer.example/spacer.gif"));
+        assert!(
+            allowed
+                .sanitized
+                .contains("https://example.test/collections/banner.png")
+        );
+        assert!(
+            allowed
+                .sanitized
+                .contains("https://spacer.example/spacer.gif")
+        );
         assert_eq!(trackers_only.remote_resources_blocked, 2);
         assert_eq!(trackers_only.tracking_pixels_blocked, 0);
-        assert!(trackers_only.sanitized.contains("https://tracker.example/pixel"));
-        assert!(!trackers_only.sanitized.contains("https://example.test/collections/banner.png"));
+        assert!(
+            trackers_only
+                .sanitized
+                .contains("https://tracker.example/pixel")
+        );
+        assert!(
+            !trackers_only
+                .sanitized
+                .contains("https://example.test/collections/banner.png")
+        );
         assert_eq!(all_allowed.remote_resources_blocked, 0);
         assert_eq!(all_allowed.tracking_pixels_blocked, 0);
-        assert!(all_allowed.sanitized.contains("https://tracker.example/pixel"));
+        assert!(
+            all_allowed
+                .sanitized
+                .contains("https://tracker.example/pixel")
+        );
     }
 
     #[test]
@@ -1342,7 +1379,10 @@ mod tests {
         let sanitized = sanitize_html("<p style=\"color:#111\">Message text</p>").sanitized;
 
         assert!(sanitized.contains("color:#b8b8b8"), "{sanitized}");
-        assert!(sanitized.contains("html,body{color:#e5e7eb!important}"), "{sanitized}");
+        assert!(
+            sanitized.contains("html,body{color:#e5e7eb!important}"),
+            "{sanitized}"
+        );
         assert!(!sanitized.contains("filter:invert"), "{sanitized}");
     }
 
@@ -1375,11 +1415,17 @@ mod tests {
         .sanitized;
 
         assert!(sanitized.contains("body{margin:0;padding:0"), "{sanitized}");
-        assert!(sanitized.contains("background:linear-gradient"), "{sanitized}");
+        assert!(
+            sanitized.contains("background:linear-gradient"),
+            "{sanitized}"
+        );
         assert!(sanitized.contains("rgba(30, 58, 138, 0.8)"), "{sanitized}");
         assert!(sanitized.contains("rgba(15, 23, 42, 0.9)"), "{sanitized}");
         assert!(sanitized.contains("box-shadow:0 10px 40px"), "{sanitized}");
-        assert!(sanitized.contains("transition:background 0.2s"), "{sanitized}");
+        assert!(
+            sanitized.contains("transition:background 0.2s"),
+            "{sanitized}"
+        );
         assert!(!sanitized.contains("photonmailrgba"), "{sanitized}");
         assert!(!sanitized.contains("filter:invert(1)"), "{sanitized}");
     }
@@ -1426,7 +1472,11 @@ mod tests {
         assert!(!allowed.sanitized.contains("printer.local"));
         assert!(!allowed.sanitized.contains("127.0.0.1."));
         assert!(!allowed.sanitized.contains("srcset"));
-        assert!(allowed.sanitized.contains("https://cdn.example.com/image.png"));
+        assert!(
+            allowed
+                .sanitized
+                .contains("https://cdn.example.com/image.png")
+        );
     }
 
     #[test]

@@ -5,8 +5,8 @@ use crate::{
     icons::*,
     model::Summary,
     state::{AppState, View},
-    theme::{Rgb, DARK},
-    widgets::{divider, icon, IconButton},
+    theme::{ACCENT_HOVER, DARK, Rgb},
+    widgets::{IconButton, badge, divider, dot, icon},
 };
 
 #[derive(PartialEq)]
@@ -38,16 +38,22 @@ impl Component for Sidebar {
         }));
 
         // Accounts section header
-        rows.push(rect().child(SectionHeader { title: "ACCOUNTS", show_add: true, state: state.clone() }));
+        rows.push(rect().child(SectionHeader {
+            title: "Accounts",
+            show_add: true,
+            state: state.clone(),
+        }));
 
         for (i, a) in accounts.iter().enumerate() {
             let open = state.is_expanded(i);
             let mut s_toggle = state;
             let mut s_gear = state;
-            let gear_on_press: EventHandler<Event<PressEventData>> = (move |e: Event<PressEventData>| {
-                e.stop_propagation();
-                s_gear.view.set(View::Settings(i));
-            }).into();
+            let gear_on_press: EventHandler<Event<PressEventData>> =
+                (move |e: Event<PressEventData>| {
+                    e.stop_propagation();
+                    s_gear.view.set(View::Settings(i));
+                })
+                .into();
             rows.push(rect().child(GroupHeader {
                 name: a.name.clone(),
                 color: a.color,
@@ -75,7 +81,11 @@ impl Component for Sidebar {
 
         // Labels are placeholder data for now, so they only appear in --demo.
         if demo {
-            rows.push(rect().child(SectionHeader { title: "LABELS", show_add: false, state: state.clone() }));
+            rows.push(rect().child(SectionHeader {
+                title: "Labels",
+                show_add: false,
+                state: state.clone(),
+            }));
             for (name, color) in LABELS.iter() {
                 rows.push(rect().child(Item {
                     lead: Lead::Tinted(TAG, *color),
@@ -92,13 +102,14 @@ impl Component for Sidebar {
         let mut s_compose = state;
         let compose = rect()
             .width(Size::fill())
-            .padding(10.)
-            .corner_radius(8.)
+            .padding(12.)
+            .corner_radius(10.)
             .horizontal()
             .center()
             .spacing(8.)
+            .cursor(freya::winit::window::CursorIcon::Pointer)
             .background(if compose_hover() {
-                Fill::from((120, 90, 255))
+                Fill::from(ACCENT_HOVER)
             } else {
                 Fill::from(DARK.accent)
             })
@@ -110,9 +121,14 @@ impl Component for Sidebar {
                 s_compose.view.set(View::Compose);
             })
             .child(icon(PENCIL, 16., DARK.text))
-            .child(label().text("New message").color(DARK.text).font_weight(FontWeight::BOLD));
+            .child(
+                label()
+                    .text("New message")
+                    .color(DARK.text)
+                    .font_weight(FontWeight::BOLD),
+            );
 
-        let (dot, footer_text) = match state.store.read().summary() {
+        let (status, footer_text) = match state.store.read().summary() {
             Summary::NoAccounts => (DARK.muted, "No accounts yet".to_string()),
             Summary::Error(msg) => (DARK.danger, msg),
             Summary::Notice(msg) => (DARK.success, msg),
@@ -124,7 +140,7 @@ impl Component for Sidebar {
             .cross_align(Alignment::Center)
             .spacing(8.)
             .padding((8., 4., 0., 4.))
-            .child(label().text("●").color(dot).font_size(10.))
+            .child(dot(8., status))
             .child(label().text(footer_text).color(DARK.muted).font_size(12.));
 
         let fs = *state.focus_state.read();
@@ -134,15 +150,19 @@ impl Component for Sidebar {
             .width(Size::px(*state.sidebar_width.read()))
             .height(Size::fill())
             .background(crate::grain::panel())
-            .padding(14.)
+            .padding(12.)
             .spacing(8.)
             .content(Content::Flex)
-            .border(freya::prelude::Border::new().width(if has_focus { 2. } else { 0. }).fill(DARK.accent))
+            .border(
+                freya::prelude::Border::new()
+                    .width(if has_focus { 2. } else { 0. })
+                    .fill(DARK.accent),
+            )
             .child(compose)
             .child(
                 // Negative right margin pulls the ScrollView (and its scrollbar) past the outer padding to the edge
                 rect()
-                    .margin((0., -14., 0., 0.))
+                    .margin((0., -12., 0., 0.))
                     .width(Size::fill())
                     .height(Size::flex(1.))
                     .child(
@@ -180,8 +200,14 @@ impl Component for SectionHeader {
             .horizontal()
             .content(Content::Flex)
             .cross_align(Alignment::Center)
-            .padding((12., 14., 4., 8.))
-            .child(label().text(title.to_string()).color(DARK.muted).font_size(11.).font_weight(FontWeight::BOLD))
+            .padding((14., 14., 4., 12.))
+            .child(
+                label()
+                    .text(title.to_string())
+                    .color(DARK.muted)
+                    .font_size(12.)
+                    .font_weight(FontWeight::BOLD),
+            )
             .child(rect().width(Size::flex(1.)));
         if show_add {
             let mut s_add = state;
@@ -220,8 +246,9 @@ impl Component for GroupHeader {
         let on_press = self.on_press.clone();
         let mut r = rect()
             .width(Size::fill())
-            .padding((4., 14., 4., 8.))
+            .padding((4., 10., 4., 8.))
             .corner_radius(8.)
+            .cursor(freya::winit::window::CursorIcon::Pointer)
             .horizontal()
             .content(Content::Flex)
             .cross_align(Alignment::Center)
@@ -229,12 +256,21 @@ impl Component for GroupHeader {
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press)
-            .child(icon(if open { CHEVRON_DOWN } else { CHEVRON_RIGHT }, 14., DARK.muted))
-            .child(label().text("●").color(color))
-            .child(label().text(name).color(DARK.text).font_weight(FontWeight::BOLD))
+            .child(icon(
+                if open { CHEVRON_DOWN } else { CHEVRON_RIGHT },
+                14.,
+                DARK.muted,
+            ))
+            .child(dot(10., color))
+            .child(
+                label()
+                    .text(name)
+                    .color(DARK.text)
+                    .font_weight(FontWeight::BOLD),
+            )
             .child(rect().width(Size::flex(1.)));
         if count > 0 {
-            r = r.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
+            r = r.child(badge(count, active));
         }
         if active {
             r = r.background(crate::grain::selected());
@@ -281,8 +317,9 @@ impl Component for Item {
 
         let mut row = rect()
             .width(Size::fill())
-            .padding((8., 14., 8., 8. + indent))
+            .padding((7., 10., 7., 10. + indent))
             .corner_radius(8.)
+            .cursor(freya::winit::window::CursorIcon::Pointer)
             .horizontal()
             .cross_align(Alignment::Center)
             .content(Content::Flex)
@@ -295,15 +332,32 @@ impl Component for Item {
         }
 
         let mut row = match lead {
-            Lead::Dot(color) => row.child(label().text("●").color(color)),
-            Lead::Icon(bytes) => row.child(icon(bytes, 16., if active { DARK.text } else { DARK.muted })),
+            Lead::Dot(color) => row.child(dot(10., color)),
+            Lead::Icon(bytes) => row.child(icon(
+                bytes,
+                16.,
+                if active { DARK.text } else { DARK.muted },
+            )),
             Lead::Tinted(bytes, color) => row.child(icon(bytes, 16., color)),
         }
-            .child(label().text(text).color(DARK.text))
-            .child(rect().width(Size::flex(1.)));
+        .child(
+            label()
+                .text(text)
+                .color(if active || count > 0 {
+                    DARK.text
+                } else {
+                    (200, 200, 214)
+                })
+                .font_weight(if active || count > 0 {
+                    FontWeight::BOLD
+                } else {
+                    FontWeight::NORMAL
+                }),
+        )
+        .child(rect().width(Size::flex(1.)));
 
         if count > 0 {
-            row = row.child(label().text(count.to_string()).color(DARK.text).font_size(12.).font_weight(FontWeight::BOLD));
+            row = row.child(badge(count, active));
         }
         row
     }

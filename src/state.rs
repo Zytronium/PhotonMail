@@ -5,7 +5,7 @@ use freya::prelude::*;
 use crate::{
     keyboard::FocusState,
     link_prefs::LinkPrefs,
-    mail::{config, Engine, WorkerCmd, ARCHIVE, INBOX, TRASH},
+    mail::{ARCHIVE, Engine, INBOX, TRASH, WorkerCmd, config},
     model::{BodyState, NoticeSeverity, Store},
 };
 
@@ -23,23 +23,23 @@ pub struct AppState {
     pub account: State<Option<usize>>, // None = all accounts
     pub folder: State<usize>,
     pub selected: State<usize>,
-    pub store: State<Store>,   // accounts + message headers/bodies
-    pub engine: State<Engine>, // channel to the background IMAP workers
+    pub store: State<Store>,        // accounts + message headers/bodies
+    pub engine: State<Engine>,      // channel to the background IMAP workers
     pub expanded: State<Vec<bool>>, // per-account sidebar group (missing = open)
     pub view: State<View>,
     pub unread_only: State<bool>,
     pub sidebar_width: State<f32>,
     pub message_list_width: State<f32>,
-    pub focus_state: State<FocusState>, // keyboard focus state
-    pub link_prefs: State<LinkPrefs>,   // "do not show again" link preferences
-    pub link_dialog_url: State<String>,  // URL for the link confirmation dialog
+    pub focus_state: State<FocusState>,    // keyboard focus state
+    pub link_prefs: State<LinkPrefs>,      // "do not show again" link preferences
+    pub link_dialog_url: State<String>,    // URL for the link confirmation dialog
     pub link_dialog_sender: State<String>, // Sender email for the link confirmation dialog
-    pub link_dialog_open: State<bool>,    // Whether the link confirmation dialog is visible
-    pub search_query: State<String>,     // Search query for filtering messages
-    pub attachment_preview_mail: State<Option<usize>>,  // Mail index of the attachment being previewed
-    pub attachment_preview_index: State<usize>,         // Index within the mail's attachments list
-    pub attachment_preview_open: State<bool>,           // Whether the preview modal is open
-    pub attachment_preview_fullscreen: State<bool>,     // Whether the preview is fullscreen
+    pub link_dialog_open: State<bool>,     // Whether the link confirmation dialog is visible
+    pub search_query: State<String>,       // Search query for filtering messages
+    pub attachment_preview_mail: State<Option<usize>>, // Mail index of the attachment being previewed
+    pub attachment_preview_index: State<usize>,        // Index within the mail's attachments list
+    pub attachment_preview_open: State<bool>,          // Whether the preview modal is open
+    pub attachment_preview_fullscreen: State<bool>,    // Whether the preview is fullscreen
     pub draft_mail: State<Option<(usize, usize, u32)>>, // (account, folder, uid) of the draft being edited (None = new message)
     /// Pins the compose pane's mount key across saves. `(key, None)` = a save is pending;
     /// `(key, Some(uid))` = the save finished and `uid` is the draft's new UID. While the
@@ -86,16 +86,30 @@ pub fn use_app_state() -> AppState {
     let demo = crate::is_demo();
 
     // Saved accounts are read from disk exactly once.
-    let configs = use_hook(move || if demo { Vec::new() } else { config::load_accounts() });
+    let configs = use_hook(move || {
+        if demo {
+            Vec::new()
+        } else {
+            config::load_accounts()
+        }
+    });
     let first_run = !demo && configs.is_empty();
 
     let store_configs = configs.clone();
     let store = use_state(move || {
-        if demo { Store::demo() } else { Store::from_configs(&store_configs) }
+        if demo {
+            Store::demo()
+        } else {
+            Store::from_configs(&store_configs)
+        }
     });
     // Starting the engine spawns the I/O thread, which connects every saved account.
     let engine = use_state(move || {
-        if demo { Engine::offline() } else { Engine::start(configs.clone()) }
+        if demo {
+            Engine::offline()
+        } else {
+            Engine::start(configs.clone())
+        }
     });
 
     let app = AppState {
@@ -106,7 +120,13 @@ pub fn use_app_state() -> AppState {
         engine,
         expanded: use_state(Vec::new),
         // No accounts yet: land on the Add account screen instead of an empty inbox.
-        view: use_state(move || if first_run { View::AddAccount } else { View::Mail }),
+        view: use_state(move || {
+            if first_run {
+                View::AddAccount
+            } else {
+                View::Mail
+            }
+        }),
         unread_only: use_state(|| false),
         sidebar_width: use_state(|| 260.),
         message_list_width: use_state(|| 380.),
@@ -149,7 +169,8 @@ fn start_event_pump(app: AppState) {
                     let in_compose = matches!(*app.view.read(), View::Compose);
                     if in_compose {
                         app.draft_pin.set(Some((key, Some(*uid))));
-                        app.draft_mail.set(Some((*account, crate::mail::DRAFTS, *uid)));
+                        app.draft_mail
+                            .set(Some((*account, crate::mail::DRAFTS, *uid)));
                     }
                 }
             }
@@ -345,7 +366,14 @@ impl AppState {
                 self.send(account, WorkerCmd::FetchBody { folder, uid });
             }
             if was_unread {
-                self.send(account, WorkerCmd::SetSeen { folder, uid, seen: true });
+                self.send(
+                    account,
+                    WorkerCmd::SetSeen {
+                        folder,
+                        uid,
+                        seen: true,
+                    },
+                );
             }
         }
     }
@@ -393,12 +421,21 @@ impl AppState {
     pub fn toggle_read(&mut self, i: usize) {
         let (account, folder, uid, now_unread) = {
             let mut store = self.store.write();
-            let Some(m) = store.mails.get_mut(i) else { return };
+            let Some(m) = store.mails.get_mut(i) else {
+                return;
+            };
             m.unread = !m.unread;
             (m.account, m.folder, m.uid, m.unread)
         };
         if uid != 0 {
-            self.send(account, WorkerCmd::SetSeen { folder, uid, seen: !now_unread });
+            self.send(
+                account,
+                WorkerCmd::SetSeen {
+                    folder,
+                    uid,
+                    seen: !now_unread,
+                },
+            );
         }
     }
 
@@ -424,7 +461,13 @@ impl AppState {
 
     /// Move a draft to a different account: append the new version to the new account and
     /// delete the old one from the old account.
-    pub fn move_draft_to_account(&self, old_account: usize, uid: u32, new_account: usize, raw: String) {
+    pub fn move_draft_to_account(
+        &self,
+        old_account: usize,
+        uid: u32,
+        new_account: usize,
+        raw: String,
+    ) {
         self.send(new_account, WorkerCmd::AppendDraft { raw });
         self.delete_draft(old_account, uid);
     }
@@ -444,6 +487,8 @@ impl AppState {
 
     /// Update an account's persisted config (e.g. SMTP settings) and save to disk.
     pub fn update_account_config(&self, index: usize, cfg: crate::mail::AccountConfig) {
-        self.engine.peek().send(crate::mail::Command::UpdateAccount { index, cfg });
+        self.engine
+            .peek()
+            .send(crate::mail::Command::UpdateAccount { index, cfg });
     }
 }

@@ -3,7 +3,7 @@ use freya::winit::window::CursorIcon;
 
 use crate::{
     state::AppState,
-    theme::{Rgb, DARK, HOVER_STRONG},
+    theme::{BADGE, DARK, HOVER_STRONG, Rgb},
 };
 
 pub fn icon(bytes: &'static [u8], size: f32, color: Rgb) -> SvgViewer {
@@ -29,7 +29,7 @@ impl Component for IconButton {
         let mut r = rect()
             .width(Size::px(28.))
             .height(Size::px(28.))
-            .corner_radius(6.)
+            .corner_radius(8.)
             .center()
             .cursor(CursorIcon::Pointer)
             .on_pointer_enter(move |_| hovering.set(true))
@@ -87,19 +87,37 @@ impl Component for Chip {
             crate::grain::hover()
         };
         rect()
-            .padding((4., 10., 4., 10.))
-            .corner_radius(12.)
+            .padding((4., 12., 4., 12.))
+            .corner_radius(14.)
+            .border(freya::prelude::Border::new().width(1.).fill(if active {
+                DARK.accent
+            } else {
+                DARK.divider
+            }))
             .cursor(CursorIcon::Pointer)
             .background(bg)
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press)
-            .child(label().text(text).color(DARK.text).font_size(12.))
+            .child(
+                label()
+                    .text(text)
+                    .color(DARK.text)
+                    .font_size(12.)
+                    .font_weight(if active {
+                        FontWeight::BOLD
+                    } else {
+                        FontWeight::NORMAL
+                    }),
+            )
     }
 }
 
 pub fn divider() -> Rect {
-    rect().width(Size::fill()).height(Size::px(1.)).background(DARK.divider)
+    rect()
+        .width(Size::fill())
+        .height(Size::px(1.))
+        .background(DARK.divider)
 }
 
 /// Icon + text pill, used for reader actions. Supports hover state.
@@ -122,14 +140,15 @@ impl Component for Action {
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .padding((6., 10., 6., 10.))
-            .corner_radius(6.)
+            .padding((6., 12., 6., 12.))
+            .corner_radius(8.)
+            .border(freya::prelude::Border::new().width(1.).fill(DARK.divider))
             .cursor(CursorIcon::Pointer)
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press);
         if hovering() {
-            r = r.background(Fill::from((50, 50, 68)));
+            r = r.background(Fill::from(HOVER_STRONG));
         } else {
             r = r.background(crate::grain::hover());
         }
@@ -174,4 +193,35 @@ impl Component for QuoteToggle {
             }))
             .child(icon(crate::icons::ELLIPSIS, 16., DARK.text))
     }
+}
+
+/// Small filled circle (unread marker, account colour, status light).
+pub fn dot(size: f32, color: Rgb) -> Rect {
+    rect()
+        .width(Size::px(size))
+        .height(Size::px(size))
+        .corner_radius(size / 2.)
+        .background(color)
+}
+
+/// Rounded count pill used in the sidebar. `on_accent` is for the selected row.
+pub fn badge(count: usize, on_accent: bool) -> Rect {
+    let fill = if on_accent { DARK.accent } else { BADGE };
+    let text = if count > 999 {
+        "999+".to_string()
+    } else {
+        count.to_string()
+    };
+    rect()
+        .padding((1., 7., 1., 7.))
+        .corner_radius(10.)
+        .background(fill)
+        .center()
+        .child(
+            label()
+                .text(text)
+                .color(DARK.text)
+                .font_size(11.)
+                .font_weight(FontWeight::BOLD),
+        )
 }

@@ -29,28 +29,28 @@ use std::{
 };
 
 use async_imap::{
+    Authenticator,
     extensions::idle::IdleResponse,
     types::{Fetch, Flag, Name, NameAttribute},
-    Authenticator,
 };
 use futures::TryStreamExt;
 use tokio::{
     net::TcpStream,
     sync::{
-        mpsc::{error::TryRecvError, unbounded_channel, UnboundedReceiver, UnboundedSender},
+        mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel},
         oneshot,
     },
     time::{sleep, timeout},
 };
 use tokio_rustls::{
-    rustls::{self, pki_types::ServerName},
     TlsConnector,
+    rustls::{self, pki_types::ServerName},
 };
 
 use super::{
+    ARCHIVE, BodyData, DRAFTS, Event, HeaderRow, INBOX, SENT, SPAM, SyncStatus, TRASH, WorkerCmd,
     config::{self, AccountConfig},
-    now, parse, BodyData, Event, HeaderRow, SyncStatus, WorkerCmd, ARCHIVE, DRAFTS, INBOX, SENT,
-    SPAM, TRASH,
+    now, parse,
 };
 use crate::data::FOLDERS;
 
@@ -166,14 +166,19 @@ async fn expunge_uid(session: &mut Session, uid: u32, has_uidplus: bool) -> Res<
     let set = uid.to_string();
     if has_uidplus {
         io("UID EXPUNGE", async {
-            session.uid_expunge(&set).await?.try_collect::<Vec<u32>>().await
+            session
+                .uid_expunge(&set)
+                .await?
+                .try_collect::<Vec<u32>>()
+                .await
         })
         .await?;
         return Ok(());
     }
 
     // RFC 4315's fallback preserves other clients' \\Deleted messages around EXPUNGE.
-    let deleted: std::collections::HashSet<u32> = io("UID SEARCH DELETED", session.uid_search("DELETED")).await?;
+    let deleted: std::collections::HashSet<u32> =
+        io("UID SEARCH DELETED", session.uid_search("DELETED")).await?;
     let preserve: Vec<String> = deleted
         .into_iter()
         .filter(|deleted_uid| *deleted_uid != uid)
@@ -238,7 +243,11 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
 
 /// TCP → TLS (implicit, normally port 993) or STARTTLS (port 143) → authenticate.
 async fn connect(cfg: &AccountConfig, password: &str) -> Res<Session> {
-    let tcp = match timeout(CONNECT_TIMEOUT, TcpStream::connect((cfg.host.as_str(), cfg.port))).await
+    let tcp = match timeout(
+        CONNECT_TIMEOUT,
+        TcpStream::connect((cfg.host.as_str(), cfg.port)),
+    )
+    .await
     {
         Ok(Ok(stream)) => stream,
         Ok(Err(e)) => return Err(format!("Can't reach {}:{} ({e})", cfg.host, cfg.port)),
@@ -254,7 +263,12 @@ async fn connect(cfg: &AccountConfig, password: &str) -> Res<Session> {
             Ok(Err(e)) => return Err(format!("IMAP greeting: {e}")),
             Err(_) => return Err("IMAP greeting timed out".to_string()),
         }
-        match timeout(IO_TIMEOUT, client.run_command_and_check_ok("STARTTLS", None)).await {
+        match timeout(
+            IO_TIMEOUT,
+            client.run_command_and_check_ok("STARTTLS", None),
+        )
+        .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(format!("STARTTLS failed: {e}")),
             Err(_) => return Err("STARTTLS timed out".to_string()),
@@ -268,13 +282,14 @@ async fn connect(cfg: &AccountConfig, password: &str) -> Res<Session> {
     }
 }
 
-async fn tls_stream(
-    host: &str,
-    tcp: TcpStream,
-) -> Res<tokio_rustls::client::TlsStream<TcpStream>> {
+async fn tls_stream(host: &str, tcp: TcpStream) -> Res<tokio_rustls::client::TlsStream<TcpStream>> {
     let name = ServerName::try_from(host.to_string())
         .map_err(|_| format!("Invalid server name: {host}"))?;
-    io("TLS handshake", TlsConnector::from(tls_config()).connect(name, tcp)).await
+    io(
+        "TLS handshake",
+        TlsConnector::from(tls_config()).connect(name, tcp),
+    )
+    .await
 }
 
 struct Xoauth2Authenticator {
@@ -286,7 +301,10 @@ impl Authenticator for Xoauth2Authenticator {
     type Response = String;
 
     fn process(&mut self, _challenge: &[u8]) -> Self::Response {
-        format!("user={}\x01auth=Bearer {}\x01\x01", self.username, self.token)
+        format!(
+            "user={}\x01auth=Bearer {}\x01\x01",
+            self.username, self.token
+        )
     }
 }
 
@@ -303,7 +321,10 @@ async fn authenticate(
             IO_TIMEOUT,
             client.authenticate(
                 "XOAUTH2",
-                Xoauth2Authenticator { username: cfg.username.clone(), token: token.to_string() },
+                Xoauth2Authenticator {
+                    username: cfg.username.clone(),
+                    token: token.to_string(),
+                },
             ),
         )
         .await
@@ -395,16 +416,24 @@ fn map_folders(names: &[Name]) -> [Option<String>; 6] {
 
 async fn fetch_seq(session: &mut Session, set: &str, query: &str) -> Res<Vec<Fetch>> {
     io("FETCH", async {
-        session.fetch(set, query).await?.try_collect::<Vec<Fetch>>().await
+        session
+            .fetch(set, query)
+            .await?
+            .try_collect::<Vec<Fetch>>()
+            .await
     })
-        .await
+    .await
 }
 
 async fn fetch_uid(session: &mut Session, set: &str, query: &str) -> Res<Vec<Fetch>> {
     io("UID FETCH", async {
-        session.uid_fetch(set, query).await?.try_collect::<Vec<Fetch>>().await
+        session
+            .uid_fetch(set, query)
+            .await?
+            .try_collect::<Vec<Fetch>>()
+            .await
     })
-        .await
+    .await
 }
 
 fn is_unread(f: &Fetch) -> bool {
@@ -447,14 +476,24 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
         .unwrap_or_else(|| "(no subject)".to_string());
 
     // Inbox-like folders show who it's from; Sent/Drafts show who it's to.
-    let people = env.and_then(|e| if sent_like { e.to.as_ref() } else { e.from.as_ref() });
+    let people = env.and_then(|e| {
+        if sent_like {
+            e.to.as_ref()
+        } else {
+            e.from.as_ref()
+        }
+    });
     let first = people.and_then(|v| v.first());
 
     let email = match first {
         Some(a) => {
             let mailbox = lossy(&a.mailbox);
             let host = lossy(&a.host);
-            if host.is_empty() { mailbox } else { format!("{mailbox}@{host}") }
+            if host.is_empty() {
+                mailbox
+            } else {
+                format!("{mailbox}@{host}")
+            }
         }
         None => String::new(),
     };
@@ -465,7 +504,12 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
 
     let mut from = name.unwrap_or_else(|| email.clone());
     if from.is_empty() {
-        from = if sent_like { "(no recipient)" } else { "(unknown sender)" }.to_string();
+        from = if sent_like {
+            "(no recipient)"
+        } else {
+            "(unknown sender)"
+        }
+        .to_string();
     }
     if sent_like {
         from = format!("To: {from}");
@@ -606,7 +650,10 @@ impl Worker {
     }
 
     fn status(&self, status: SyncStatus) {
-        self.emit(Event::Status { account: self.index, status });
+        self.emit(Event::Status {
+            account: self.index,
+            status,
+        });
     }
 
     pub async fn run(mut self) {
@@ -729,9 +776,13 @@ impl Worker {
         self.has_uidplus = caps.has_str("UIDPLUS");
 
         let names: Vec<Name> = io("LIST", async {
-            session.list(Some(""), Some("*")).await?.try_collect::<Vec<Name>>().await
+            session
+                .list(Some(""), Some("*"))
+                .await?
+                .try_collect::<Vec<Name>>()
+                .await
         })
-            .await?;
+        .await?;
         self.paths = map_folders(&names);
         self.session = Some(session);
         self.selected = None;
@@ -750,7 +801,8 @@ impl Worker {
     }
 
     fn push_sync_front(&mut self, folder: usize) {
-        self.jobs.retain(|j| !matches!(j, Job::Sync(f) if *f == folder));
+        self.jobs
+            .retain(|j| !matches!(j, Job::Sync(f) if *f == folder));
         self.jobs.push_front(Job::Sync(folder));
     }
 
@@ -786,24 +838,39 @@ impl Worker {
                         .into_iter()
                         .next()
                         .map(|(_, body)| body)
-                        .unwrap_or_else(|| Err("This message is no longer on the server.".to_string()))
+                        .unwrap_or_else(|| {
+                            Err("This message is no longer on the server.".to_string())
+                        })
                 } else {
                     Err("This folder isn't available on the server.".to_string())
                 };
-                self.emit(Event::Body { account: self.index, folder, uid, result });
+                self.emit(Event::Body {
+                    account: self.index,
+                    folder,
+                    uid,
+                    result,
+                });
                 Ok(())
             }
             WorkerCmd::SetSeen { folder, uid, seen } => {
                 if !self.ensure_selected(folder).await? {
                     return Ok(());
                 }
-                let query = if seen { "+FLAGS.SILENT (\\Seen)" } else { "-FLAGS.SILENT (\\Seen)" };
+                let query = if seen {
+                    "+FLAGS.SILENT (\\Seen)"
+                } else {
+                    "-FLAGS.SILENT (\\Seen)"
+                };
                 let set = uid.to_string();
                 let session = self.session.as_mut().ok_or_else(not_connected)?;
                 io("STORE", async {
-                    session.uid_store(&set, query).await?.try_collect::<Vec<Fetch>>().await
+                    session
+                        .uid_store(&set, query)
+                        .await?
+                        .try_collect::<Vec<Fetch>>()
+                        .await
                 })
-                    .await?;
+                .await?;
                 if let Some(unread) = self.folders[folder].known.get_mut(&uid) {
                     *unread = !seen;
                 }
@@ -817,23 +884,37 @@ impl Worker {
                         self.emit(Event::Notice {
                             text: format!("This account has no {} folder.", FOLDERS[to]),
                         });
-                        self.emit(Event::Restore { account: self.index, folder, uid });
+                        self.emit(Event::Restore {
+                            account: self.index,
+                            folder,
+                            uid,
+                        });
                     }
-                    Err(_) => self.emit(Event::Restore { account: self.index, folder, uid }),
+                    Err(_) => self.emit(Event::Restore {
+                        account: self.index,
+                        folder,
+                        uid,
+                    }),
                 }
                 result.map(|_| ())
             }
             WorkerCmd::AppendDraft { raw } => {
                 let new_uid = self.append_draft(raw).await?;
                 if let Some(uid) = new_uid {
-                    self.emit(Event::DraftSaved { account: self.index, uid });
+                    self.emit(Event::DraftSaved {
+                        account: self.index,
+                        uid,
+                    });
                 }
                 Ok(())
             }
             WorkerCmd::UpdateDraft { uid, raw } => {
                 let new_uid = self.update_draft(uid, raw).await?;
                 if let Some(new_uid) = new_uid {
-                    self.emit(Event::DraftSaved { account: self.index, uid: new_uid });
+                    self.emit(Event::DraftSaved {
+                        account: self.index,
+                        uid: new_uid,
+                    });
                 }
                 Ok(())
             }
@@ -875,7 +956,9 @@ impl Worker {
     async fn finish_send(&mut self, send: SendResult) -> Res<()> {
         match send.result {
             Ok(()) => {
-                self.emit(Event::EmailSent { account: self.index });
+                self.emit(Event::EmailSent {
+                    account: self.index,
+                });
                 if let Some(uid) = send.draft_uid {
                     match self.delete_message(DRAFTS, uid).await {
                         Ok(()) => self.push_sync_front(DRAFTS),
@@ -928,7 +1011,7 @@ impl Worker {
                 .append(&sent_path, Some("(\\Seen)"), None, raw.as_bytes())
                 .await
         })
-            .await?;
+        .await?;
         self.push_sync_front(SENT);
         Ok(())
     }
@@ -950,7 +1033,7 @@ impl Worker {
                 .append(&drafts_path, Some("(\\Draft)"), None, raw.as_bytes())
                 .await
         })
-            .await?;
+        .await?;
         // Search for our unique Message-ID, not the highest UID (which may belong to another client).
         let new_uid = self.find_message_uid(DRAFTS, &message_id).await?;
         // Queue a re-sync so the new draft appears in the list, but do it asynchronously
@@ -967,7 +1050,9 @@ impl Worker {
             if let Err(e) = self.delete_message(DRAFTS, old_uid).await {
                 // The new version is safely stored; at worst the old one lingers as a duplicate.
                 self.emit(Event::Notice {
-                    text: format!("Draft saved, but the previous version could not be removed: {e}"),
+                    text: format!(
+                        "Draft saved, but the previous version could not be removed: {e}"
+                    ),
                 });
             }
         }
@@ -989,7 +1074,7 @@ impl Worker {
                 .try_collect::<Vec<Fetch>>()
                 .await
         })
-            .await?;
+        .await?;
         expunge_uid(session, uid, has_uidplus).await?;
         self.folders[folder].known.remove(&uid);
         Ok(())
@@ -1002,7 +1087,8 @@ impl Worker {
         }
         let session = self.session.as_mut().ok_or_else(not_connected)?;
         let query = format!("HEADER Message-ID \"{message_id}\"");
-        let uids: std::collections::HashSet<u32> = io("UID SEARCH", session.uid_search(query)).await?;
+        let uids: std::collections::HashSet<u32> =
+            io("UID SEARCH", session.uid_search(query)).await?;
         Ok(uids.into_iter().max())
     }
 
@@ -1031,7 +1117,7 @@ impl Worker {
                     .try_collect::<Vec<Fetch>>()
                     .await
             })
-                .await?;
+            .await?;
             expunge_uid(session, uid, has_uidplus).await?;
         }
 
@@ -1101,7 +1187,11 @@ impl Worker {
     /// Fetch and parse full messages from the currently selected folder.
     /// Messages missing from the server are simply absent from the result.
     async fn fetch_bodies(&mut self, uids: &[u32]) -> Res<Vec<(u32, Res<BodyData>)>> {
-        let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        let set = uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
         let session = self.session.as_mut().ok_or_else(not_connected)?;
         let sizes = fetch_uid(session, &set, "(UID RFC822.SIZE)").await?;
         let mut results = Vec::new();
@@ -1111,10 +1201,13 @@ impl Worker {
             if fetch.size.is_none() {
                 results.push((uid, Err("The server did not provide this message's size; it was not loaded to avoid an unbounded download.".to_string())));
             } else if fetch.size.is_some_and(|size| size > MAX_MESSAGE_SIZE) {
-                results.push((uid, Err(format!(
-                    "This message is larger than the {} MiB display limit.",
-                    MAX_MESSAGE_SIZE / (1024 * 1024)
-                ))));
+                results.push((
+                    uid,
+                    Err(format!(
+                        "This message is larger than the {} MiB display limit.",
+                        MAX_MESSAGE_SIZE / (1024 * 1024)
+                    )),
+                ));
             } else {
                 allowed.push(uid);
             }
@@ -1123,7 +1216,11 @@ impl Worker {
             return Ok(results);
         }
 
-        let allowed_set = allowed.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        let allowed_set = allowed
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
         let fetched = fetch_uid(session, &allowed_set, "BODY.PEEK[]").await?;
         for fetch in &fetched {
             let Some(uid) = fetch.uid else { continue };
@@ -1161,7 +1258,10 @@ impl Worker {
         if st.uid_validity.is_some_and(|v| v != validity) {
             // The server renumbered the mailbox: our UIDs are meaningless now.
             *st = FolderState::default();
-            let _ = events.try_send(Event::Reset { account: index, folder: f });
+            let _ = events.try_send(Event::Reset {
+                account: index,
+                folder: f,
+            });
         }
         st.uid_validity = Some(validity);
 
@@ -1171,7 +1271,11 @@ impl Worker {
         if mailbox.exists == 0 {
             if !st.known.is_empty() {
                 let uids = st.known.keys().copied().collect();
-                let _ = events.try_send(Event::Removed { account: index, folder: f, uids });
+                let _ = events.try_send(Event::Removed {
+                    account: index,
+                    folder: f,
+                    uids,
+                });
                 st.known.clear();
             }
             st.last_uid = 0;
@@ -1193,15 +1297,21 @@ impl Worker {
             }
             for range in ranges {
                 let fetched = fetch_seq(session, &range, HEADER_QUERY).await?;
-                let rows: Vec<HeaderRow> =
-                    fetched.iter().filter_map(|x| header_row(x, sent_like)).collect();
+                let rows: Vec<HeaderRow> = fetched
+                    .iter()
+                    .filter_map(|x| header_row(x, sent_like))
+                    .collect();
                 for r in &rows {
                     st.known.insert(r.uid, r.unread);
                     st.last_uid = st.last_uid.max(r.uid);
                 }
                 if !rows.is_empty() {
                     new_rows.extend(rows.iter().cloned());
-                    let _ = events.try_send(Event::Headers { account: index, folder: f, rows });
+                    let _ = events.try_send(Event::Headers {
+                        account: index,
+                        folder: f,
+                        rows,
+                    });
                 }
             }
         } else {
@@ -1222,16 +1332,28 @@ impl Worker {
                         }
                     }
                 }
-                let gone: Vec<u32> =
-                    st.known.keys().copied().filter(|u| !present.contains(u)).collect();
+                let gone: Vec<u32> = st
+                    .known
+                    .keys()
+                    .copied()
+                    .filter(|u| !present.contains(u))
+                    .collect();
                 for u in &gone {
                     st.known.remove(u);
                 }
                 if !updates.is_empty() {
-                    let _ = events.try_send(Event::Flags { account: index, folder: f, updates });
+                    let _ = events.try_send(Event::Flags {
+                        account: index,
+                        folder: f,
+                        updates,
+                    });
                 }
                 if !gone.is_empty() {
-                    let _ = events.try_send(Event::Removed { account: index, folder: f, uids: gone });
+                    let _ = events.try_send(Event::Removed {
+                        account: index,
+                        folder: f,
+                        uids: gone,
+                    });
                 }
             }
 
@@ -1250,12 +1372,8 @@ impl Worker {
                         (Vec::new(), high_water)
                     } else {
                         (
-                            fetch_uid(
-                                session,
-                                &format!("{first_uid}:{high_water}"),
-                                HEADER_QUERY,
-                            )
-                            .await?,
+                            fetch_uid(session, &format!("{first_uid}:{high_water}"), HEADER_QUERY)
+                                .await?,
                             high_water,
                         )
                     }
@@ -1263,7 +1381,10 @@ impl Worker {
             } else {
                 // UIDNEXT is optional; sequence numbers still let us fetch a bounded newest page.
                 let first_sequence = mailbox.exists.saturating_sub(keep_limit - 1).max(1);
-                (fetch_seq(session, &format!("{first_sequence}:*"), HEADER_QUERY).await?, 0)
+                (
+                    fetch_seq(session, &format!("{first_sequence}:*"), HEADER_QUERY).await?,
+                    0,
+                )
             };
             let rows: Vec<HeaderRow> = fetched
                 .iter()
@@ -1277,14 +1398,26 @@ impl Worker {
             }
             if !rows.is_empty() {
                 new_rows.extend(rows.iter().cloned());
-                let _ = events.try_send(Event::Headers { account: index, folder: f, rows });
+                let _ = events.try_send(Event::Headers {
+                    account: index,
+                    folder: f,
+                    rows,
+                });
             }
         }
 
-        let keep_limit = if f == INBOX { INBOX_LIMIT as usize } else { OTHER_LIMIT as usize };
+        let keep_limit = if f == INBOX {
+            INBOX_LIMIT as usize
+        } else {
+            OTHER_LIMIT as usize
+        };
         let removed = prune_known(&mut st.known, keep_limit);
         if !removed.is_empty() {
-            let _ = events.try_send(Event::Removed { account: index, folder: f, uids: removed });
+            let _ = events.try_send(Event::Removed {
+                account: index,
+                folder: f,
+                uids: removed,
+            });
         }
 
         st.synced = true;
@@ -1404,7 +1537,9 @@ pub fn spawn_account(
             signals_tx.clone(),
             cancel_rx,
         ));
-        Worker::new(index, cfg, password, events, rx, signals_tx, signals_rx).run().await;
+        Worker::new(index, cfg, password, events, rx, signals_tx, signals_rx)
+            .run()
+            .await;
         let _ = cancel_tx.send(());
     });
 
@@ -1455,8 +1590,12 @@ mod tests {
         assert!(is_connection_failure("SELECT: io: connection reset"));
         assert!(is_connection_failure("SELECT: connection lost"));
         assert!(is_connection_failure("SELECT: timed out"));
-        assert!(!is_connection_failure("STORE: no response: mailbox is read-only"));
-        assert!(!is_connection_failure("UID MOVE: bad response: unsupported"));
+        assert!(!is_connection_failure(
+            "STORE: no response: mailbox is read-only"
+        ));
+        assert!(!is_connection_failure(
+            "UID MOVE: bad response: unsupported"
+        ));
     }
 
     #[test]

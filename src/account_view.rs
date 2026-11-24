@@ -136,7 +136,8 @@ impl Component for AddAccountView {
                                 result_smtp_host.set(s.smtp_host);
                                 result_smtp_port.set(s.smtp_port.to_string());
                             }
-                            result_status.set("✓ Server settings detected automatically".to_string());
+                            result_status
+                                .set("✓ Server settings detected automatically".to_string());
                         }
                         crate::mail::discovery::DiscoveryResult::Failed(msg) => {
                             result_status.set(format!("✗ {msg}"));
@@ -158,15 +159,27 @@ impl Component for AddAccountView {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(12.)
-                    .child(label().text("Add a mailbox").font_size(20.).font_weight(FontWeight::BOLD).color(DARK.text))
+                    .child(
+                        label()
+                            .text("Add a mailbox")
+                            .font_size(20.)
+                            .font_weight(FontWeight::BOLD)
+                            .color(DARK.text),
+                    ),
             );
 
         if demo {
-            return col.child(label().text("Demo mode: accounts are disabled. Run without --demo to add one.").color(DARK.muted));
+            return col.child(
+                label()
+                    .text("Demo mode: accounts are disabled. Run without --demo to add one.")
+                    .color(DARK.muted),
+            );
         }
 
         if !*show_provider_picker.read() {
-            col = col.child(StepIndicator { current: *current_step.read() });
+            col = col.child(StepIndicator {
+                current: *current_step.read(),
+            });
         }
 
         // Step content (scrollable so buttons aren't cut off)
@@ -175,7 +188,12 @@ impl Component for AddAccountView {
             let other_handler = EventHandler::new(move |_| show_picker.set(false));
             rect()
                 .spacing(14.)
-                .child(label().text("Choose your email provider to get started.").color(DARK.muted).font_size(14.))
+                .child(
+                    label()
+                        .text("Choose your email provider to get started.")
+                        .color(DARK.muted)
+                        .font_size(14.),
+                )
                 .child(
                     rect()
                         .spacing(10.)
@@ -184,7 +202,12 @@ impl Component for AddAccountView {
                         .child(provider_choice("iCloud", ICLOUD_LOGO, false, None))
                         .child(provider_choice("Yahoo", YAHOO_LOGO, false, None))
                         .child(provider_choice("Fastmail", FASTMAIL_LOGO, false, None))
-                        .child(provider_choice("Other (IMAP / SMTP)", MAIL, true, Some(other_handler))),
+                        .child(provider_choice(
+                            "Other (IMAP / SMTP)",
+                            MAIL,
+                            true,
+                            Some(other_handler),
+                        )),
                 )
         } else {
             match *current_step.read() {
@@ -343,11 +366,16 @@ impl Component for AddAccountView {
                     .padding(10.)
                     .corner_radius(8.)
                     .background(Fill::from((60, 20, 30)))
-                    .child(label().text(e).color(DARK.danger).font_size(13.))
+                    .child(label().text(e).color(DARK.danger).font_size(13.)),
             );
         }
         if *working.read() {
-            col = col.child(label().text("Connecting and checking your login…").color(DARK.muted).font_size(13.));
+            col = col.child(
+                label()
+                    .text("Connecting and checking your login…")
+                    .color(DARK.muted)
+                    .font_size(13.),
+            );
         }
 
         // Navigation buttons
@@ -359,7 +387,8 @@ impl Component for AddAccountView {
 
         // Action button (Next or Connect)
         let action_button = if *current_step.read() == SetupStep::Verify {
-            let (email, password, host, port) = (email.clone(), password.clone(), host.clone(), port.clone());
+            let (email, password, host, port) =
+                (email.clone(), password.clone(), host.clone(), port.clone());
             let (smtp_host, smtp_port) = (smtp_host.clone(), smtp_port.clone());
             let account_name = account_name.clone();
             let sender_name = sender_name.clone();
@@ -384,8 +413,16 @@ impl Component for AddAccountView {
                     working.set(true);
                     let smtp_host = smtp_host.read().trim().to_string();
                     let smtp_port: u16 = smtp_port.read().trim().parse().unwrap_or(587);
-                    let name_val = if acct_nm.is_empty() { addr.split('@').next().unwrap_or(&addr).to_string() } else { acct_nm };
-                    let sender_name_val = if sndr_nm.is_empty() { name_val.clone() } else { sndr_nm };
+                    let name_val = if acct_nm.is_empty() {
+                        addr.split('@').next().unwrap_or(&addr).to_string()
+                    } else {
+                        acct_nm
+                    };
+                    let sender_name_val = if sndr_nm.is_empty() {
+                        name_val.clone()
+                    } else {
+                        sndr_nm
+                    };
                     let cfg = crate::mail::AccountConfig {
                         id: crate::mail::config::new_id(),
                         name: name_val,
@@ -409,14 +446,28 @@ impl Component for AddAccountView {
                 .background(Fill::from(DARK.accent))
                 .cursor(freya::winit::window::CursorIcon::Pointer)
                 .on_press(btn_handler)
-                .child(label().text(if *working.read() { "Connecting…" } else { "Connect" }).color(DARK.text).font_size(13.).font_weight(FontWeight::BOLD))
+                .child(
+                    label()
+                        .text(if *working.read() {
+                            "Connecting…"
+                        } else {
+                            "Connect"
+                        })
+                        .color(DARK.text)
+                        .font_size(13.)
+                        .font_weight(FontWeight::BOLD),
+                )
         } else {
             let mut step = current_step;
             let mut start_discovery = discover.clone();
             rect()
                 .padding((8., 18., 8., 18.))
                 .corner_radius(6.)
-                .background(if can_next { Fill::from(DARK.accent) } else { Fill::from((50, 50, 68)) })
+                .background(if can_next {
+                    Fill::from(DARK.accent)
+                } else {
+                    Fill::from((50, 50, 68))
+                })
                 .opacity(if can_next { 1. } else { 0.5 })
                 .cursor(freya::winit::window::CursorIcon::Pointer)
                 .on_press(move |_| {
@@ -431,7 +482,13 @@ impl Component for AddAccountView {
                 .horizontal()
                 .cross_align(Alignment::Center)
                 .spacing(6.)
-                .child(label().text("Next").color(DARK.text).font_size(13.).font_weight(FontWeight::BOLD))
+                .child(
+                    label()
+                        .text("Next")
+                        .color(DARK.text)
+                        .font_size(13.)
+                        .font_weight(FontWeight::BOLD),
+                )
                 .child(icon(CHEVRON_RIGHT, 14., DARK.text))
         };
 
@@ -524,7 +581,13 @@ impl Component for EditAccountView {
                     .cross_align(Alignment::Center)
                     .spacing(12.)
                     .child(icon(MAIL, 24., DARK.accent))
-                    .child(label().text("Edit Account").color(DARK.text).font_size(20.).font_weight(FontWeight::BOLD))
+                    .child(
+                        label()
+                            .text("Edit Account")
+                            .color(DARK.text)
+                            .font_size(20.)
+                            .font_weight(FontWeight::BOLD),
+                    ),
             );
 
         // Form fields (scrollable so buttons aren't cut off on small windows)
@@ -752,7 +815,13 @@ impl Component for EditAccountView {
                     .background(Fill::from(DARK.accent))
                     .cursor(freya::winit::window::CursorIcon::Pointer)
                     .on_press(save_handler)
-                    .child(label().text("Save").color(DARK.text).font_size(13.).font_weight(FontWeight::BOLD))
+                    .child(
+                        label()
+                            .text("Save")
+                            .color(DARK.text)
+                            .font_size(13.)
+                            .font_weight(FontWeight::BOLD),
+                    )
             });
 
         col = col.child(nav_row);
@@ -782,12 +851,13 @@ impl Component for StepIndicator {
 
             if i > 0 {
                 // Connector line
-                items = items.child(
-                    rect()
-                        .width(Size::px(20.))
-                        .height(Size::px(2.))
-                        .background(if i <= current_idx { Fill::from(DARK.accent) } else { Fill::from(DARK.divider) })
-                );
+                items = items.child(rect().width(Size::px(20.)).height(Size::px(2.)).background(
+                    if i <= current_idx {
+                        Fill::from(DARK.accent)
+                    } else {
+                        Fill::from(DARK.divider)
+                    },
+                ));
             }
 
             let bg = if is_active {
@@ -797,7 +867,11 @@ impl Component for StepIndicator {
             } else {
                 crate::grain::hover()
             };
-            let text_color = if is_active || is_completed { DARK.text } else { DARK.muted };
+            let text_color = if is_active || is_completed {
+                DARK.text
+            } else {
+                DARK.muted
+            };
 
             items = items.child(
                 rect()
@@ -808,7 +882,17 @@ impl Component for StepIndicator {
                     .spacing(6.)
                     .background(bg)
                     .child(icon(step.icon_bytes(), 12., text_color))
-                    .child(label().text(step.label()).color(text_color).font_size(12.).font_weight(if is_active { FontWeight::BOLD } else { FontWeight::NORMAL }))
+                    .child(
+                        label()
+                            .text(step.label())
+                            .color(text_color)
+                            .font_size(12.)
+                            .font_weight(if is_active {
+                                FontWeight::BOLD
+                            } else {
+                                FontWeight::NORMAL
+                            }),
+                    ),
             );
         }
 
@@ -846,7 +930,13 @@ impl Component for AddAccountFormField {
         rect()
             .width(Size::fill())
             .spacing(4.)
-            .child(label().text(self.label).color(DARK.muted).font_size(12.).font_weight(FontWeight::MEDIUM))
+            .child(
+                label()
+                    .text(self.label)
+                    .color(DARK.muted)
+                    .font_size(12.)
+                    .font_weight(FontWeight::MEDIUM),
+            )
             .child(input)
     }
 }
@@ -864,8 +954,19 @@ impl Component for VerifyRow {
             .width(Size::fill())
             .horizontal()
             .spacing(12.)
-            .child(label().text(self.label).color(DARK.muted).font_size(13.).width(Size::px(90.)))
-            .child(label().text(self.value.clone()).color(DARK.text).font_size(13.))
+            .child(
+                label()
+                    .text(self.label)
+                    .color(DARK.muted)
+                    .font_size(13.)
+                    .width(Size::px(90.)),
+            )
+            .child(
+                label()
+                    .text(self.value.clone())
+                    .color(DARK.text)
+                    .font_size(13.),
+            )
     }
 }
 
@@ -894,7 +995,13 @@ impl Component for AccountSettings {
                     .child(
                         rect()
                             .spacing(2.)
-                            .child(label().text(a.name.clone()).font_size(24.).font_weight(FontWeight::BOLD).color(DARK.text))
+                            .child(
+                                label()
+                                    .text(a.name.clone())
+                                    .font_size(24.)
+                                    .font_weight(FontWeight::BOLD)
+                                    .color(DARK.text),
+                            )
                             .child(label().text(a.addr.clone()).color(DARK.muted)),
                     ),
             )
@@ -902,7 +1009,11 @@ impl Component for AccountSettings {
             .child(field(
                 "Sync status",
                 &format!("● {}", a.sync_label()),
-                if a.is_error() { DARK.danger } else { DARK.success },
+                if a.is_error() {
+                    DARK.danger
+                } else {
+                    DARK.success
+                },
             ))
             .child(field("Server", &a.host, DARK.text))
             .child(field("Folders", &FOLDERS.len().to_string(), DARK.text))
@@ -910,12 +1021,29 @@ impl Component for AccountSettings {
                 rect()
                     .horizontal()
                     .spacing(8.)
-                    .child(AccountButton { text: "Sync now".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((45, 45, 62)), on_press: EventHandler::new(move |_| state.sync_account(index)) })
+                    .child(AccountButton {
+                        text: "Sync now".to_string(),
+                        bg: crate::grain::hover(),
+                        hover_bg: Fill::from((45, 45, 62)),
+                        on_press: EventHandler::new(move |_| state.sync_account(index)),
+                    })
                     .child({
                         let mut s_edit = state;
-                        AccountButton { text: "Edit".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((45, 45, 62)), on_press: EventHandler::new(move |_| s_edit.view.set(crate::state::View::EditAccount(index))) }
+                        AccountButton {
+                            text: "Edit".to_string(),
+                            bg: crate::grain::hover(),
+                            hover_bg: Fill::from((45, 45, 62)),
+                            on_press: EventHandler::new(move |_| {
+                                s_edit.view.set(crate::state::View::EditAccount(index))
+                            }),
+                        }
                     })
-                    .child(AccountButton { text: "Remove account".to_string(), bg: Fill::from(DARK.danger), hover_bg: Fill::from(DARK.close_hover), on_press: EventHandler::new(|_| {}) }),
+                    .child(AccountButton {
+                        text: "Remove account".to_string(),
+                        bg: Fill::from(DARK.danger),
+                        hover_bg: Fill::from(DARK.close_hover),
+                        on_press: EventHandler::new(|_| {}),
+                    }),
             )
     }
 }
@@ -985,8 +1113,7 @@ fn provider_choice(
             choice
         }
     } else {
-        choice
-            .cursor(freya::winit::window::CursorIcon::Default)
+        choice.cursor(freya::winit::window::CursorIcon::Default)
     }
 }
 
@@ -1008,11 +1135,7 @@ impl Component for AccountButton {
         rect()
             .padding((8., 14., 8., 14.))
             .corner_radius(6.)
-            .background(if hovering() {
-                hover_fill
-            } else {
-                bg_fill
-            })
+            .background(if hovering() { hover_fill } else { bg_fill })
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press)

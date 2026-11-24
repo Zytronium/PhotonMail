@@ -247,9 +247,11 @@ mod tests {
     fn long_encoded_words_are_not_encoded_twice() {
         let original = "A long café subject with enough words to exceed the short header limit";
         let encoded = encode_unstructured_header(original);
-        assert!(encoded
-            .split_whitespace()
-            .all(|word| word.starts_with("=?") && word.ends_with("?=")));
+        assert!(
+            encoded
+                .split_whitespace()
+                .all(|word| word.starts_with("=?") && word.ends_with("?="))
+        );
         assert_eq!(encode_unstructured_header(&encoded), encoded);
     }
 

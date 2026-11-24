@@ -4,8 +4,7 @@
 
 use std::{
     collections::HashSet,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -24,7 +23,10 @@ pub struct LinkPrefs {
 impl LinkPrefs {
     /// Check whether the confirmation dialog should be shown.
     pub fn should_skip(&self, sender_email: &str) -> bool {
-        self.always_open || self.trusted_senders.contains(&normalize_sender(sender_email))
+        self.always_open
+            || self
+                .trusted_senders
+                .contains(&normalize_sender(sender_email))
     }
 
     /// Remember the sender-specific choice made in the confirmation dialog.
@@ -65,11 +67,19 @@ impl LinkPrefs {
         if path.exists() {
             let existing = fs::read(path)?;
             if serde_json::from_slice::<Self>(&existing).is_err() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "existing link preferences are invalid; refusing to overwrite them"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "existing link preferences are invalid; refusing to overwrite them",
+                ));
             }
         }
 
-        let parent = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "link preferences path has no parent"))?;
+        let parent = path.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "link preferences path has no parent",
+            )
+        })?;
         fs::create_dir_all(parent)?;
         let contents = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -94,7 +104,10 @@ mod tests {
 
     #[test]
     fn link_confirmation_preference_persists_between_loads() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let directory = std::env::temp_dir().join(format!("photon-mail-link-prefs-{unique}"));
         let path = directory.join("link_prefs.json");
         let mut prefs = LinkPrefs::default();
@@ -107,7 +120,10 @@ mod tests {
 
     #[test]
     fn sender_preference_is_persisted_and_scoped_case_insensitively() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let directory = std::env::temp_dir().join(format!("photon-mail-link-prefs-{unique}"));
         let path = directory.join("link_prefs.json");
         let mut prefs = LinkPrefs::default();
@@ -122,7 +138,10 @@ mod tests {
 
     #[test]
     fn invalid_existing_preferences_are_not_overwritten() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let directory = std::env::temp_dir().join(format!("photon-mail-link-prefs-{unique}"));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("link_prefs.json");

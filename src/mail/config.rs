@@ -125,171 +125,381 @@ pub fn discover_settings(email: &str) -> Option<DiscoveredSettings> {
 
     // Helper to match a domain against a list of known domains/suffixes
     let matches = |domains: &[&str]| -> bool {
-        domains.iter().any(|m| d == *m || d.ends_with(&format!(".{m}")))
+        domains
+            .iter()
+            .any(|m| d == *m || d.ends_with(&format!(".{m}")))
     };
 
     // Check providers in order
     if matches(&["gmail.com", "googlemail.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.gmail.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.gmail.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.gmail.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.gmail.com",
+                port: 465,
+            },
         });
     }
     // Microsoft / Outlook / Hotmail / Live
-    if matches(&["outlook.com", "hotmail.com", "live.com", "msn.com", "hotmail.co.uk", "outlook.co.uk", "live.co.uk"]) {
+    if matches(&[
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "msn.com",
+        "hotmail.co.uk",
+        "outlook.co.uk",
+        "live.co.uk",
+    ]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "outlook.office365.com", port: 993 },
-            smtp: ServerSettings { host: "smtp-mail.outlook.com", port: 587 },
+            imap: ServerSettings {
+                host: "outlook.office365.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp-mail.outlook.com",
+                port: 587,
+            },
         });
     }
     // Microsoft 365 / Exchange Online
     if matches(&["office365.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "outlook.office365.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.office365.com", port: 587 },
+            imap: ServerSettings {
+                host: "outlook.office365.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.office365.com",
+                port: 587,
+            },
         });
     }
     // Yahoo
-    if matches(&["yahoo.com", "yahoo.co.uk", "yahoo.ca", "yahoo.de", "yahoo.fr", "yahoo.in", "yahoo.co.id", "yahoo.com.au", "ymail.com"]) {
+    if matches(&[
+        "yahoo.com",
+        "yahoo.co.uk",
+        "yahoo.ca",
+        "yahoo.de",
+        "yahoo.fr",
+        "yahoo.in",
+        "yahoo.co.id",
+        "yahoo.com.au",
+        "ymail.com",
+    ]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mail.yahoo.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.mail.yahoo.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.mail.yahoo.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mail.yahoo.com",
+                port: 465,
+            },
         });
     }
     // iCloud
     if matches(&["icloud.com", "me.com", "mac.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mail.me.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.mail.me.com", port: 587 },
+            imap: ServerSettings {
+                host: "imap.mail.me.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mail.me.com",
+                port: 587,
+            },
         });
     }
     // Fastmail
     if matches(&["fastmail.com", "fastmail.fm"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.fastmail.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.fastmail.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.fastmail.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.fastmail.com",
+                port: 465,
+            },
         });
     }
     // Zoho Mail
     if matches(&["zoho.com", "zohomail.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.zoho.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.zoho.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.zoho.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.zoho.com",
+                port: 465,
+            },
         });
     }
     // AOL
     if matches(&["aol.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.aol.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.aol.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.aol.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.aol.com",
+                port: 465,
+            },
         });
     }
     // Yandex
-    if matches(&["yandex.ru", "yandex.com", "yandex.ua", "yandex.kz", "yandex.by", "ya.ru"]) {
+    if matches(&[
+        "yandex.ru",
+        "yandex.com",
+        "yandex.ua",
+        "yandex.kz",
+        "yandex.by",
+        "ya.ru",
+    ]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.yandex.ru", port: 993 },
-            smtp: ServerSettings { host: "smtp.yandex.ru", port: 465 },
+            imap: ServerSettings {
+                host: "imap.yandex.ru",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.yandex.ru",
+                port: 465,
+            },
         });
     }
     // Mail.ru
     if matches(&["mail.ru", "inbox.ru", "list.ru"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mail.ru", port: 993 },
-            smtp: ServerSettings { host: "smtp.mail.ru", port: 465 },
+            imap: ServerSettings {
+                host: "imap.mail.ru",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mail.ru",
+                port: 465,
+            },
         });
     }
     // GMX
-    if matches(&["gmx.com", "gmx.de", "gmx.net", "gmx.fr", "gmx.at", "gmx.ch", "gmx.es", "gmx.co.uk", "gmx.ca", "gmx.com.au", "gmx.se", "gmx.nl", "gmx.cz", "gmx.hr", "gmx.lt", "gmx.no", "gmx.pl", "gmx.sk", "webmail.gmx.com"]) {
+    if matches(&[
+        "gmx.com",
+        "gmx.de",
+        "gmx.net",
+        "gmx.fr",
+        "gmx.at",
+        "gmx.ch",
+        "gmx.es",
+        "gmx.co.uk",
+        "gmx.ca",
+        "gmx.com.au",
+        "gmx.se",
+        "gmx.nl",
+        "gmx.cz",
+        "gmx.hr",
+        "gmx.lt",
+        "gmx.no",
+        "gmx.pl",
+        "gmx.sk",
+        "webmail.gmx.com",
+    ]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.gmx.com", port: 993 },
-            smtp: ServerSettings { host: "mail.gmx.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.gmx.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "mail.gmx.com",
+                port: 465,
+            },
         });
     }
     // T-Online / Telekom (Germany)
     if matches(&["t-online.de", "telekom.de"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.t-online.de", port: 993 },
-            smtp: ServerSettings { host: "smtp.t-online.de", port: 465 },
+            imap: ServerSettings {
+                host: "imap.t-online.de",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.t-online.de",
+                port: 465,
+            },
         });
     }
     // Web.de / Giga (Germany)
     if matches(&["web.de", "giga.de"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.web.de", port: 993 },
-            smtp: ServerSettings { host: "smtp.web.de", port: 465 },
+            imap: ServerSettings {
+                host: "imap.web.de",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.web.de",
+                port: 465,
+            },
         });
     }
     // Outlook / Hotmail international variants
     if matches(&["outlook.cz", "outlook.hu", "outlook.sa"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "outlook.office365.com", port: 993 },
-            smtp: ServerSettings { host: "smtp-mail.outlook.com", port: 587 },
+            imap: ServerSettings {
+                host: "outlook.office365.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp-mail.outlook.com",
+                port: 587,
+            },
         });
     }
     // Mailfence provides standard IMAP/SMTP access on paid plans.
     if matches(&["mailfence.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mailfence.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.mailfence.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.mailfence.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mailfence.com",
+                port: 465,
+            },
         });
     }
     // QQ Mail
     if matches(&["qq.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.qq.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.qq.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.qq.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.qq.com",
+                port: 465,
+            },
         });
     }
     // 163 / 126 NetEase
     if matches(&["163.com", "126.com", "188.com", "yeah.net", "163mail.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.163.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.163.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.163.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.163.com",
+                port: 465,
+            },
         });
     }
     // Amazon WorkMail
     if matches(&["awsworkmail.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mail.awsworkmail.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.mail.awsworkmail.com", port: 465 },
+            imap: ServerSettings {
+                host: "imap.mail.awsworkmail.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mail.awsworkmail.com",
+                port: 465,
+            },
         });
     }
     // Mailbox.org
     if matches(&["mailbox.org", "mailbox.de"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mailbox.org", port: 993 },
-            smtp: ServerSettings { host: "smtp.mailbox.org", port: 465 },
+            imap: ServerSettings {
+                host: "imap.mailbox.org",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mailbox.org",
+                port: 465,
+            },
         });
     }
     // Posteo serves all supported address domains from posteo.de.
     if matches(&[
-        "posteo.de", "posteo.com", "posteo.net", "posteo.us", "posteo.ca", "posteo.uk", "posteo.ie",
-        "posteo.es", "posteo.at", "posteo.ch", "posteo.nl", "posteo.be", "posteo.lu",
+        "posteo.de",
+        "posteo.com",
+        "posteo.net",
+        "posteo.us",
+        "posteo.ca",
+        "posteo.uk",
+        "posteo.ie",
+        "posteo.es",
+        "posteo.at",
+        "posteo.ch",
+        "posteo.nl",
+        "posteo.be",
+        "posteo.lu",
     ]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "posteo.de", port: 993 },
-            smtp: ServerSettings { host: "posteo.de", port: 465 },
+            imap: ServerSettings {
+                host: "posteo.de",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "posteo.de",
+                port: 465,
+            },
         });
     }
     // Runbox
     if matches(&["runbox.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "mail.runbox.com", port: 993 },
-            smtp: ServerSettings { host: "mail.runbox.com", port: 465 },
+            imap: ServerSettings {
+                host: "mail.runbox.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "mail.runbox.com",
+                port: 465,
+            },
         });
     }
     // Mail.com / Love.com etc (Migadu group)
-    if matches(&["mail.com", "love.com", "iname.com", "briefly.com", "acmemail.net", "binkmail.com", "einrot.com", "freetime.com", "hockeymail.com", "myfamily.com", "starpower.com", "tripos.com", "vollomail.com"]) {
+    if matches(&[
+        "mail.com",
+        "love.com",
+        "iname.com",
+        "briefly.com",
+        "acmemail.net",
+        "binkmail.com",
+        "einrot.com",
+        "freetime.com",
+        "hockeymail.com",
+        "myfamily.com",
+        "starpower.com",
+        "tripos.com",
+        "vollomail.com",
+    ]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mail.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.mail.com", port: 587 },
+            imap: ServerSettings {
+                host: "imap.mail.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mail.com",
+                port: 587,
+            },
         });
     }
     // Apple iCloud+ Hide My Email
     if matches(&["icloud.privateemail.com"]) {
         return Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.mail.me.com", port: 993 },
-            smtp: ServerSettings { host: "smtp.mail.me.com", port: 587 },
+            imap: ServerSettings {
+                host: "imap.mail.me.com",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.mail.me.com",
+                port: 587,
+            },
         });
     }
 
@@ -300,13 +510,27 @@ pub fn discover_settings(email: &str) -> Option<DiscoveredSettings> {
 /// client-accessible IMAP or SMTP server.
 pub fn discover_settings_for_mx_host(mx_host: &str) -> Option<DiscoveredSettings> {
     let host = mx_host.trim_end_matches('.').to_ascii_lowercase();
-    let provider_domain = if matches!(host.as_str(), "smtp.google.com" | "aspmx.l.google.com" | "alt1.aspmx.l.google.com" | "alt2.aspmx.l.google.com" | "alt3.aspmx.l.google.com" | "alt4.aspmx.l.google.com") {
+    let provider_domain = if matches!(
+        host.as_str(),
+        "smtp.google.com"
+            | "aspmx.l.google.com"
+            | "alt1.aspmx.l.google.com"
+            | "alt2.aspmx.l.google.com"
+            | "alt3.aspmx.l.google.com"
+            | "alt4.aspmx.l.google.com"
+    ) {
         "gmail.com"
     } else if host.ends_with(".mail.protection.outlook.com") {
         "office365.com"
-    } else if matches!(host.as_str(), "in1-smtp.messagingengine.com" | "in2-smtp.messagingengine.com") {
+    } else if matches!(
+        host.as_str(),
+        "in1-smtp.messagingengine.com" | "in2-smtp.messagingengine.com"
+    ) {
         "fastmail.com"
-    } else if matches!(host.as_str(), "mxext1.mailbox.org" | "mxext2.mailbox.org" | "mxext3.mailbox.org") {
+    } else if matches!(
+        host.as_str(),
+        "mxext1.mailbox.org" | "mxext2.mailbox.org" | "mxext3.mailbox.org"
+    ) {
         "mailbox.org"
     } else if matches!(host.as_str(), "mx01.posteo.de" | "mx02.posteo.de") {
         "posteo.de"
@@ -318,8 +542,14 @@ pub fn discover_settings_for_mx_host(mx_host: &str) -> Option<DiscoveredSettings
 
     if provider_domain == "transip.email" {
         Some(DiscoveredSettings {
-            imap: ServerSettings { host: "imap.transip.email", port: 993 },
-            smtp: ServerSettings { host: "smtp.transip.email", port: 465 },
+            imap: ServerSettings {
+                host: "imap.transip.email",
+                port: 993,
+            },
+            smtp: ServerSettings {
+                host: "smtp.transip.email",
+                port: 465,
+            },
         })
     } else {
         discover_settings(&format!("user@{provider_domain}"))
@@ -328,22 +558,32 @@ pub fn discover_settings_for_mx_host(mx_host: &str) -> Option<DiscoveredSettings
 
 pub fn unsupported_provider_message(domain: &str) -> Option<&'static str> {
     let domain = domain.trim_end_matches('.').to_ascii_lowercase();
-    if ["protonmail.com", "proton.me", "protonmail.ch", "pm.me"].iter().any(|d| domain == *d || domain.ends_with(&format!(".{d}"))) {
+    if ["protonmail.com", "proton.me", "protonmail.ch", "pm.me"]
+        .iter()
+        .any(|d| domain == *d || domain.ends_with(&format!(".{d}")))
+    {
         Some("Proton Mail requires Proton Mail Bridge; direct server discovery is not supported.")
     } else if [
-        "tutanota.com", "tutanota.de", "tutamail.com", "tuta.com", "tuta.io", "keemail.me",
+        "tutanota.com",
+        "tutanota.de",
+        "tutamail.com",
+        "tuta.com",
+        "tuta.io",
+        "keemail.me",
     ]
     .iter()
     .any(|d| domain == *d || domain.ends_with(&format!(".{d}")))
     {
         Some("Tuta does not provide standard IMAP or SMTP access.")
-    } else if ["hey.com", "skiff.com"].iter().any(|d| domain == *d || domain.ends_with(&format!(".{d}"))) {
+    } else if ["hey.com", "skiff.com"]
+        .iter()
+        .any(|d| domain == *d || domain.ends_with(&format!(".{d}")))
+    {
         Some("This provider does not offer a supported standard IMAP/SMTP endpoint.")
     } else {
         None
     }
 }
-
 
 fn dir() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("PhotonMail"))
@@ -380,8 +620,13 @@ fn load_accounts_from_path(path: &Path) -> Vec<AccountConfig> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
         Err(error) if error.kind() == io::ErrorKind::InvalidData => {
             match preserve_corrupt_accounts(path) {
-                Ok(backup) => eprintln!("Unreadable account settings preserved as {}", backup.display()),
-                Err(backup_error) => eprintln!("Unreadable account settings were not overwritten because backup failed: {backup_error}"),
+                Ok(backup) => eprintln!(
+                    "Unreadable account settings preserved as {}",
+                    backup.display()
+                ),
+                Err(backup_error) => eprintln!(
+                    "Unreadable account settings were not overwritten because backup failed: {backup_error}"
+                ),
             }
             return Vec::new();
         }
@@ -437,8 +682,12 @@ fn load_accounts_from_path(path: &Path) -> Vec<AccountConfig> {
         }
         None => {
             match preserve_corrupt_accounts(path) {
-                Ok(backup) => eprintln!("Invalid account settings preserved as {}", backup.display()),
-                Err(error) => eprintln!("Invalid account settings were not overwritten because backup failed: {error}"),
+                Ok(backup) => {
+                    eprintln!("Invalid account settings preserved as {}", backup.display())
+                }
+                Err(error) => eprintln!(
+                    "Invalid account settings were not overwritten because backup failed: {error}"
+                ),
             }
             Vec::new()
         }
@@ -449,7 +698,9 @@ fn save_accounts_at(path: &Path, list: &[AccountConfig]) -> Result<(), String> {
     if path.exists() {
         let current = fs::read_to_string(path).map_err(|error| error.to_string())?;
         if parse_account_file(&current).is_none() {
-            return Err("existing account settings are invalid; refusing to overwrite them".to_string());
+            return Err(
+                "existing account settings are invalid; refusing to overwrite them".to_string(),
+            );
         }
     }
 
@@ -463,7 +714,10 @@ fn save_accounts_at(path: &Path, list: &[AccountConfig]) -> Result<(), String> {
 
 fn preserve_corrupt_accounts(path: &Path) -> io::Result<PathBuf> {
     let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "account settings path has no parent")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "account settings path has no parent",
+        )
     })?;
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     let timestamp = SystemTime::now()
@@ -473,7 +727,11 @@ fn preserve_corrupt_accounts(path: &Path) -> io::Result<PathBuf> {
 
     for suffix in 0..100 {
         let backup = parent.join(format!("{file_name}.corrupt-{timestamp}-{suffix}"));
-        let mut destination = match OpenOptions::new().write(true).create_new(true).open(&backup) {
+        let mut destination = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup)
+        {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -548,7 +806,10 @@ mod tests {
         assert!(discover_settings("\"local@part\"@fastmail.com").is_some());
         assert!(discover_settings("user@Vollomail.com").is_some());
         assert!(discover_settings("user@posteo.us").is_some());
-        assert!(email_domain("\"local@part\"@fastmail.com").is_some_and(|domain| domain == "fastmail.com"));
+        assert!(
+            email_domain("\"local@part\"@fastmail.com")
+                .is_some_and(|domain| domain == "fastmail.com")
+        );
         assert!(email_domain("user@extra@example.com").is_none());
     }
 
@@ -586,7 +847,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory = std::env::temp_dir().join(format!("photonmail-config-test-{}-{timestamp}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "photonmail-config-test-{}-{timestamp}",
+            std::process::id()
+        ));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("accounts.json");
         (directory, path)

@@ -6,8 +6,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    data::{MailContentType, DEMO_ACCOUNTS, DEMO_MAILS},
-    mail::{parse::fmt_date, AccountConfig, AttachmentInfo, BodyData, Event, HeaderRow, SyncStatus},
+    data::{DEMO_ACCOUNTS, DEMO_MAILS, MailContentType},
+    mail::{
+        AccountConfig, AttachmentInfo, BodyData, Event, HeaderRow, SyncStatus, parse::fmt_date,
+    },
     theme::Rgb,
 };
 
@@ -71,7 +73,11 @@ fn ago(at: i64) -> String {
 pub enum BodyState {
     NotLoaded,
     Loading,
-    Loaded { content_type: MailContentType, text: Arc<str> },
+    Loaded {
+        content_type: MailContentType,
+        text: Arc<str>,
+        source: Arc<[u8]>,
+    },
     Failed(String),
 }
 
@@ -188,6 +194,7 @@ impl Store {
                 body: BodyState::Loaded {
                     content_type: m.content_type,
                     text: Arc::from(m.body),
+                    source: Arc::from(&b""[..]),
                 },
                 attachments: Vec::new(),
                 date: m.date.to_string(),
@@ -199,7 +206,12 @@ impl Store {
                 body_cache_stamp: 0,
             })
             .collect();
-        Store { accounts, mails, demo: true, ..Store::default() }
+        Store {
+            accounts,
+            mails,
+            demo: true,
+            ..Store::default()
+        }
     }
 
     fn push_account(&mut self, cfg: &AccountConfig) {
@@ -235,7 +247,11 @@ impl Store {
             .accounts
             .iter()
             .any(|a| matches!(a.status, SyncStatus::Connecting | SyncStatus::Syncing));
-        if busy { Summary::Syncing } else { Summary::Synced }
+        if busy {
+            Summary::Syncing
+        } else {
+            Summary::Synced
+        }
     }
 
     pub fn set_notice(&mut self, text: impl Into<String>, severity: NoticeSeverity) -> u64 {
@@ -245,7 +261,11 @@ impl Store {
     }
 
     pub fn clear_notice_if_revision(&mut self, revision: u64) {
-        if self.notice.as_ref().is_some_and(|(_, _, current)| *current == revision) {
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, _, current)| *current == revision)
+        {
             self.notice = None;
         }
     }
@@ -260,19 +280,31 @@ impl Store {
                     a.status = status;
                 }
             }
-            Event::Headers { account, folder, rows } => {
+            Event::Headers {
+                account,
+                folder,
+                rows,
+            } => {
                 for row in rows {
                     self.upsert(account, folder, row);
                 }
             }
-            Event::Flags { account, folder, updates } => {
+            Event::Flags {
+                account,
+                folder,
+                updates,
+            } => {
                 for (uid, unread) in updates {
                     if let Some(&i) = self.index.get(&(account, folder, uid)) {
                         self.mails[i].unread = unread;
                     }
                 }
             }
-            Event::Removed { account, folder, uids } => {
+            Event::Removed {
+                account,
+                folder,
+                uids,
+            } => {
                 for uid in uids {
                     if let Some(&i) = self.index.get(&(account, folder, uid)) {
                         self.remove_payload(i);
@@ -289,24 +321,45 @@ impl Store {
                         m.body_cache_stamp = 0;
                     }
                 }
-                self.index.retain(|&(a, f, _), _| !(a == account && f == folder));
+                self.index
+                    .retain(|&(a, f, _), _| !(a == account && f == folder));
             }
-            Event::Restore { account, folder, uid } => {
+            Event::Restore {
+                account,
+                folder,
+                uid,
+            } => {
                 if let Some(&i) = self.index.get(&(account, folder, uid)) {
                     self.mails[i].removed = false;
                 }
             }
-            Event::Body { account, folder, uid, result } => {
+            Event::Body {
+                account,
+                folder,
+                uid,
+                result,
+            } => {
                 if let Some(&i) = self.index.get(&(account, folder, uid)) {
                     match result {
-                        Ok(BodyData { content_type, text, preview, attachments, references }) => {
+                        Ok(BodyData {
+                            content_type,
+                            text,
+                            source,
+                            preview,
+                            attachments,
+                            references,
+                        }) => {
                             self.body_cache_clock = self.body_cache_clock.wrapping_add(1);
                             let stamp = self.body_cache_clock;
                             let m = &mut self.mails[i];
                             if !preview.is_empty() {
                                 m.preview = preview;
                             }
-                            m.body = BodyState::Loaded { content_type, text };
+                            m.body = BodyState::Loaded {
+                                content_type,
+                                text,
+                                source,
+                            };
                             m.attachments = attachments;
                             m.references = references;
                             m.body_cache_stamp = stamp;
@@ -397,7 +450,8 @@ impl Store {
         self.index.clear();
         for (index, mail) in self.mails.iter().enumerate() {
             if mail.uid != 0 {
-                self.index.insert((mail.account, mail.folder, mail.uid), index);
+                self.index
+                    .insert((mail.account, mail.folder, mail.uid), index);
             }
         }
         Some(remap)
@@ -436,8 +490,9 @@ impl Store {
         self.mails
             .iter()
             .filter_map(|mail| match &mail.body {
-                BodyState::Loaded { text, .. } => Some(
+                BodyState::Loaded { text, source, .. } => Some(
                     text.len()
+                        + source.len()
                         + mail
                             .attachments
                             .iter()
@@ -477,6 +532,7 @@ mod tests {
         BodyData {
             content_type: MailContentType::PlainText,
             text: Arc::from(text),
+            source: Arc::from(&b""[..]),
             preview: String::new(),
             attachments: Vec::new(),
             references: Vec::new(),
@@ -503,9 +559,14 @@ mod tests {
         let mut store = store_with_idle_account();
         let revision = store.set_notice("Message sent successfully.", NoticeSeverity::Info);
 
-        store.apply(Event::Status { account: 0, status: SyncStatus::Idle { at: 1 } });
+        store.apply(Event::Status {
+            account: 0,
+            status: SyncStatus::Idle { at: 1 },
+        });
 
-        assert!(matches!(store.summary(), Summary::Notice(message) if message == "Message sent successfully."));
+        assert!(
+            matches!(store.summary(), Summary::Notice(message) if message == "Message sent successfully.")
+        );
         store.clear_notice_if_revision(revision);
         assert!(matches!(store.summary(), Summary::Synced));
     }
@@ -514,7 +575,10 @@ mod tests {
     fn stale_notice_timer_cannot_clear_a_newer_error() {
         let mut store = store_with_idle_account();
         let old_revision = store.set_notice("Message sent successfully.", NoticeSeverity::Info);
-        store.set_notice("Sent, but could not save to Sent folder.", NoticeSeverity::Error);
+        store.set_notice(
+            "Sent, but could not save to Sent folder.",
+            NoticeSeverity::Error,
+        );
 
         store.clear_notice_if_revision(old_revision);
 

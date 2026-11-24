@@ -7,10 +7,10 @@
 use std::{collections::HashSet, time::Duration};
 
 use lettre::{
+    AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
     address::{Address, Envelope},
     message::Mailboxes,
-    transport::smtp::authentication::{Credentials, Mechanism, DEFAULT_MECHANISMS},
-    AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
+    transport::smtp::authentication::{Credentials, DEFAULT_MECHANISMS, Mechanism},
 };
 
 use super::config::AccountConfig;
@@ -30,7 +30,11 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 /// (e.g. `mail.example.com` or `smtp.example.com`), falls back to using the
 /// IMAP host directly rather than prepending `smtp.`.
 pub(super) fn resolve_smtp(cfg: &AccountConfig) -> Option<(String, u16)> {
-    let port = if cfg.smtp_port == 0 { 587 } else { cfg.smtp_port };
+    let port = if cfg.smtp_port == 0 {
+        587
+    } else {
+        cfg.smtp_port
+    };
     if !cfg.smtp_host.trim().is_empty() {
         return Some((cfg.smtp_host.trim().to_string(), port));
     }
@@ -131,11 +135,7 @@ fn is_structured_header(name: &str) -> bool {
 ///
 /// - Recipients come from To/Cc/Bcc (header block only); Bcc is stripped before sending.
 /// - Port 465 uses implicit TLS, every other port uses STARTTLS.
-pub async fn send_email(
-    cfg: &AccountConfig,
-    password: &str,
-    raw: &str,
-) -> Result<(), String> {
+pub async fn send_email(cfg: &AccountConfig, password: &str, raw: &str) -> Result<(), String> {
     let (smtp_host, smtp_port) = resolve_smtp(cfg).ok_or_else(|| {
         "No SMTP server known for this account. Set \"smtp_host\" and \"smtp_port\" for it in PhotonMail/accounts.json"
             .to_string()
@@ -252,14 +252,10 @@ mod tests {
 
     #[test]
     fn recipient_deduplication_removes_non_adjacent_duplicates() {
-        let recipients = [
-            "alice@example.com",
-            "bob@example.com",
-            "alice@example.com",
-        ]
-        .into_iter()
-        .map(|address| address.parse::<Address>().expect("valid address"))
-        .collect();
+        let recipients = ["alice@example.com", "bob@example.com", "alice@example.com"]
+            .into_iter()
+            .map(|address| address.parse::<Address>().expect("valid address"))
+            .collect();
         let unique = deduplicate_recipients(recipients);
         assert_eq!(unique.len(), 2);
         assert_eq!(unique[0].to_string(), "alice@example.com");

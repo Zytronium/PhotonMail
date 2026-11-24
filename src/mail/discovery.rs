@@ -10,11 +10,7 @@
 use std::thread;
 use std::time::Duration;
 
-use hickory_resolver::{
-    config::ResolverOpts,
-    proto::rr::RecordType,
-    TokioResolver,
-};
+use hickory_resolver::{TokioResolver, config::ResolverOpts, proto::rr::RecordType};
 use rand::Rng;
 
 /// Discovered IMAP and SMTP server settings.
@@ -80,7 +76,11 @@ pub async fn discover_async(email: &str) -> DiscoveryResult {
 fn build_resolver() -> Option<TokioResolver> {
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(5);
-    TokioResolver::builder_tokio().ok()?.with_options(opts).build().into()
+    TokioResolver::builder_tokio()
+        .ok()?
+        .with_options(opts)
+        .build()
+        .into()
 }
 
 // ─── DNS SRV Records (RFC 6186) ───────────────────────────────────────────────
@@ -99,7 +99,9 @@ async fn lookup_srv_records(domain: &str) -> Option<DiscoveredSettings> {
         Some(settings) => settings,
         None => lookup_srv_service(&resolver, &format!("_imap._tcp.{domain}"), 143).await?,
     };
-    let smtp = match lookup_srv_service(&resolver, &format!("_submissions._tcp.{domain}"), 465).await {
+    let smtp = match lookup_srv_service(&resolver, &format!("_submissions._tcp.{domain}"), 465)
+        .await
+    {
         Some(settings) => settings,
         None => lookup_srv_service(&resolver, &format!("_submission._tcp.{domain}"), 587).await?,
     };
@@ -112,7 +114,11 @@ async fn lookup_srv_records(domain: &str) -> Option<DiscoveredSettings> {
     })
 }
 
-async fn lookup_srv_service(resolver: &TokioResolver, query: &str, expected_port: u16) -> Option<SrvTarget> {
+async fn lookup_srv_service(
+    resolver: &TokioResolver,
+    query: &str,
+    expected_port: u16,
+) -> Option<SrvTarget> {
     let response = resolver.lookup(query, RecordType::SRV).await.ok()?;
     let targets: Vec<SrvTarget> = response
         .record_iter()
@@ -136,19 +142,31 @@ async fn lookup_srv_service(resolver: &TokioResolver, query: &str, expected_port
 
 fn choose_srv_target(records: &[SrvTarget]) -> Option<SrvTarget> {
     let priority = records.iter().map(|record| record.priority).min()?;
-    let eligible: Vec<&SrvTarget> = records.iter().filter(|record| record.priority == priority).collect();
+    let eligible: Vec<&SrvTarget> = records
+        .iter()
+        .filter(|record| record.priority == priority)
+        .collect();
     let total_weight: u64 = eligible.iter().map(|record| u64::from(record.weight)).sum();
-    let choices = if total_weight > 0 { total_weight } else { eligible.len() as u64 };
+    let choices = if total_weight > 0 {
+        total_weight
+    } else {
+        eligible.len() as u64
+    };
     let draw = rand::rng().random_range(0..choices);
     select_srv_target(records, draw)
 }
 
 fn select_srv_target(records: &[SrvTarget], draw: u64) -> Option<SrvTarget> {
     let priority = records.iter().map(|record| record.priority).min()?;
-    let eligible: Vec<&SrvTarget> = records.iter().filter(|record| record.priority == priority).collect();
+    let eligible: Vec<&SrvTarget> = records
+        .iter()
+        .filter(|record| record.priority == priority)
+        .collect();
     let total_weight: u64 = eligible.iter().map(|record| u64::from(record.weight)).sum();
     if total_weight == 0 {
-        return eligible.get((draw % eligible.len() as u64) as usize).map(|record| (*record).clone());
+        return eligible
+            .get((draw % eligible.len() as u64) as usize)
+            .map(|record| (*record).clone());
     }
 
     let mut slot = draw % total_weight;
@@ -241,12 +259,18 @@ fn parse_autoconfig_xml(body: &str, domain: &str) -> Option<DiscoveredSettings> 
     let imap = provider
         .children()
         .filter(|node| node.has_tag_name("incomingServer"))
-        .filter(|node| node.attribute("type").is_some_and(|kind| kind.eq_ignore_ascii_case("imap")))
+        .filter(|node| {
+            node.attribute("type")
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("imap"))
+        })
         .find_map(|node| parse_autoconfig_server(node, false))?;
     let smtp = provider
         .children()
         .filter(|node| node.has_tag_name("outgoingServer"))
-        .filter(|node| node.attribute("type").is_some_and(|kind| kind.eq_ignore_ascii_case("smtp")))
+        .filter(|node| {
+            node.attribute("type")
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("smtp"))
+        })
         .find_map(|node| parse_autoconfig_server(node, true))?;
 
     Some(DiscoveredSettings {
@@ -294,7 +318,9 @@ fn valid_hostname(host: &str) -> bool {
             && label.len() <= 63
             && !label.starts_with('-')
             && !label.ends_with('-')
-            && label.chars().all(|character| character.is_ascii_alphanumeric() || character == '-')
+            && label
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '-')
     })
 }
 
@@ -317,19 +343,28 @@ pub fn discover_in_background(email: String) -> async_channel::Receiver<Discover
     let spawn_result = thread::Builder::new()
         .name("mail-server-discovery".to_string())
         .spawn(move || {
-            let result = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            let result = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
                 Ok(runtime) => runtime.block_on(async {
-                    match tokio::time::timeout(Duration::from_secs(40), discover_async(&email)).await {
+                    match tokio::time::timeout(Duration::from_secs(40), discover_async(&email))
+                        .await
+                    {
                         Ok(result) => result,
                         Err(_) => DiscoveryResult::Failed("Server discovery timed out".to_string()),
                     }
                 }),
-                Err(error) => DiscoveryResult::Failed(format!("Could not start discovery: {error}")),
+                Err(error) => {
+                    DiscoveryResult::Failed(format!("Could not start discovery: {error}"))
+                }
             };
             let _ = worker_tx.send_blocking(result);
         });
     if let Err(error) = spawn_result {
-        let _ = tx.send_blocking(DiscoveryResult::Failed(format!("Could not start discovery: {error}")));
+        let _ = tx.send_blocking(DiscoveryResult::Failed(format!(
+            "Could not start discovery: {error}"
+        )));
     }
     rx
 }
@@ -344,20 +379,43 @@ mod tests {
             .recv_blocking()
             .expect("discovery worker should return a result");
 
-        assert!(matches!(result, DiscoveryResult::Failed(message) if message == "Invalid email address"));
+        assert!(
+            matches!(result, DiscoveryResult::Failed(message) if message == "Invalid email address")
+        );
     }
 
     #[test]
     fn srv_selection_obeys_priority_and_weight() {
         let records = [
-            SrvTarget { priority: 10, weight: 1, port: 993, host: "first.test".to_string() },
-            SrvTarget { priority: 10, weight: 3, port: 993, host: "weighted.test".to_string() },
-            SrvTarget { priority: 20, weight: 100, port: 993, host: "fallback.test".to_string() },
+            SrvTarget {
+                priority: 10,
+                weight: 1,
+                port: 993,
+                host: "first.test".to_string(),
+            },
+            SrvTarget {
+                priority: 10,
+                weight: 3,
+                port: 993,
+                host: "weighted.test".to_string(),
+            },
+            SrvTarget {
+                priority: 20,
+                weight: 100,
+                port: 993,
+                host: "fallback.test".to_string(),
+            },
         ];
 
         assert_eq!(select_srv_target(&records, 0).unwrap().host, "first.test");
-        assert_eq!(select_srv_target(&records, 1).unwrap().host, "weighted.test");
-        assert_eq!(select_srv_target(&records, 3).unwrap().host, "weighted.test");
+        assert_eq!(
+            select_srv_target(&records, 1).unwrap().host,
+            "weighted.test"
+        );
+        assert_eq!(
+            select_srv_target(&records, 3).unwrap().host,
+            "weighted.test"
+        );
     }
 
     #[test]
