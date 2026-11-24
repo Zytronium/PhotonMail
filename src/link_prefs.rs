@@ -1,39 +1,38 @@
 //! Link click preference management.
 //!
-//! Tracks "do not show again" preferences for external link clicks.
-//! Currently stores preferences in memory for the session only.
-//! Designed to be extended later with file-based persistence (e.g., JSON config).
+//! Persists the user's explicit choice to bypass external-link confirmations.
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    fs,
+    io,
+    path::{Path, PathBuf},
+};
 
-/// Where preferences would be persisted between sessions.
-/// Not used yet — reserved for future file-based storage.
-pub const PREFS_PATH: &str = "~/.config/PhotonMail/link_prefs.json";
+use serde::{Deserialize, Serialize};
 
-/// Session-scoped link click preferences.
-///
-/// Stores which senders and whether globally the user has chosen
-/// to skip the confirmation dialog for external links.
-///
-/// Future: serialize/deserialize from `prefs_path()` on app start/exit.
-#[derive(Clone, Default)]
+/// Persisted preference for whether external links skip confirmation.
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct LinkPrefs {
-    /// Sender email addresses that should skip the confirmation dialog.
+    /// Sender addresses for which the user chose to skip link confirmations.
     pub trusted_senders: HashSet<String>,
     /// If true, never show the confirmation dialog for any sender.
     pub always_open: bool,
 }
 
 impl LinkPrefs {
-    /// Check whether the confirmation dialog should be shown for a given sender.
-    /// Returns `true` if we should skip the dialog and open directly.
+    /// Check whether the confirmation dialog should be shown.
     pub fn should_skip(&self, sender_email: &str) -> bool {
-        self.always_open || self.trusted_senders.contains(sender_email)
+        self.always_open || self.trusted_senders.contains(&normalize_sender(sender_email))
     }
 
-    /// Mark a sender as trusted (skip dialog for this sender).
+    /// Remember the sender-specific choice made in the confirmation dialog.
     pub fn trust_sender(&mut self, sender_email: &str) {
-        self.trusted_senders.insert(sender_email.to_string());
+        let sender = normalize_sender(sender_email);
+        if !sender.is_empty() {
+            self.trusted_senders.insert(sender);
+        }
     }
 
     /// Mark that the user never wants to see the dialog again.
@@ -42,18 +41,101 @@ impl LinkPrefs {
     }
 
     /// Save preferences to disk for future sessions.
-    /// Currently a no-op — placeholder for future persistence.
     pub fn save_to_disk(&self) {
-        // TODO: serialize self to PREFS_PATH as JSON
-        // For now, preferences are session-only.
-        let _ = PREFS_PATH;
+        if let Some(path) = prefs_path()
+            && let Err(error) = self.save_to_path(&path)
+        {
+            eprintln!("Could not save link preferences: {error}");
+        }
     }
 
     /// Load preferences from disk.
-    /// Currently returns a fresh default — placeholder for future persistence.
     pub fn load_from_disk() -> Self {
-        // TODO: deserialize from prefs_path()
-        // For now, start with empty preferences each session.
-        Self::default()
+        prefs_path().map_or_else(Self::default, |path| Self::load_from_path(&path))
+    }
+
+    fn load_from_path(path: &Path) -> Self {
+        fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_to_path(&self, path: &Path) -> io::Result<()> {
+        if path.exists() {
+            let existing = fs::read(path)?;
+            if serde_json::from_slice::<Self>(&existing).is_err() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "existing link preferences are invalid; refusing to overwrite them"));
+            }
+        }
+
+        let parent = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "link preferences path has no parent"))?;
+        fs::create_dir_all(parent)?;
+        let contents = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        let temporary = path.with_file_name(format!("{file_name}.tmp"));
+        fs::write(&temporary, contents)?;
+        fs::rename(temporary, path)
+    }
+}
+
+fn prefs_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|directory| directory.join("PhotonMail").join("link_prefs.json"))
+}
+
+fn normalize_sender(sender_email: &str) -> String {
+    sender_email.trim().to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn link_confirmation_preference_persists_between_loads() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("photon-mail-link-prefs-{unique}"));
+        let path = directory.join("link_prefs.json");
+        let mut prefs = LinkPrefs::default();
+        prefs.set_always_open();
+        prefs.save_to_path(&path).unwrap();
+
+        assert!(LinkPrefs::load_from_path(&path).should_skip("person@example.com"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn sender_preference_is_persisted_and_scoped_case_insensitively() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("photon-mail-link-prefs-{unique}"));
+        let path = directory.join("link_prefs.json");
+        let mut prefs = LinkPrefs::default();
+        prefs.trust_sender(" Person@Example.com ");
+        prefs.save_to_path(&path).unwrap();
+
+        let loaded = LinkPrefs::load_from_path(&path);
+        assert!(loaded.should_skip("person@example.com"));
+        assert!(!loaded.should_skip("someone-else@example.com"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn invalid_existing_preferences_are_not_overwritten() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("photon-mail-link-prefs-{unique}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("link_prefs.json");
+        fs::write(&path, b"invalid").unwrap();
+
+        let result = LinkPrefs {
+            always_open: true,
+            ..LinkPrefs::default()
+        }
+        .save_to_path(&path);
+
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&path).unwrap(), b"invalid");
+        fs::remove_dir_all(directory).unwrap();
     }
 }

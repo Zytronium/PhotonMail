@@ -2554,7 +2554,7 @@ fn split_draft_forwarded_html(html: &str) -> Option<(String, String)> {
     let user_html = html[..blockquote_pos].trim().to_string();
 
     // The forwarded content is the <blockquote> and everything after it
-    let forwarded_html = html[blockquote_pos..].to_string();
+    let forwarded_html = crate::html_viewer::sanitize_forwarded_html(&html[blockquote_pos..]);
 
     Some((user_html, forwarded_html))
 }

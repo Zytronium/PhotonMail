@@ -565,9 +565,10 @@ fn build_forward_body_html(html: &str) -> String {
     if html.trim().is_empty() {
         String::new()
     } else {
+        let safe_html = crate::html_viewer::sanitize_forwarded_html(html);
         format!(
             "<p>--- Forwarded message ---</p><blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex\">{}</blockquote>",
-            html
+            safe_html
         )
     }
 }
