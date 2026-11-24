@@ -75,8 +75,11 @@ pub struct ComposePre {
     pub from_account: usize,
     /// Original message's Message-ID (for In-Reply-To/References headers).
     pub original_message_id: String,
-    /// Original message's In-Reply-To (for building References chain).
+    /// Original message's In-Reply-To (space-separated ids, no angle brackets).
     pub original_in_reply_to: String,
+    /// The original's ancestors for the References header: its own References chain (or its
+    /// In-Reply-To when it has none), space-separated, no angle brackets, oldest first.
+    pub original_references: String,
 }
 
 pub fn use_app_state() -> AppState {
@@ -144,8 +147,7 @@ fn start_event_pump(app: AppState) {
                 let pin = app.draft_pin.read().clone();
                 if let Some((key, _)) = pin {
                     let in_compose = matches!(*app.view.read(), View::Compose);
-                    let current = *app.draft_mail.read();
-                    if in_compose && current.map_or(true, |(a, _, _)| a == *account) {
+                    if in_compose {
                         app.draft_pin.set(Some((key, Some(*uid))));
                         app.draft_mail.set(Some((*account, crate::mail::DRAFTS, *uid)));
                     }
@@ -387,30 +389,34 @@ impl AppState {
         self.send(account, WorkerCmd::AppendDraft { raw });
     }
 
-    /// Update an existing draft on the server (delete old, append new).
+    /// Update an existing draft on the server (append the new version, then delete the old).
     pub fn update_draft(&self, account: usize, uid: u32, raw: String) {
         self.send(account, WorkerCmd::UpdateDraft { uid, raw });
     }
 
-    /// Move a draft to a different account: delete from old account, append to new account.
+    /// Delete a draft from an account's Drafts folder.
+    pub fn delete_draft(&self, account: usize, uid: u32) {
+        self.send(account, WorkerCmd::DeleteDraft { uid });
+    }
+
+    /// Move a draft to a different account: append the new version to the new account and
+    /// delete the old one from the old account.
     pub fn move_draft_to_account(&self, old_account: usize, uid: u32, new_account: usize, raw: String) {
-        // Delete the old draft
-        self.send(old_account, WorkerCmd::UpdateDraft { uid, raw: String::new() });
-        // Append the new draft to the new account
         self.send(new_account, WorkerCmd::AppendDraft { raw });
+        self.delete_draft(old_account, uid);
     }
 
-    /// Update a draft move: delete from old account, append to new account.
-    /// (Called from compose when switching accounts on an existing draft before save.)
+    /// Switching the sender account of an opened draft: remove the old copy from the account
+    /// being left. The next save then creates the draft in the new account.
     pub fn update_draft_move(&self, old_account: usize, uid: u32, _new_account: usize) {
-        // We just need to signal that the draft should be moved.
-        // The actual move happens when the draft is saved.
-        self.send(old_account, WorkerCmd::UpdateDraft { uid, raw: String::new() });
+        self.delete_draft(old_account, uid);
     }
 
-    /// Send an email via SMTP. `raw` is the RFC-2822 message.
-    pub fn send_email(&self, account: usize, raw: String) {
-        self.send(account, WorkerCmd::SendEmail { raw });
+    /// Send an email via SMTP. `raw` is the RFC-2822 message. `draft_uid` is the UID of the
+    /// draft (in the sending account's Drafts) this message was written from, if any; the
+    /// worker deletes it once the message has gone out.
+    pub fn send_email(&self, account: usize, raw: String, draft_uid: Option<u32>) {
+        self.send(account, WorkerCmd::SendEmail { raw, draft_uid });
     }
 
     /// Update an account's persisted config (e.g. SMTP settings) and save to disk.

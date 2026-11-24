@@ -242,6 +242,24 @@ fn lossy(bytes: &Option<Cow<'_, [u8]>>) -> String {
         .unwrap_or_default()
 }
 
+/// Bare `user@host` addresses from an ENVELOPE address list. Entries without both a mailbox
+/// and a host are skipped (they are RFC 3501 group start/end markers).
+macro_rules! addr_emails {
+    ($list:expr) => {{
+        let mut out: Vec<String> = Vec::new();
+        if let Some(list) = $list {
+            for a in list {
+                let mailbox = lossy(&a.mailbox);
+                let host = lossy(&a.host);
+                if !mailbox.is_empty() && !host.is_empty() {
+                    out.push(format!("{mailbox}@{host}"));
+                }
+            }
+        }
+        out
+    }};
+}
+
 fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
     let uid = f.uid?;
     let env = f.envelope();
@@ -277,15 +295,27 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
         from = format!("To: {from}");
     }
 
-    // Extract Message-ID and In-Reply-To from the ENVELOPE (used for reply threading)
+    // Message-ID and In-Reply-To for reply threading. The ENVELOPE returns them exactly as
+    // written in the header, i.e. with the angle brackets; we store them without.
     let message_id = env
         .and_then(|e| e.message_id.as_deref())
         .map(|m| String::from_utf8_lossy(m).into_owned())
+        .and_then(|m| parse::message_ids(&m).into_iter().next())
         .unwrap_or_default();
     let in_reply_to = env
         .and_then(|e| e.in_reply_to.as_deref())
-        .map(|m| String::from_utf8_lossy(m).into_owned())
+        .map(|m| parse::message_ids(&String::from_utf8_lossy(m)).join(" "))
         .unwrap_or_default();
+
+    // Recipients (for Reply All and for reopening drafts) and Reply-To.
+    let to_emails = addr_emails!(env.and_then(|e| e.to.as_ref()));
+    let cc_emails = addr_emails!(env.and_then(|e| e.cc.as_ref()));
+    let bcc_emails = addr_emails!(env.and_then(|e| e.bcc.as_ref()));
+    let reply_to = if sent_like {
+        String::new()
+    } else {
+        addr_emails!(env.and_then(|e| e.reply_to.as_ref())).join(", ")
+    };
 
     Some(HeaderRow {
         uid,
@@ -297,6 +327,10 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
         size: f.size.unwrap_or(0),
         message_id,
         in_reply_to,
+        to_emails,
+        cc_emails,
+        bcc_emails,
+        reply_to,
     })
 }
 
@@ -563,13 +597,41 @@ impl Worker {
                 }
                 Ok(())
             }
-            WorkerCmd::SendEmail { raw } => {
+            WorkerCmd::DeleteDraft { uid } => {
+                self.delete_message(DRAFTS, uid).await?;
+                self.push_sync_front(DRAFTS);
+                Ok(())
+            }
+            WorkerCmd::UpdateConfig { cfg } => {
+                // IMAP connection settings changed: drop the session so the run loop reconnects
+                // with the new values. Anything else (SMTP host/port, name, …) just applies.
+                let reconnect = cfg.host != self.cfg.host
+                    || cfg.port != self.cfg.port
+                    || cfg.username != self.cfg.username;
+                self.cfg = cfg;
+                if reconnect {
+                    self.session = None;
+                    self.selected = None;
+                }
+                Ok(())
+            }
+            WorkerCmd::SendEmail { raw, draft_uid } => {
                 let result = super::smtp::send_email(&self.cfg, &self.password, &raw).await;
                 match result {
                     Ok(()) => {
                         self.emit(Event::EmailSent { account: self.index });
-                        // Gmail files SMTP-sent mail into Sent itself; everyone else needs an APPEND.
-                        if !self.cfg.smtp_host.to_lowercase().contains("gmail") {
+                        // The message left; the draft it was written from is now obsolete.
+                        if let Some(uid) = draft_uid {
+                            match self.delete_message(DRAFTS, uid).await {
+                                Ok(()) => self.push_sync_front(DRAFTS),
+                                Err(e) => self.emit(Event::Notice {
+                                    text: format!("Sent, but could not remove the draft: {e}"),
+                                }),
+                            }
+                        }
+                        // Gmail files mail sent through its own SMTP server into Sent by itself;
+                        // every other server needs an APPEND.
+                        if !self.smtp_is_gmail() {
                             if let Err(e) = self.append_sent(&raw).await {
                                 self.emit(Event::Notice {
                                     text: format!("Sent, but could not save to Sent folder: {e}"),
@@ -578,12 +640,32 @@ impl Worker {
                         }
                     }
                     Err(e) => {
-                        self.emit(Event::EmailSendFailed { account: self.index, error: e });
+                        // Don't let the message disappear with the closed compose pane:
+                        // keep a copy in Drafts so the user can fix the problem and resend.
+                        let saved = match self.append_draft(raw).await {
+                            Ok(Some(_)) => " A copy was saved to Drafts.",
+                            _ => " It could not be saved to Drafts either.",
+                        };
+                        self.emit(Event::EmailSendFailed {
+                            account: self.index,
+                            error: format!("{}.{saved}", e.trim_end_matches('.')),
+                        });
                     }
                 }
                 Ok(())
             }
         }
+    }
+
+    /// True when outgoing mail goes through Google's SMTP servers (which save their own Sent copy).
+    fn smtp_is_gmail(&self) -> bool {
+        super::smtp::resolve_smtp(&self.cfg).is_some_and(|(host, _)| {
+            let host = host.to_lowercase();
+            host == "gmail.com"
+                || host.ends_with(".gmail.com")
+                || host == "googlemail.com"
+                || host.ends_with(".googlemail.com")
+        })
     }
 
     /// Save a copy of a just-sent message in the Sent folder (marked Seen).
@@ -626,29 +708,42 @@ impl Worker {
         Ok(new_uid)
     }
 
-    /// Update an existing draft: delete the old one and append the new content.
-    /// Returns the UID of the new draft.
+    /// Update an existing draft: append the new content first, and only then delete the old
+    /// version, so a failed append can never lose the draft. Returns the UID of the new draft.
     async fn update_draft(&mut self, old_uid: u32, raw: String) -> Res<Option<u32>> {
-        if !self.ensure_selected(DRAFTS).await? {
-            return Ok(None);
+        let new_uid = self.append_draft(raw).await?;
+        if new_uid.is_some() {
+            if let Err(e) = self.delete_message(DRAFTS, old_uid).await {
+                // The new version is safely stored; at worst the old one lingers as a duplicate.
+                self.emit(Event::Notice {
+                    text: format!("Draft saved, but the previous version could not be removed: {e}"),
+                });
+            }
+        }
+        Ok(new_uid)
+    }
+
+    /// Delete one message from a folder: flag it \Deleted and expunge just that UID.
+    async fn delete_message(&mut self, folder: usize, uid: u32) -> Res<()> {
+        if !self.ensure_selected(folder).await? {
+            return Ok(());
         }
         let session = self.session.as_mut().ok_or_else(not_connected)?;
-        let uid_str = old_uid.to_string();
-        // Mark the old draft as deleted
+        let set = uid.to_string();
         io("STORE", async {
             session
-                .uid_store(&uid_str, "+FLAGS.SILENT (\\Deleted)")
+                .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
                 .await?
                 .try_collect::<Vec<Fetch>>()
                 .await
         })
             .await?;
         io("EXPUNGE", async {
-            session.uid_expunge(&uid_str).await?.try_collect::<Vec<u32>>().await
+            session.uid_expunge(&set).await?.try_collect::<Vec<u32>>().await
         })
             .await?;
-        // Append the new draft content
-        self.append_draft(raw).await
+        self.folders[folder].known.remove(&uid);
+        Ok(())
     }
 
     /// Fetch the highest UID in a folder by doing a UID SEARCH ALL.

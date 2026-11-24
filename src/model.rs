@@ -83,7 +83,13 @@ pub struct Mail {
     pub from_email: String,
     /// Recipient (populated for Sent/Drafts; empty for Inbox).
     pub to: String,
+    /// All To recipients, comma-separated bare addresses (empty for demo mail without any).
     pub to_email: String,
+    /// All Cc / Bcc recipients, comma-separated bare addresses.
+    pub cc_email: String,
+    pub bcc_email: String,
+    /// Reply-To addresses, comma-separated; empty when the sender set none.
+    pub reply_to: String,
     pub subject: String,
     pub preview: String,
     pub body: BodyState,
@@ -92,10 +98,13 @@ pub struct Mail {
     pub date: String,
     /// For sorting; higher = newer.
     pub ts: i64,
-    /// RFC 2822 Message-ID (without angle brackets). Used for In-Reply-To/References.
+    /// RFC 5322 Message-ID (without angle brackets). Used for In-Reply-To/References.
     pub message_id: String,
-    /// RFC 2822 In-Reply-To (without angle brackets). Used for building References chain.
+    /// RFC 5322 In-Reply-To: space-separated ids, without angle brackets.
     pub in_reply_to: String,
+    /// Ids from the References header (without angle brackets), oldest first. Known once the
+    /// body has been loaded.
+    pub references: Vec<String>,
     /// Tombstone: deleted or moved away. Kept so indices stay stable.
     pub removed: bool,
 }
@@ -158,6 +167,9 @@ impl Store {
                 from_email: m.from_email.to_string(),
                 to: m.to.to_string(),
                 to_email: m.to_email.to_string(),
+                cc_email: String::new(),
+                bcc_email: String::new(),
+                reply_to: String::new(),
                 subject: m.subject.to_string(),
                 preview: m.preview.to_string(),
                 body: BodyState::Loaded {
@@ -169,6 +181,7 @@ impl Store {
                 ts: m.ts as i64,
                 message_id: String::new(),
                 in_reply_to: String::new(),
+                references: Vec::new(),
                 removed: false,
             })
             .collect();
@@ -257,12 +270,13 @@ impl Store {
                 if let Some(&i) = self.index.get(&(account, folder, uid)) {
                     let m = &mut self.mails[i];
                     match result {
-                        Ok(BodyData { content_type, text, preview, attachments }) => {
+                        Ok(BodyData { content_type, text, preview, attachments, references }) => {
                             if !preview.is_empty() {
                                 m.preview = preview;
                             }
                             m.body = BodyState::Loaded { content_type, text };
                             m.attachments = attachments;
+                            m.references = references;
                         }
                         Err(e) => m.body = BodyState::Failed(e),
                     }
@@ -304,7 +318,10 @@ impl Store {
             from: row.from,
             from_email: row.from_email,
             to: String::new(),
-            to_email: String::new(),
+            to_email: row.to_emails.join(", "),
+            cc_email: row.cc_emails.join(", "),
+            bcc_email: row.bcc_emails.join(", "),
+            reply_to: row.reply_to,
             subject: row.subject,
             preview: String::new(),
             body: BodyState::NotLoaded,
@@ -313,6 +330,7 @@ impl Store {
             ts: row.ts,
             message_id: row.message_id,
             in_reply_to: row.in_reply_to,
+            references: Vec::new(),
             removed: false,
         });
         self.index.insert(key, self.mails.len() - 1);

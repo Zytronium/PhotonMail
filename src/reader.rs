@@ -180,7 +180,7 @@ impl Component for MailView {
                     // Reply button — look up body at click time so async-loaded content is available.
                     let mut s_reply = state;
                     let reply_mail_idx = i;
-                    let reply_to = m.from_email.clone();
+                    let reply_to = reply_recipient(&m);
                     let reply_subject = m.subject.clone();
                     let reply_from_name = orig_from_name.clone();
                     let reply_date = orig_date.clone();
@@ -209,6 +209,13 @@ impl Component for MailView {
                                         String::new()
                                     }
                                 };
+                                let reply_refs = s_reply
+                                    .store
+                                    .read()
+                                    .mails
+                                    .get(reply_mail_idx)
+                                    .map(references_chain)
+                                    .unwrap_or_default();
                                 s_reply.compose_pre.set(Some(ComposePre {
                                     to: reply_to.clone(),
                                     cc: String::new(),
@@ -219,6 +226,7 @@ impl Component for MailView {
                                     from_account: reply_account,
                                     original_message_id: reply_msg_id.clone(),
                                     original_in_reply_to: reply_in_reply.clone(),
+                                    original_references: reply_refs,
                                 }));
                                 *s_reply.compose_pre_gen.write() += 1;
                                 s_reply.draft_mail.set(None);
@@ -231,8 +239,8 @@ impl Component for MailView {
                     // Reply All button — look up body at click time.
                     let mut s_reply_all = state;
                     let reply_all_mail_idx = i;
-                    let reply_all_to = m.from_email.clone();
-                    let reply_all_cc = if m.to_email.is_empty() { String::new() } else { m.to_email.clone() };
+                    let reply_all_to = reply_recipient(&m);
+                    let reply_all_cc = reply_all_cc_list(&m, &account.addr, &reply_all_to);
                     let reply_all_subject = m.subject.clone();
                     let reply_all_from_name = orig_from_name.clone();
                     let reply_all_date = orig_date.clone();
@@ -261,6 +269,13 @@ impl Component for MailView {
                                         String::new()
                                     }
                                 };
+                                let reply_all_refs = s_reply_all
+                                    .store
+                                    .read()
+                                    .mails
+                                    .get(reply_all_mail_idx)
+                                    .map(references_chain)
+                                    .unwrap_or_default();
                                 s_reply_all.compose_pre.set(Some(ComposePre {
                                     to: reply_all_to.clone(),
                                     cc: reply_all_cc.clone(),
@@ -271,6 +286,7 @@ impl Component for MailView {
                                     from_account: reply_account,
                                     original_message_id: reply_all_msg_id.clone(),
                                     original_in_reply_to: reply_all_in_reply.clone(),
+                                    original_references: reply_all_refs,
                                 }));
                                 *s_reply_all.compose_pre_gen.write() += 1;
                                 s_reply_all.draft_mail.set(None);
@@ -320,6 +336,7 @@ impl Component for MailView {
                                     from_account: forward_account,
                                     original_message_id: String::new(),
                                     original_in_reply_to: String::new(),
+                                    original_references: String::new(),
                                 }));
                                 *s_forward.compose_pre_gen.write() += 1;
                                 s_forward.draft_mail.set(None);
@@ -1001,5 +1018,48 @@ impl Component for AttachmentImage {
 
         let handle = use_html(move || HtmlSource::html(html.clone()));
         HtmlViewer::new(handle).expanded()
+    }
+}
+
+/// Where a reply goes: the sender's Reply-To (RFC 5322 §3.6.2) when set, otherwise the sender.
+fn reply_recipient(m: &crate::model::Mail) -> String {
+    if m.reply_to.is_empty() {
+        m.from_email.clone()
+    } else {
+        m.reply_to.clone()
+    }
+}
+
+/// Cc list for "Reply all": every original To and Cc recipient except the person the reply is
+/// already addressed to, the user's own address, and duplicates.
+fn reply_all_cc_list(m: &crate::model::Mail, own_addr: &str, primary: &str) -> String {
+    let split = |list: &str| -> Vec<String> {
+        list.split(',')
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+            .collect()
+    };
+    let own = own_addr.trim().to_lowercase();
+    let mut skip: Vec<String> = split(primary).iter().map(|a| a.to_lowercase()).collect();
+    skip.push(own);
+    let mut out: Vec<String> = Vec::new();
+    for addr in split(&m.to_email).into_iter().chain(split(&m.cc_email)) {
+        let key = addr.to_lowercase();
+        if skip.contains(&key) {
+            continue;
+        }
+        skip.push(key);
+        out.push(addr);
+    }
+    out.join(", ")
+}
+
+/// The ancestors of `m` for a reply's References header: its own References chain, or its
+/// In-Reply-To when the message has none. Space-separated ids, oldest first.
+fn references_chain(m: &crate::model::Mail) -> String {
+    if !m.references.is_empty() {
+        m.references.join(" ")
+    } else {
+        m.in_reply_to.clone()
     }
 }

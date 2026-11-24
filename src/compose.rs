@@ -24,6 +24,68 @@ use crate::{
 struct ComposePreThreading {
     original_message_id: String,
     original_in_reply_to: String,
+    original_references: String,
+}
+
+/// A globally unique Message-ID (without angle brackets) in the sender's domain
+/// (RFC 5322 §3.6.4). Generated here, not at the SMTP layer, so the copy saved to Sent
+/// carries the same id as the message that was actually delivered.
+fn generate_message_id(from_addr: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let domain = from_addr
+        .rsplit('@')
+        .next()
+        .map(str::trim)
+        .filter(|d| !d.is_empty() && !d.contains(char::is_whitespace) && from_addr.contains('@'))
+        .unwrap_or("localhost.localdomain");
+    format!(
+        "{:x}.{:x}.{:x}@{}",
+        nanos,
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed),
+        domain
+    )
+}
+
+/// The References header value for a reply (RFC 5322 §3.6.4): the parent's ancestors followed
+/// by the parent itself. Very long chains keep the first id and the most recent ones, so the
+/// header stays far below the 998-character line limit.
+fn build_references(ancestors: &str, parent_id: &str) -> String {
+    let mut ids: Vec<String> = Vec::new();
+    for id in ancestors.split_whitespace().chain(std::iter::once(parent_id)) {
+        let id = id.trim_matches(|c| c == '<' || c == '>');
+        if id.is_empty() || ids.iter().any(|x| x == id) {
+            continue;
+        }
+        ids.push(id.to_string());
+    }
+    const MAX_IDS: usize = 20;
+    if ids.len() > MAX_IDS {
+        let tail = ids.split_off(ids.len() - (MAX_IDS - 1));
+        ids.truncate(1);
+        ids.extend(tail);
+    }
+    ids.iter().map(|i| format!("<{i}>")).collect::<Vec<_>>().join(" ")
+}
+
+/// The first embedded image whose file can no longer be read (moved, deleted, temp file
+/// cleaned up). Sending or saving without it would silently drop it from the message.
+fn missing_image(images: &[(char, String)]) -> Option<String> {
+    images
+        .iter()
+        .find(|(_, path)| std::fs::File::open(path).is_err())
+        .map(|(_, path)| {
+            std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path.as_str())
+                .to_string()
+        })
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
@@ -102,6 +164,7 @@ impl Component for ComposePane {
         let threading = compose_pre.as_ref().map(|p| ComposePreThreading {
             original_message_id: p.original_message_id.clone(),
             original_in_reply_to: p.original_in_reply_to.clone(),
+            original_references: p.original_references.clone(),
         });
 
         // Extract forwarded HTML body so the send closure can append it and render it in the preview.
@@ -190,8 +253,8 @@ impl Component for ComposePane {
                     };
                     (
                         m.to_email.clone(),
-                        String::new(),
-                        String::new(),
+                        m.cc_email.clone(),
+                        m.bcc_email.clone(),
                         m.subject.clone(),
                         body_text,
                         uid,
@@ -268,7 +331,7 @@ impl Component for ComposePane {
         }
 
         let show_cc = use_state(|| !draft_cc.is_empty());
-        let show_bcc = use_state(|| false);
+        let show_bcc = use_state(|| !draft_bcc.is_empty());
 
 
         // Account selector: which account to send from.
@@ -369,6 +432,12 @@ impl Component for ComposePane {
                 let all_formats = formats.read().clone();
                 let all_links = links.read().clone();
                 let all_images = images.read().clone();
+                if let Some(name) = missing_image(&all_images) {
+                    s.store.write().notice = Some(format!(
+                        "Couldn't read the image \"{name}\" (moved or deleted?). Remove it from the message and try again."
+                    ));
+                    return;
+                }
                 let account = *selected_account.read();
                 let forwarded_html_val = forwarded_html.read().clone();
                 let forwarded_plain_val = forwarded_plain.read().clone();
@@ -423,16 +492,29 @@ impl Component for ComposePane {
                 }
                 raw.push_str(&format!("Subject: {}\r\n", subject_val));
                 raw.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
+                // Our own Message-ID, so the Sent copy matches what recipients receive
+                let from_bare = s
+                    .store
+                    .read()
+                    .accounts
+                    .get(account)
+                    .map(|a| a.addr.clone())
+                    .unwrap_or_default();
+                raw.push_str(&format!("Message-ID: <{}>\r\n", generate_message_id(&from_bare)));
                 // Add In-Reply-To and References headers for reply threading
                 if let Some(ref thr) = threading {
                     if !thr.original_message_id.is_empty() {
                         raw.push_str(&format!("In-Reply-To: <{}>\r\n", thr.original_message_id));
-                        let mut refs = Vec::new();
-                        if !thr.original_in_reply_to.is_empty() {
-                            refs.push(format!("<{}>", thr.original_in_reply_to));
-                        }
-                        refs.push(format!("<{}>", thr.original_message_id));
-                        raw.push_str(&format!("References: {}\r\n", refs.join(" ")));
+                        // Fall back to the parent's In-Reply-To when its References are unknown
+                        let ancestors = if thr.original_references.is_empty() {
+                            thr.original_in_reply_to.as_str()
+                        } else {
+                            thr.original_references.as_str()
+                        };
+                        raw.push_str(&format!(
+                            "References: {}\r\n",
+                            build_references(ancestors, &thr.original_message_id)
+                        ));
                     }
                 }
                 raw.push_str("MIME-Version: 1.0\r\n");
@@ -507,8 +589,18 @@ impl Component for ComposePane {
                 // Closing boundary
                 raw.push_str(&format!("--{}--\r\n", boundary));
 
-                // Send the email via SMTP
-                s.send_email(account, raw);
+                // If this message was being edited as a draft, that draft is deleted once the
+                // send succeeds. (A draft in a different account is deleted right away; if the
+                // send then fails, the worker saves the message to Drafts again.)
+                let (same_account_draft, other_account_draft) = match *s.draft_mail.peek() {
+                    Some((da, _, uid)) if uid != 0 && da == account => (Some(uid), None),
+                    Some((da, _, uid)) if uid != 0 => (None, Some((da, uid))),
+                    _ => (None, None),
+                };
+                s.send_email(account, raw, same_account_draft);
+                if let Some((da, uid)) = other_account_draft {
+                    s.delete_draft(da, uid);
+                }
 
                 // Close the compose window
                 s.draft_mail.set(None);
@@ -545,6 +637,12 @@ impl Component for ComposePane {
                 let all_formats = formats.read().clone();
                 let all_links = links.read().clone();
                 let all_images = images.read().clone();
+                if let Some(name) = missing_image(&all_images) {
+                    s.store.write().notice = Some(format!(
+                        "Couldn't read the image \"{name}\" (moved or deleted?). Remove it from the message and try again."
+                    ));
+                    return;
+                }
                 let account = *selected_account.read();
                 let forwarded_html_val = forwarded_html.read().clone();
                 let forwarded_plain_val = forwarded_plain.read().clone();
@@ -602,12 +700,16 @@ impl Component for ComposePane {
                 if let Some(ref thr) = threading {
                     if !thr.original_message_id.is_empty() {
                         raw.push_str(&format!("In-Reply-To: <{}>\r\n", thr.original_message_id));
-                        let mut refs = Vec::new();
-                        if !thr.original_in_reply_to.is_empty() {
-                            refs.push(format!("<{}>", thr.original_in_reply_to));
-                        }
-                        refs.push(format!("<{}>", thr.original_message_id));
-                        raw.push_str(&format!("References: {}\r\n", refs.join(" ")));
+                        // Fall back to the parent's In-Reply-To when its References are unknown
+                        let ancestors = if thr.original_references.is_empty() {
+                            thr.original_in_reply_to.as_str()
+                        } else {
+                            thr.original_references.as_str()
+                        };
+                        raw.push_str(&format!(
+                            "References: {}\r\n",
+                            build_references(ancestors, &thr.original_message_id)
+                        ));
                     }
                 }
                 raw.push_str("MIME-Version: 1.0\r\n");
@@ -683,8 +785,10 @@ impl Component for ComposePane {
                 // Closing boundary
                 raw.push_str(&format!("--{}--\r\n", boundary));
 
-                // Check if we're updating an existing draft or creating a new one
-                if let Some((old_account, _folder, uid)) = draft_info {
+                // Check if we're updating an existing draft or creating a new one. Read the
+                // current value: the UID changes every time the draft is saved.
+                let draft_now = *s.draft_mail.peek();
+                if let Some((old_account, _folder, uid)) = draft_now {
                     if uid != 0 {
                         // If account changed, move the draft to the new account
                         if old_account != account {
@@ -728,6 +832,7 @@ impl Component for ComposePane {
             let mut s = state.clone();
             let mut sel = selected_account.clone();
             let mut show_menu = show_account_menu.clone();
+            let compose_key = self.compose_key.clone();
             EventHandler::new(move |(account_idx, _)| {
                 let old_account = *sel.read();
                 if old_account == account_idx {
@@ -735,12 +840,17 @@ impl Component for ComposePane {
                     return;
                 }
                 // If editing an existing draft and switching accounts, move the draft.
-                if let Some((old_acct, _folder, uid)) = draft_info {
+                let draft_now = *s.draft_mail.peek();
+                if let Some((old_acct, _folder, uid)) = draft_now {
                     if uid != 0 && old_acct == old_account {
-                        // Delete the old draft from the old account
+                        // Delete the old copy from the account being left
                         s.update_draft_move(old_acct, uid, account_idx);
-                        // Update the draft_mail to point to the new account
-                        s.draft_mail.set(Some((account_idx, crate::mail::DRAFTS, uid)));
+                        // The draft doesn't exist in the new account yet. Forget the old UID
+                        // (0 = not on the server) so a later save creates it instead of
+                        // touching an unrelated message that has this UID in the new account,
+                        // and keep this pane mounted.
+                        s.draft_pin.set(Some((compose_key.clone(), Some(0))));
+                        s.draft_mail.set(Some((account_idx, crate::mail::DRAFTS, 0)));
                     }
                 }
                 sel.set(account_idx);

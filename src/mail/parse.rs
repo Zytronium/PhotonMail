@@ -33,8 +33,10 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
             preview: make_preview(&text),
             text: Arc::from(text),
             attachments: Vec::new(),
+            references: Vec::new(),
         };
     };
+    let references = extract_references(raw);
 
     // Extract attachments with their binary data
     let attachments: Vec<AttachmentInfo> = msg
@@ -92,6 +94,7 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
             preview,
             text: Arc::from(html.as_ref()),
             attachments,
+            references,
         };
     }
 
@@ -101,7 +104,66 @@ pub fn parse_body(raw: &[u8]) -> BodyData {
         preview,
         text: Arc::from(text),
         attachments,
+        references,
     }
+}
+
+/// All `<id>` tokens in a Message-ID / In-Reply-To / References value, without the angle
+/// brackets. A bracket-less single token is accepted as-is (some broken mailers omit them).
+pub fn message_ids(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find('<') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('>') else { break };
+        let id = after[..end].trim();
+        if !id.is_empty() {
+            out.push(id.to_string());
+        }
+        rest = &after[end + 1..];
+    }
+    if out.is_empty() {
+        let t = value.trim();
+        if !t.is_empty() && !t.contains(char::is_whitespace) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// The ids in the message's `References` header (RFC 5322 §3.6.4), oldest first.
+/// Reads only the header block and unfolds continuation lines.
+fn extract_references(raw: &[u8]) -> Vec<String> {
+    let crlf = raw.windows(4).position(|w| w == b"\r\n\r\n");
+    let lf = raw.windows(2).position(|w| w == b"\n\n");
+    let end = match (crlf, lf) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => raw.len(),
+    };
+    let head = String::from_utf8_lossy(&raw[..end]);
+    let mut value = String::new();
+    let mut in_refs = false;
+    for line in head.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if in_refs {
+                value.push(' ');
+                value.push_str(line.trim());
+            }
+            continue;
+        }
+        in_refs = false;
+        if let Some((name, rest)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("references") {
+                in_refs = true;
+                value.push(' ');
+                value.push_str(rest.trim());
+            }
+        }
+    }
+    message_ids(&value)
 }
 
 fn make_preview(text: &str) -> String {

@@ -58,10 +58,17 @@ pub struct HeaderRow {
     /// INTERNALDATE as a unix timestamp.
     pub ts: i64,
     pub size: u32,
-    /// RFC 2822 Message-ID from the ENVELOPE (without angle brackets).
+    /// RFC 5322 Message-ID from the ENVELOPE, angle brackets removed.
     pub message_id: String,
-    /// RFC 2822 In-Reply-To from the ENVELOPE (without angle brackets).
+    /// RFC 5322 In-Reply-To from the ENVELOPE: space-separated ids, angle brackets removed.
     pub in_reply_to: String,
+    /// All To / Cc / Bcc addresses (bare `user@host`, group markers skipped).
+    pub to_emails: Vec<String>,
+    pub cc_emails: Vec<String>,
+    pub bcc_emails: Vec<String>,
+    /// Reply-To addresses, comma-separated. Empty when the header is absent, and always
+    /// empty in Sent/Drafts (where it would just point back at the user).
+    pub reply_to: String,
 }
 
 /// Metadata about a single email attachment.
@@ -86,6 +93,8 @@ pub struct BodyData {
     pub preview: String,
     /// Attachments found in the message.
     pub attachments: Vec<AttachmentInfo>,
+    /// Ids from the References header (angle brackets removed), oldest first.
+    pub references: Vec<String>,
 }
 
 /// Worker → UI.
@@ -126,10 +135,16 @@ pub enum WorkerCmd {
     MoveTo { folder: usize, uid: u32, to: usize },
     /// Append a new draft message to the Drafts folder on the server.
     AppendDraft { raw: String },
-    /// Update an existing draft: delete the old one (by UID) and append the new content.
+    /// Update an existing draft: append the new content, then delete the old one (by UID).
     UpdateDraft { uid: u32, raw: String },
-    /// Send an email via SMTP. `raw` is the RFC-2822 message.
-    SendEmail { raw: String },
+    /// Delete a draft from the Drafts folder (e.g. it moved to another account).
+    DeleteDraft { uid: u32 },
+    /// Send an email via SMTP. `raw` is the RFC-2822 message. If the message was being edited
+    /// as a draft, `draft_uid` is that draft's UID; it is deleted once the send succeeds.
+    /// If sending fails, a copy of the message is saved to Drafts so nothing is lost.
+    SendEmail { raw: String, draft_uid: Option<u32> },
+    /// Apply changed account settings (SMTP host/port, …) to this running worker.
+    UpdateConfig { cfg: AccountConfig },
 }
 
 /// UI → manager.

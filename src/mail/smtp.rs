@@ -26,7 +26,7 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 /// For self-hosted servers where the IMAP host already looks like an SMTP host
 /// (e.g. `mail.example.com` or `smtp.example.com`), falls back to using the
 /// IMAP host directly rather than prepending `smtp.`.
-fn resolve_smtp(cfg: &AccountConfig) -> Option<(String, u16)> {
+pub(super) fn resolve_smtp(cfg: &AccountConfig) -> Option<(String, u16)> {
     let port = if cfg.smtp_port == 0 { 587 } else { cfg.smtp_port };
     if !cfg.smtp_host.trim().is_empty() {
         return Some((cfg.smtp_host.trim().to_string(), port));

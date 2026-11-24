@@ -109,6 +109,11 @@ async fn manager(
                                 });
                             }
                         }
+                        // The running worker keeps its own copy of the config; without this the
+                        // new SMTP settings would only take effect after a restart.
+                        if let Some(worker) = workers.get(index) {
+                            let _ = worker.send(WorkerCmd::UpdateConfig { cfg });
+                        }
                     }
                 }
             }
