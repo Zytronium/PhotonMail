@@ -201,7 +201,7 @@ impl Component for MessageRow {
             let account = store.accounts[m.account].clone();
             (m, account)
         };
-        let selected = *state.selected.read() == i;
+        let selected = *state.selected.read() == Some(i);
         let unread = state.is_unread(i);
         let unified = state.account.read().is_none();
         let weight = if unread {

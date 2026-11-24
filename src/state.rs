@@ -22,7 +22,7 @@ pub enum View {
 pub struct AppState {
     pub account: State<Option<usize>>, // None = all accounts
     pub folder: State<usize>,
-    pub selected: State<usize>,
+    pub selected: State<Option<usize>>,
     pub store: State<Store>,        // accounts + message headers/bodies
     pub engine: State<Engine>,      // channel to the background IMAP workers
     pub expanded: State<Vec<bool>>, // per-account sidebar group (missing = open)
@@ -115,7 +115,7 @@ pub fn use_app_state() -> AppState {
     let app = AppState {
         account: use_state(|| None),
         folder: use_state(|| 0),
-        selected: use_state(|| 0),
+        selected: use_state(|| None),
         store,
         engine,
         expanded: use_state(Vec::new),
@@ -202,7 +202,7 @@ fn start_event_pump(app: AppState) {
             if let Some(remap) = remap {
                 let selected = *app.selected.read();
                 app.selected
-                    .set(remap.get(selected).copied().flatten().unwrap_or(0));
+                    .set(selected.and_then(|selected| remap.get(selected).copied().flatten()));
 
                 let preview = *app.attachment_preview_mail.read();
                 if let Some(preview) = preview {
@@ -286,8 +286,7 @@ impl AppState {
 
     /// The selected mail, if it's in the current view (respects search filter).
     pub fn open(&self) -> Option<usize> {
-        let sel = *self.selected.read();
-        self.filtered_visible().contains(&sel).then_some(sel)
+        visible_selection(*self.selected.read(), &self.filtered_visible())
     }
 
     pub fn is_unread(&self, i: usize) -> bool {
@@ -338,7 +337,7 @@ impl AppState {
     /// it isn't already cached.
     pub fn select(&mut self, i: usize) {
         self.view.set(View::Mail);
-        self.selected.set(i);
+        self.selected.set(Some(i));
 
         let (account, folder, uid, was_unread, needs_body) = {
             let store = self.store.read();
@@ -490,5 +489,25 @@ impl AppState {
         self.engine
             .peek()
             .send(crate::mail::Command::UpdateAccount { index, cfg });
+    }
+}
+
+fn visible_selection(selected: Option<usize>, visible: &[usize]) -> Option<usize> {
+    selected.filter(|selected| visible.contains(selected))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_selection;
+
+    #[test]
+    fn no_selection_does_not_open_first_visible_message() {
+        assert_eq!(visible_selection(None, &[0, 1]), None);
+    }
+
+    #[test]
+    fn selection_opens_only_when_message_is_visible() {
+        assert_eq!(visible_selection(Some(1), &[0, 1]), Some(1));
+        assert_eq!(visible_selection(Some(1), &[0]), None);
     }
 }

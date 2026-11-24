@@ -139,22 +139,22 @@ fn handle_message_list(
     }
 
     let current = *state.selected.read();
-    let idx = visible.iter().position(|&v| v == current);
-    let mut idx = idx.unwrap_or(0);
+    let selected_idx = visible.iter().position(|&v| Some(v) == current);
+    let mut idx = selected_idx.unwrap_or(0);
 
     // Check for character keys first (Gmail-style shortcuts)
     if let Key::Character(ch) = key {
         if !modifiers.shift() {
             match ch.as_str() {
                 "j" => {
-                    if idx < visible.len() - 1 {
+                    if selected_idx.is_some() && idx < visible.len() - 1 {
                         idx += 1;
                     }
                     state.select(visible[idx]);
                     return HandleResult::Consumed;
                 }
                 "k" => {
-                    if idx > 0 {
+                    if selected_idx.is_some() && idx > 0 {
                         idx -= 1;
                     }
                     state.select(visible[idx]);
@@ -203,14 +203,14 @@ fn handle_message_list(
     // Named keys
     match key {
         Key::Named(NamedKey::ArrowUp) => {
-            if idx > 0 {
+            if selected_idx.is_some() && idx > 0 {
                 idx -= 1;
             }
             state.select(visible[idx]);
             HandleResult::Consumed
         }
         Key::Named(NamedKey::ArrowDown) => {
-            if idx < visible.len() - 1 {
+            if selected_idx.is_some() && idx < visible.len() - 1 {
                 idx += 1;
             }
             state.select(visible[idx]);
@@ -307,20 +307,24 @@ fn handle_reader(
                 "j" => {
                     let visible = state.filtered_visible();
                     let current = *state.selected.read();
-                    if let Some(idx) = visible.iter().position(|&v| v == current) {
+                    if let Some(idx) = visible.iter().position(|&v| Some(v) == current) {
                         if idx + 1 < visible.len() {
                             state.select(visible[idx + 1]);
                         }
+                    } else if let Some(first) = visible.first() {
+                        state.select(*first);
                     }
                     return HandleResult::Consumed;
                 }
                 "k" => {
                     let visible = state.filtered_visible();
                     let current = *state.selected.read();
-                    if let Some(idx) = visible.iter().position(|&v| v == current) {
+                    if let Some(idx) = visible.iter().position(|&v| Some(v) == current) {
                         if idx > 0 {
                             state.select(visible[idx - 1]);
                         }
+                    } else if let Some(first) = visible.first() {
+                        state.select(*first);
                     }
                     return HandleResult::Consumed;
                 }
@@ -368,20 +372,24 @@ fn handle_reader(
         Key::Named(NamedKey::ArrowDown) => {
             let visible = state.filtered_visible();
             let current = *state.selected.read();
-            if let Some(idx) = visible.iter().position(|&v| v == current) {
+            if let Some(idx) = visible.iter().position(|&v| Some(v) == current) {
                 if idx + 1 < visible.len() {
                     state.select(visible[idx + 1]);
                 }
+            } else if let Some(first) = visible.first() {
+                state.select(*first);
             }
             HandleResult::Consumed
         }
         Key::Named(NamedKey::ArrowUp) => {
             let visible = state.filtered_visible();
             let current = *state.selected.read();
-            if let Some(idx) = visible.iter().position(|&v| v == current) {
+            if let Some(idx) = visible.iter().position(|&v| Some(v) == current) {
                 if idx > 0 {
                     state.select(visible[idx - 1]);
                 }
+            } else if let Some(first) = visible.first() {
+                state.select(*first);
             }
             HandleResult::Consumed
         }
