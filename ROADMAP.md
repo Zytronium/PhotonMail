@@ -14,6 +14,24 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
   - Mark as read after X duration after opening message
   - Send notifications (globally or per account)
   - Force dark mode email rendering
+  - AMERICA MODE!!
+    - Rebrands app into Freagle Mail
+    - Restyles app in red, white, and blue colors
+    - Plays bald eagle sound effects on certain actions, like sending mail
+    - Changes notification sound to something more American
+    - Plays American national anthem on startup
+    - Adds an American flag slash screen on startup
+    - Adds a faint Bald Eagle watermark behind the inbox
+    - Fireworks go off at cursor position on click
+    - Fireworks go off at random during the month of July. This can also be enabled year-round with a setting
+    - Font changed to something more patriotic somehow
+    - Tooltips are changed to American patriotism speak
+    - FREEDOM GLOW: important buttons glow with an animated red, white, and blue glow when hovered
+    - Window title changes to "Freagle Mail | Protecting Your Inbox and Your God-Given Right to Email"
+    - Support email in About changes from photonsupport@zytronium.dev to freaglesupport@whatthefuckisakilometer.com
+    - Optional American email HTML template: users' rich text editor embeds content inside an overly patriotic red white and blue HTML email template (and sends that way too)
+    - Stars kept as stars but made more patriotic
+    - ABSOLUTELY NO FEATURES RELATING TO MODERN AMERICAN POLITICS 
 - Notifications
 - Auto-updater
 - Mailing list banner on messages from a mailing list
@@ -24,3 +42,4 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
 - Phishing link detection
 - More advanced rich text editor for composing emails
 - Smarter email dark mode rendering
+- Local email cache for seamless email list loading upon opening app
