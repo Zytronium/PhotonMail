@@ -14,6 +14,11 @@ use freya_components::input::InputColorsThemePartial;
 use crate::{
     html_viewer::SecureHtmlViewer,
     icons::{CHEVRON_DOWN, CHEVRON_LEFT, DISK, SEND},
+    mail::formatting::{
+        append_header, clean_header_value, encode_unstructured_header, format_address_list,
+        encode_mime_parameter, format_mailbox_header, generate_mime_boundary,
+        image_content_type, image_extension_for_content_type, quoted_printable_encode,
+    },
     state::{AppState, ComposePre},
     theme::DARK,
     widgets::{divider, icon, IconButton},
@@ -447,11 +452,10 @@ impl Component for ComposePane {
                     let store = s.store.read();
                     store.accounts.get(account)
                         .map(|a| {
-                            if a.sender_name.is_empty() {
-                                a.addr.clone()
-                            } else {
-                                format!("{} <{}>", a.sender_name, a.addr)
-                            }
+                            format_mailbox_header(
+                                (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
+                                &a.addr,
+                            )
                         })
                         .unwrap_or_default()
                 };
@@ -476,22 +480,32 @@ impl Component for ComposePane {
                 }
 
                 // Build a multipart/alternative RFC-2822 message with embedded images
-                let boundary = "000000000000abcdef1234";
-                let boundary_related = "000000000000fedcba4321";
+                let boundary = generate_mime_boundary("alt");
+                let boundary_related = generate_mime_boundary("related");
                 let mut raw = String::new();
                 if !from_addr.is_empty() {
-                    raw.push_str(&format!("From: {}\r\n", from_addr));
+                    append_header(&mut raw, "From", &from_addr);
                 }
-                raw.push_str(&format!("To: {}\r\n", to_val));
+                let to_header = format_address_list(&to_val)
+                    .unwrap_or_else(|_| clean_header_value(&to_val));
+                append_header(&mut raw, "To", &to_header);
                 if !cc_val.is_empty() {
-                    raw.push_str(&format!("Cc: {}\r\n", cc_val));
+                    let cc_header = format_address_list(&cc_val)
+                        .unwrap_or_else(|_| clean_header_value(&cc_val));
+                    append_header(&mut raw, "Cc", &cc_header);
                 }
                 // Bcc is stripped from the headers by the SMTP layer before transmission
                 if !bcc_val.is_empty() {
-                    raw.push_str(&format!("Bcc: {}\r\n", bcc_val));
+                    let bcc_header = format_address_list(&bcc_val)
+                        .unwrap_or_else(|_| clean_header_value(&bcc_val));
+                    append_header(&mut raw, "Bcc", &bcc_header);
                 }
-                raw.push_str(&format!("Subject: {}\r\n", subject_val));
-                raw.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
+                append_header(&mut raw, "Subject", &encode_unstructured_header(&subject_val));
+                append_header(
+                    &mut raw,
+                    "Date",
+                    &chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000").to_string(),
+                );
                 // Our own Message-ID, so the Sent copy matches what recipients receive
                 let from_bare = s
                     .store
@@ -500,76 +514,99 @@ impl Component for ComposePane {
                     .get(account)
                     .map(|a| a.addr.clone())
                     .unwrap_or_default();
-                raw.push_str(&format!("Message-ID: <{}>\r\n", generate_message_id(&from_bare)));
+                append_header(
+                    &mut raw,
+                    "Message-ID",
+                    &format!("<{}>", generate_message_id(&from_bare)),
+                );
                 // Add In-Reply-To and References headers for reply threading
                 if let Some(ref thr) = threading {
                     if !thr.original_message_id.is_empty() {
-                        raw.push_str(&format!("In-Reply-To: <{}>\r\n", thr.original_message_id));
+                        append_header(
+                            &mut raw,
+                            "In-Reply-To",
+                            &format!("<{}>", thr.original_message_id),
+                        );
                         // Fall back to the parent's In-Reply-To when its References are unknown
                         let ancestors = if thr.original_references.is_empty() {
                             thr.original_in_reply_to.as_str()
                         } else {
                             thr.original_references.as_str()
                         };
-                        raw.push_str(&format!(
-                            "References: {}\r\n",
-                            build_references(ancestors, &thr.original_message_id)
-                        ));
+                        append_header(
+                            &mut raw,
+                            "References",
+                            &build_references(ancestors, &thr.original_message_id),
+                        );
                     }
                 }
-                raw.push_str("MIME-Version: 1.0\r\n");
+                append_header(&mut raw, "MIME-Version", "1.0");
 
                 // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
                 let has_images = !all_images.is_empty();
-                raw.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n", boundary));
+                append_header(
+                    &mut raw,
+                    "Content-Type",
+                    &format!("multipart/alternative; boundary=\"{}\"", boundary),
+                );
                 raw.push_str("\r\n");
 
                 // Plain text part
                 raw.push_str(&format!("--{}\r\n", boundary));
-                raw.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
-                raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                append_header(&mut raw, "Content-Type", "text/plain; charset=UTF-8");
+                append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
                 raw.push_str("\r\n");
-                raw.push_str(&plain_body);
+                raw.push_str(&quoted_printable_encode(&plain_body));
                 raw.push_str("\r\n");
 
                 if has_images {
                     raw.push_str(&format!("--{}\r\n", boundary));
-                    raw.push_str(&format!("Content-Type: multipart/related; type=\"text/html\"; boundary=\"{}\"\r\n", boundary_related));
+                    append_header(
+                        &mut raw,
+                        "Content-Type",
+                        &format!(
+                            "multipart/related; type=\"text/html\"; boundary=\"{}\"",
+                            boundary_related
+                        ),
+                    );
                     raw.push_str("\r\n");
 
                     // HTML part
                     raw.push_str(&format!("--{}\r\n", boundary_related));
-                    raw.push_str("Content-Type: text/html; charset=UTF-8\r\n");
-                    raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
+                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
                     raw.push_str("\r\n");
-                    raw.push_str(&html_body);
+                    raw.push_str(&quoted_printable_encode(&html_body));
                     raw.push_str("\r\n");
 
                     // Embedded images
                     for (ch, path) in &all_images {
                         let Ok(data) = std::fs::read(path) else { continue };
                         let p = std::path::Path::new(path);
-                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
-                        let content_type = match ext.as_str() {
-                            "jpg" | "jpeg" => "image/jpeg",
-                            "gif" => "image/gif",
-                            "webp" => "image/webp",
-                            "bmp" => "image/bmp",
-                            _ => "image/png",
-                        };
+                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        let content_type = image_content_type(ext);
                         let img_id = format!("img_{}@photonmail", u32::from(*ch));
                         let filename = p
                             .file_name()
                             .and_then(|n| n.to_str())
-                            .unwrap_or("image.png")
-                            .replace('"', "");
+                            .unwrap_or("image")
+                            .to_string();
+                        let filename = encode_mime_parameter(&clean_header_value(&filename));
                         use base64::Engine;
                         let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
                         raw.push_str(&format!("--{}\r\n", boundary_related));
-                        raw.push_str(&format!("Content-Type: {}; name=\"{}\"\r\n", content_type, filename));
-                        raw.push_str("Content-Transfer-Encoding: base64\r\n");
-                        raw.push_str(&format!("Content-ID: <{}>\r\n", img_id));
-                        raw.push_str(&format!("Content-Disposition: inline; filename=\"{}\"\r\n", filename));
+                        append_header(
+                            &mut raw,
+                            "Content-Type",
+                            &format!("{}; name*=UTF-8''{}", content_type, filename),
+                        );
+                        append_header(&mut raw, "Content-Transfer-Encoding", "base64");
+                        append_header(&mut raw, "Content-ID", &format!("<{}>", img_id));
+                        append_header(
+                            &mut raw,
+                            "Content-Disposition",
+                            &format!("inline; filename*=UTF-8''{}", filename),
+                        );
                         raw.push_str("\r\n");
                         for chunk in encoded.as_bytes().chunks(76) {
                             raw.push_str(std::str::from_utf8(chunk).unwrap_or(""));
@@ -579,10 +616,10 @@ impl Component for ComposePane {
                     raw.push_str(&format!("--{}--\r\n", boundary_related));
                 } else {
                     raw.push_str(&format!("--{}\r\n", boundary));
-                    raw.push_str("Content-Type: text/html; charset=UTF-8\r\n");
-                    raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
+                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
                     raw.push_str("\r\n");
-                    raw.push_str(&html_body);
+                    raw.push_str(&quoted_printable_encode(&html_body));
                     raw.push_str("\r\n");
                 }
 
@@ -652,11 +689,10 @@ impl Component for ComposePane {
                     let store = s.store.read();
                     store.accounts.get(account)
                         .map(|a| {
-                            if a.sender_name.is_empty() {
-                                a.addr.clone()
-                            } else {
-                                format!("{} <{}>", a.sender_name, a.addr)
-                            }
+                            format_mailbox_header(
+                                (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
+                                &a.addr,
+                            )
                         })
                         .unwrap_or_default()
                 };
@@ -681,90 +717,119 @@ impl Component for ComposePane {
                 }
 
                 // Build a multipart/alternative RFC-2822 message with embedded images
-                let boundary = "000000000000abcdef1234";
-                let boundary_related = "000000000000fedcba4321";
+                let boundary = generate_mime_boundary("alt");
+                let boundary_related = generate_mime_boundary("related");
                 let mut raw = String::new();
                 if !from_addr.is_empty() {
-                    raw.push_str(&format!("From: {}\r\n", from_addr));
+                    append_header(&mut raw, "From", &from_addr);
                 }
-                raw.push_str(&format!("To: {}\r\n", to_val));
+                let to_header = format_address_list(&to_val)
+                    .unwrap_or_else(|_| clean_header_value(&to_val));
+                append_header(&mut raw, "To", &to_header);
                 if !cc_val.is_empty() {
-                    raw.push_str(&format!("Cc: {}\r\n", cc_val));
+                    let cc_header = format_address_list(&cc_val)
+                        .unwrap_or_else(|_| clean_header_value(&cc_val));
+                    append_header(&mut raw, "Cc", &cc_header);
                 }
                 if !bcc_val.is_empty() {
-                    raw.push_str(&format!("Bcc: {}\r\n", bcc_val));
+                    let bcc_header = format_address_list(&bcc_val)
+                        .unwrap_or_else(|_| clean_header_value(&bcc_val));
+                    append_header(&mut raw, "Bcc", &bcc_header);
                 }
-                raw.push_str(&format!("Subject: {}\r\n", subject_val));
-                raw.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
+                append_header(&mut raw, "Subject", &encode_unstructured_header(&subject_val));
+                append_header(
+                    &mut raw,
+                    "Date",
+                    &chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000").to_string(),
+                );
                 // Add In-Reply-To and References headers for reply threading
                 if let Some(ref thr) = threading {
                     if !thr.original_message_id.is_empty() {
-                        raw.push_str(&format!("In-Reply-To: <{}>\r\n", thr.original_message_id));
+                        append_header(
+                            &mut raw,
+                            "In-Reply-To",
+                            &format!("<{}>", thr.original_message_id),
+                        );
                         // Fall back to the parent's In-Reply-To when its References are unknown
                         let ancestors = if thr.original_references.is_empty() {
                             thr.original_in_reply_to.as_str()
                         } else {
                             thr.original_references.as_str()
                         };
-                        raw.push_str(&format!(
-                            "References: {}\r\n",
-                            build_references(ancestors, &thr.original_message_id)
-                        ));
+                        append_header(
+                            &mut raw,
+                            "References",
+                            &build_references(ancestors, &thr.original_message_id),
+                        );
                     }
                 }
-                raw.push_str("MIME-Version: 1.0\r\n");
+                append_header(&mut raw, "MIME-Version", "1.0");
 
                 // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
                 let has_images = !all_images.is_empty();
-                raw.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n", boundary));
+                append_header(
+                    &mut raw,
+                    "Content-Type",
+                    &format!("multipart/alternative; boundary=\"{}\"", boundary),
+                );
                 raw.push_str("\r\n");
 
                 // Plain text part
                 raw.push_str(&format!("--{}\r\n", boundary));
-                raw.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
-                raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                append_header(&mut raw, "Content-Type", "text/plain; charset=UTF-8");
+                append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
                 raw.push_str("\r\n");
-                raw.push_str(&plain_body);
+                raw.push_str(&quoted_printable_encode(&plain_body));
                 raw.push_str("\r\n");
 
                 if has_images {
                     raw.push_str(&format!("--{}\r\n", boundary));
-                    raw.push_str(&format!("Content-Type: multipart/related; type=\"text/html\"; boundary=\"{}\"\r\n", boundary_related));
+                    append_header(
+                        &mut raw,
+                        "Content-Type",
+                        &format!(
+                            "multipart/related; type=\"text/html\"; boundary=\"{}\"",
+                            boundary_related
+                        ),
+                    );
                     raw.push_str("\r\n");
 
                     // HTML part
                     raw.push_str(&format!("--{}\r\n", boundary_related));
-                    raw.push_str("Content-Type: text/html; charset=UTF-8\r\n");
-                    raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
+                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
                     raw.push_str("\r\n");
-                    raw.push_str(&html_body);
+                    raw.push_str(&quoted_printable_encode(&html_body));
                     raw.push_str("\r\n");
 
                     // Embedded images (one part per placeholder, CID matches the <img> in the HTML)
                     for (ch, path) in &all_images {
                         let Ok(data) = std::fs::read(path) else { continue };
                         let p = std::path::Path::new(path);
-                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
-                        let content_type = match ext.as_str() {
-                            "jpg" | "jpeg" => "image/jpeg",
-                            "gif" => "image/gif",
-                            "webp" => "image/webp",
-                            "bmp" => "image/bmp",
-                            _ => "image/png",
-                        };
+                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        let content_type = image_content_type(ext);
                         let img_id = format!("img_{}@photonmail", u32::from(*ch));
                         let filename = p
                             .file_name()
                             .and_then(|n| n.to_str())
-                            .unwrap_or("image.png")
-                            .replace('"', "");
+                            .unwrap_or("image")
+                            .to_string();
+                        let filename = encode_mime_parameter(&clean_header_value(&filename));
                         use base64::Engine;
                         let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
                         raw.push_str(&format!("--{}\r\n", boundary_related));
-                        raw.push_str(&format!("Content-Type: {}; name=\"{}\"\r\n", content_type, filename));
-                        raw.push_str("Content-Transfer-Encoding: base64\r\n");
-                        raw.push_str(&format!("Content-ID: <{}>\r\n", img_id));
-                        raw.push_str(&format!("Content-Disposition: inline; filename=\"{}\"\r\n", filename));
+                        append_header(
+                            &mut raw,
+                            "Content-Type",
+                            &format!("{}; name*=UTF-8''{}", content_type, filename),
+                        );
+                        append_header(&mut raw, "Content-Transfer-Encoding", "base64");
+                        append_header(&mut raw, "Content-ID", &format!("<{}>", img_id));
+                        append_header(
+                            &mut raw,
+                            "Content-Disposition",
+                            &format!("inline; filename*=UTF-8''{}", filename),
+                        );
                         raw.push_str("\r\n");
                         // 76-char lines, CRLF-terminated
                         for chunk in encoded.as_bytes().chunks(76) {
@@ -775,10 +840,10 @@ impl Component for ComposePane {
                     raw.push_str(&format!("--{}--\r\n", boundary_related));
                 } else {
                     raw.push_str(&format!("--{}\r\n", boundary));
-                    raw.push_str("Content-Type: text/html; charset=UTF-8\r\n");
-                    raw.push_str("Content-Transfer-Encoding: 8bit\r\n");
+                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
+                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
                     raw.push_str("\r\n");
-                    raw.push_str(&html_body);
+                    raw.push_str(&quoted_printable_encode(&html_body));
                     raw.push_str("\r\n");
                 }
 
@@ -2424,20 +2489,19 @@ fn store_draft_image(data: &[u8], content_type: &str, name: &str) -> Option<Stri
     if data.is_empty() {
         return None;
     }
-    let ext = match content_type.to_ascii_lowercase().as_str() {
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/bmp" => "bmp",
-        "image/png" => "png",
-        _ => {
-            // Fall back to the attachment's own extension, else png.
-            let e = Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
-            if IMAGE_EXTENSIONS.contains(&e.as_str()) { return store_with_ext(data, name, &e); }
-            "png"
-        }
-    };
-    store_with_ext(data, name, ext)
+    let ext = image_extension_for_content_type(content_type)
+        .map(str::to_string)
+        .or_else(|| {
+            let ext = Path::new(name)
+                .extension()
+                .and_then(|extension| extension.to_str())?
+                .to_ascii_lowercase();
+            image_content_type(&ext)
+                .starts_with("image/")
+                .then_some(ext)
+        })
+        .unwrap_or_else(|| "bin".to_string());
+    store_with_ext(data, name, &ext)
 }
 
 fn store_with_ext(data: &[u8], name: &str, ext: &str) -> Option<String> {

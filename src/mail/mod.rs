@@ -16,6 +16,7 @@ pub mod config;
 pub mod discovery;
 pub mod engine;
 mod imap;
+pub(crate) mod formatting;
 pub mod parse;
 pub mod quoting;
 mod smtp;

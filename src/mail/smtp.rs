@@ -4,7 +4,7 @@
 //! Reuses the same rustls + ring TLS configuration as the IMAP connection so there
 //! is no system OpenSSL dependency.
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use lettre::{
     address::{Address, Envelope},
@@ -14,6 +14,9 @@ use lettre::{
 };
 
 use super::config::AccountConfig;
+use super::formatting::{
+    append_header, clean_header_value, encode_unstructured_header, format_address_list,
+};
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -75,36 +78,6 @@ fn split_message(raw: &str) -> (Vec<(String, String)>, String) {
     (headers, body.replace('\n', "\r\n"))
 }
 
-/// RFC 2047 encode a header value when it contains non-ASCII characters.
-fn encode_header(value: &str) -> String {
-    if value.is_ascii() {
-        return value.to_string();
-    }
-    use base64::Engine;
-    // Chunk on char boundaries so each encoded-word stays under 75 chars.
-    let mut words = Vec::new();
-    let mut chunk = String::new();
-    for c in value.chars() {
-        if chunk.len() + c.len_utf8() > 36 {
-            words.push(std::mem::take(&mut chunk));
-        }
-        chunk.push(c);
-    }
-    if !chunk.is_empty() {
-        words.push(chunk);
-    }
-    words
-        .iter()
-        .map(|w| {
-            format!(
-                "=?UTF-8?B?{}?=",
-                base64::engine::general_purpose::STANDARD.encode(w.as_bytes())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\r\n ")
-}
-
 fn header_addrs(headers: &[(String, String)], name: &str) -> Result<Vec<Address>, String> {
     let mut out = Vec::new();
     for (k, v) in headers {
@@ -116,6 +89,41 @@ fn header_addrs(headers: &[(String, String)], name: &str) -> Result<Vec<Address>
         }
     }
     Ok(out)
+}
+
+fn deduplicate_recipients(recipients: Vec<Address>) -> Vec<Address> {
+    let mut seen = HashSet::new();
+    recipients
+        .into_iter()
+        .filter(|address| seen.insert(address.to_string()))
+        .collect()
+}
+
+fn is_address_header(name: &str) -> bool {
+    ["from", "to", "cc", "bcc", "reply-to"]
+        .iter()
+        .any(|field| name.eq_ignore_ascii_case(field))
+}
+
+fn is_structured_header(name: &str) -> bool {
+    [
+        "from",
+        "to",
+        "cc",
+        "bcc",
+        "reply-to",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "mime-version",
+        "content-type",
+        "content-transfer-encoding",
+        "content-id",
+        "content-disposition",
+    ]
+    .iter()
+    .any(|field| name.eq_ignore_ascii_case(field))
 }
 
 /// Send a raw RFC-2822 message via SMTP using `send_raw` so the compose pane's
@@ -165,7 +173,7 @@ pub async fn send_email(
     let mut rcpts = header_addrs(&headers, "To")?;
     rcpts.extend(header_addrs(&headers, "Cc")?);
     rcpts.extend(header_addrs(&headers, "Bcc")?);
-    rcpts.dedup();
+    let rcpts = deduplicate_recipients(rcpts);
     if rcpts.is_empty() {
         return Err("No recipients found in the message".to_string());
     }
@@ -173,7 +181,7 @@ pub async fn send_email(
     let envelope = Envelope::new(Some(from_addr.clone()), rcpts)
         .map_err(|e| format!("Invalid envelope: {e}"))?;
 
-    // Rebuild the header block: drop Bcc, encode Subject, ensure From and Message-ID.
+    // Rebuild the header block: drop Bcc, encode text headers, ensure From and Message-ID.
     let mut out = String::new();
     let mut has_from = false;
     let mut has_msgid = false;
@@ -187,11 +195,17 @@ pub async fn send_email(
         if k.eq_ignore_ascii_case("message-id") {
             has_msgid = true;
         }
-        let v = if k.eq_ignore_ascii_case("subject") { encode_header(v) } else { v.clone() };
-        out.push_str(&format!("{k}: {v}\r\n"));
+        let value = if is_address_header(k) && !v.is_ascii() {
+            format_address_list(v)?
+        } else if !is_structured_header(k) {
+            encode_unstructured_header(v)
+        } else {
+            clean_header_value(v)
+        };
+        append_header(&mut out, k, &value);
     }
     if !has_from {
-        out.push_str(&format!("From: {from_addr}\r\n"));
+        append_header(&mut out, "From", &from_addr.to_string());
     }
     if !has_msgid {
         let ts = std::time::SystemTime::now()
@@ -199,7 +213,11 @@ pub async fn send_email(
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let domain = from_addr.domain();
-        out.push_str(&format!("Message-ID: <{ts:x}.{}@{domain}>\r\n", std::process::id()));
+        append_header(
+            &mut out,
+            "Message-ID",
+            &format!("<{ts:x}.{}@{domain}>", std::process::id()),
+        );
     }
     out.push_str("\r\n");
     out.push_str(&body);
@@ -210,4 +228,25 @@ pub async fn send_email(
         .await
         .map(|_| ())
         .map_err(|e| format!("SMTP error: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recipient_deduplication_removes_non_adjacent_duplicates() {
+        let recipients = [
+            "alice@example.com",
+            "bob@example.com",
+            "alice@example.com",
+        ]
+        .into_iter()
+        .map(|address| address.parse::<Address>().expect("valid address"))
+        .collect();
+        let unique = deduplicate_recipients(recipients);
+        assert_eq!(unique.len(), 2);
+        assert_eq!(unique[0].to_string(), "alice@example.com");
+        assert_eq!(unique[1].to_string(), "bob@example.com");
+    }
 }
