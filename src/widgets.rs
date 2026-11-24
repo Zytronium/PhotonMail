@@ -6,6 +6,25 @@ use crate::{
     theme::{Rgb, DARK, HOVER_STRONG},
 };
 
+/// Patriotic tooltips for Freagle Mail
+pub fn patriotic_tooltip(text: &str) -> String {
+    match text {
+        "Reply" => "Send a message back to your fellow patriot".to_string(),
+        "Reply all" => "Broadcast your reply to all your fellow patriots".to_string(),
+        "Forward" => "Pass this along to another freedom lover".to_string(),
+        "Archive" => "Store this in the archives of liberty".to_string(),
+        "Trash" => "Banish this to the dustbin of tyranny".to_string(),
+        "Mark as read" | "Mark as unread" => "Toggle the read status of this missive".to_string(),
+        "New message" => "Compose a new message to your fellow citizens".to_string(),
+        "Send" => "Launch this message into the great American sky".to_string(),
+        "Save" => "Preserve this draft for posterity".to_string(),
+        "Back" => "Return to the inbox of freedom".to_string(),
+        "Search messages…" => "Search the archives of liberty".to_string(),
+        "Unread" => "Show only unread missives".to_string(),
+        _ => text.to_string(),
+    }
+}
+
 pub fn icon(bytes: &'static [u8], size: f32, color: Rgb) -> SvgViewer {
     SvgViewer::new(bytes)
         .width(Size::px(size))
@@ -82,7 +101,7 @@ impl Component for Chip {
         let bg = if active {
             Fill::from(DARK.accent)
         } else if hovering() {
-            Fill::from((45, 45, 62))
+            Fill::from((40, 40, 85))
         } else {
             crate::grain::hover()
         };
@@ -102,7 +121,7 @@ pub fn divider() -> Rect {
     rect().width(Size::fill()).height(Size::px(1.)).background(DARK.divider)
 }
 
-/// Icon + text pill, used for reader actions. Supports hover state.
+/// Icon + text pill, used for reader actions. Supports hover state with FREEDOM GLOW.
 #[derive(PartialEq, Clone)]
 pub struct Action {
     pub bytes: &'static [u8],
@@ -114,10 +133,36 @@ pub struct Action {
 impl Component for Action {
     fn render(&self) -> impl IntoElement {
         let mut hovering = use_state(|| false);
+        let mut glow_frame = use_state(|| 0u32);
         let bytes = self.bytes;
         let text = self.text.clone();
         let color = self.color;
         let on_press = self.on_press.clone();
+
+        // Animate the FREEDOM GLOW
+        use_hook(|| {
+            let mut gf = glow_frame.clone();
+            freya::prelude::spawn(async move {
+                loop {
+                    futures_timer::Delay::new(std::time::Duration::from_millis(100)).await;
+                    let f = *gf.read();
+                    gf.set(f.wrapping_add(1));
+                }
+            });
+        });
+
+        let frame = *glow_frame.read();
+        let glow_color = if hovering() {
+            // Animated red-white-blue glow
+            let phase = (frame % 30) as f32 / 30.0;
+            let colors = [(200, 40, 60), (240, 240, 255), (60, 60, 200)];
+            let idx = (phase * 3.0) as usize % 3;
+            colors[idx]
+        } else {
+            (0, 0, 0)
+        };
+        let has_glow = hovering() && glow_color != (0, 0, 0);
+
         let mut r = rect()
             .horizontal()
             .cross_align(Alignment::Center)
@@ -129,7 +174,12 @@ impl Component for Action {
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press);
         if hovering() {
-            r = r.background(Fill::from((50, 50, 68)));
+            r = r.background(Fill::from((45, 45, 95)));
+            if has_glow {
+                r = r.border(freya::prelude::Border::new()
+                    .width(2.)
+                    .fill(Color::from_rgb(glow_color.0, glow_color.1, glow_color.2)));
+            }
         } else {
             r = r.background(crate::grain::hover());
         }

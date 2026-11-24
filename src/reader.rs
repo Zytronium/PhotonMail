@@ -405,7 +405,7 @@ impl Component for MailView {
                                         .corner_radius(6.)
                                         .center()
                                         .cursor(CursorIcon::Pointer)
-                                        .background(if has_data { crate::grain::hover() } else { Fill::from((30, 30, 40)) })
+                                        .background(if has_data { crate::grain::hover() } else { Fill::from((25, 25, 55)) })
                                         .on_press(if has_data {
                                             EventHandler::new(move |_| {
                                                 download_attachment(&att_clone);
@@ -423,7 +423,7 @@ impl Component for MailView {
                             .width(Size::fill())
                             .padding(10.)
                             .corner_radius(8.)
-                            .background((35, 35, 48))
+                            .background((25, 25, 55))
                             .vertical()
                             .spacing(6.)
                             .child(
@@ -504,8 +504,23 @@ impl Component for MailView {
                 .expanded()
                 .center()
                 .spacing(12.)
+                // Faint bald eagle watermark behind the inbox
+                .child(
+                    rect()
+                        .position(Position::new_global().top(0.).left(0.))
+                        .width(Size::fill())
+                        .height(Size::fill())
+                        .center()
+                        .child(
+                            label()
+                                .text("🦅")
+                                .font_size(200.)
+                                .color(Color::from_argb(15, DARK.muted.0, DARK.muted.1, DARK.muted.2)),
+                        ),
+                )
                 .child(icon(INBOX, 48., DARK.muted))
-                .child(label().text(empty_text).color(DARK.muted)),
+                .child(label().text(empty_text).color(DARK.muted))
+                .child(label().text("Welcome to Freagle Mail — the most American email client in the land!").color(DARK.muted).font_size(12.)),
         }
     }
 }
@@ -609,21 +624,21 @@ fn build_collapsed_text_body(
             rect()
                 .width(Size::fill())
                 .padding((8., 12., 8., 12.))
-                .background((28, 28, 38))
+                .background((22, 22, 48))
                 .corner_radius(4.)
                 .horizontal()
                 .child(
                     rect()
                         .width(Size::px(3.))
                         .height(Size::fill())
-                        .background((80, 80, 110))
+                        .background((60, 60, 130))
                         .corner_radius(2.),
                 )
                 .child(
                     rect().width(Size::fill()).child(
                         label()
                             .text(text)
-                            .color((140, 140, 160))
+                            .color((130, 130, 170))
                             .font_size(12.)
                             .font_family("monospace"),
                     ),
@@ -800,7 +815,7 @@ fn preview_dialog(
         rect()
             .width(Size::fill())
             .height(Size::px(1.))
-            .background((40, 40, 54)),
+            .background((35, 35, 70)),
     );
 
     // Filename label
@@ -928,7 +943,7 @@ impl Component for AttachmentPreview {
                         .child(
                             rect()
                                 .padding(10.)
-                                .background((30, 30, 40))
+                                .background((25, 25, 55))
                                 .corner_radius(6.)
                                 .child(
                                     label()
@@ -954,7 +969,7 @@ impl Component for AttachmentPreview {
                 rect()
                     .width(Size::fill())
                     .padding(6.)
-                    .background((40, 40, 54))
+                    .background((35, 35, 70))
                     .corner_radius(6.)
                     .child(
                         label()

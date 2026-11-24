@@ -15,20 +15,21 @@ pub struct Theme {
     pub success: Rgb,
 }
 
+// Freagle Mail theme — red, white, and blue patriotic colors
 pub const DARK: Theme = Theme {
-    bg: (22, 22, 29),
-    panel: (30, 30, 40),
-    titlebar: (18, 18, 24),
-    selected: (55, 50, 95),
-    hover: (40, 40, 54),
-    close_hover: (150, 35, 35),
-    text: (235, 235, 245),
-    muted: (150, 150, 170),
-    accent: (109, 74, 255),
-    divider: (45, 45, 58),
-    danger: (220, 70, 90),
-    success: (80, 200, 120),
+    bg: (20, 20, 20),          // Darker neutral gray background (no tint over flag)
+    panel: (25, 25, 25),       // Darker neutral gray panel
+    titlebar: (18, 18, 18),    // Darker gray titlebar
+    selected: (35, 35, 35),    // Darker gray selection
+    hover: (30, 30, 30),       // Darker gray hover
+    close_hover: (180, 30, 30), // Bright red close
+    text: (240, 240, 240),     // Near-white
+    muted: (160, 160, 160),    // Gray muted
+    accent: (40, 80, 200),     // Bold patriotic blue (buttons only)
+    divider: (30, 30, 30),     // Darker gray divider
+    danger: (220, 50, 50),     // Bright red danger
+    success: (40, 180, 100),   // Green (kept for success states)
 };
 
 /// Background of a secondary button while hovered (the app's `Action` / `Chip` hover colour).
-pub const HOVER_STRONG: Rgb = (50, 50, 68);
+pub const HOVER_STRONG: Rgb = (40, 40, 90); // Blue-tinted strong hover

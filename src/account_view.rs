@@ -328,7 +328,7 @@ impl Component for AddAccountView {
                         rect()
                             .padding(10.)
                             .corner_radius(8.)
-                            .background(Fill::from((30, 30, 46)))
+                            .background(Fill::from((25, 25, 55)))
                             .child(
                                 rect()
                                     .horizontal()
@@ -364,7 +364,7 @@ impl Component for AddAccountView {
                         rect()
                             .padding(14.)
                             .corner_radius(8.)
-                            .background(Fill::from((30, 30, 46)))
+                            .background(Fill::from((25, 25, 55)))
                             .spacing(10.)
                             .child(VerifyRow { label: "Account", value: addr.clone() })
                             .child(VerifyRow { label: "Account name", value: acct_display })
@@ -388,7 +388,7 @@ impl Component for AddAccountView {
                 rect()
                     .padding(10.)
                     .corner_radius(8.)
-                    .background(Fill::from((60, 20, 30)))
+                    .background(Fill::from((120, 25, 35)))
                     .child(label().text(e).color(DARK.danger).font_size(13.))
             );
         }
@@ -462,7 +462,7 @@ impl Component for AddAccountView {
             rect()
                 .padding((8., 18., 8., 18.))
                 .corner_radius(6.)
-                .background(if can_next { Fill::from(DARK.accent) } else { Fill::from((50, 50, 68)) })
+                .background(if can_next { Fill::from(DARK.accent) } else { Fill::from((45, 45, 95)) })
                 .opacity(if can_next { 1. } else { 0.5 })
                 .cursor(freya::winit::window::CursorIcon::Pointer)
                 .on_press(move |_| {
@@ -703,7 +703,7 @@ impl Component for EditAccountView {
                             rect()
                                 .padding(10.)
                                 .corner_radius(8.)
-                                .background(Fill::from((30, 30, 46)))
+                                .background(Fill::from((25, 25, 55)))
                                 .child(
                                     rect()
                                         .horizontal()
@@ -836,9 +836,9 @@ impl Component for StepIndicator {
             }
 
             let bg = if is_active {
-                Fill::from((60, 45, 130))
+                Fill::from((40, 40, 120))
             } else if is_completed {
-                Fill::from((40, 40, 60))
+                Fill::from((30, 30, 70))
             } else {
                 crate::grain::hover()
             };
@@ -880,9 +880,9 @@ impl Component for AddAccountFormField {
                 InputColorsThemePartial::new()
                     .color(DARK.text)
                     .placeholder_color(DARK.muted)
-                    .background(Color::from((30, 30, 46)))
-                    .focus_background(Color::from((30, 30, 46)))
-                    .border_fill(Color::from((50, 50, 70)))
+                    .background(Color::from((25, 25, 55)))
+                    .focus_background(Color::from((25, 25, 55)))
+                    .border_fill(Color::from((50, 50, 90)))
                     .focus_border_fill(Color::from(DARK.accent)),
             );
         if self.secret {
@@ -955,10 +955,10 @@ impl Component for AccountSettings {
                 rect()
                     .horizontal()
                     .spacing(8.)
-                    .child(AccountButton { text: "Sync now".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((45, 45, 62)), on_press: EventHandler::new(move |_| state.sync_account(index)) })
+                    .child(AccountButton { text: "Sync now".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((40, 40, 85)), on_press: EventHandler::new(move |_| state.sync_account(index)) })
                     .child({
                         let mut s_edit = state;
-                        AccountButton { text: "Edit".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((45, 45, 62)), on_press: EventHandler::new(move |_| s_edit.view.set(crate::state::View::EditAccount(index))) }
+                        AccountButton { text: "Edit".to_string(), bg: crate::grain::hover(), hover_bg: Fill::from((40, 40, 85)), on_press: EventHandler::new(move |_| s_edit.view.set(crate::state::View::EditAccount(index))) }
                     })
                     .child(AccountButton { text: "Remove account".to_string(), bg: Fill::from(DARK.danger), hover_bg: Fill::from(DARK.close_hover), on_press: EventHandler::new(|_| {}) }),
             )

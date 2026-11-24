@@ -427,12 +427,12 @@ impl Component for LinkConfirmDialog {
                     .width(Size::fill())
                     .padding(10.)
                     .corner_radius(6.)
-                    .background((40, 40, 54))
+                    .background((35, 35, 70))
                     .child(
                         label()
                             .text(url.clone())
                             .font_size(12.)
-                            .color((109, 74, 255)),
+                            .color((100, 150, 255)),
                     ),
             )
             .child(
@@ -454,7 +454,7 @@ impl Component for LinkConfirmDialog {
                             .height(Size::px(18.))
                             .corner_radius(4.)
                             .border(freya::prelude::Border::new().width(1.5).fill(DARK.muted))
-                            .background(if trust_sender() { DARK.accent } else { (30, 30, 40) })
+                            .background(if trust_sender() { DARK.accent } else { (25, 25, 55) })
                             .center()
                             .child(
                                 if trust_sender() {
@@ -490,7 +490,7 @@ impl Component for LinkConfirmDialog {
                             .height(Size::px(18.))
                             .corner_radius(4.)
                             .border(freya::prelude::Border::new().width(1.5).fill(DARK.muted))
-                            .background(if always_open() { DARK.accent } else { (30, 30, 40) })
+                            .background(if always_open() { DARK.accent } else { (25, 25, 55) })
                             .center()
                             .child(
                                 if always_open() {
@@ -525,7 +525,7 @@ impl Component for LinkConfirmDialog {
                         rect()
                             .padding((8., 18., 8., 18.))
                             .corner_radius(6.)
-                            .background((40, 40, 54))
+                            .background((35, 35, 70))
                             .cursor(CursorIcon::Pointer)
                             .on_press(close_dialog.clone())
                             .child(

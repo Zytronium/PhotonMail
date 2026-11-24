@@ -1,9 +1,9 @@
 [package]
-name = "PhotonMail"
+name = "FreagleMail"
 version = "0.1.0"
 edition = "2024"
 authors = ["Zytronium <zytronium@zytronium.dev>"]
-description = "Browse and send email at lightspeed with Photon Mail"
+description = "Browse and send email at lightspeed with Freagle Mail — the most American email client"
 repository = "https://github.com/Zytronium/PhotonMail"
 homepage = "https://photonmail.zytronium.dev"
 license = "MIT"
@@ -16,15 +16,17 @@ base64 = "0.22"
 freya = { version = "0.5.2", features = ["borderless", "titlebar", "engine", "html"] }
 freya-components = "0.5.2"
 freya-html = "0.5.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+fastrand = "2"
 open = "5"
 regex = "1"
+rodio = "0.18"
 rfd = "0.17.2"
 url = "2"
 
 # --- mail backend ---
 async-channel = "2"
 async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "6"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 futures-timer = "3"

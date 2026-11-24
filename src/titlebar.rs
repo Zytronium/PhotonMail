@@ -1,6 +1,6 @@
 use freya::prelude::*;
 
-use crate::{theme::DARK, APP_NAME};
+use crate::{theme::DARK, WINDOW_TITLE};
 
 const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
 const ICON_MIN: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1 5h8" stroke="#ebebf5" stroke-width="1" fill="none"/></svg>"##;
@@ -24,7 +24,7 @@ impl Component for Titlebar {
             .padding((0., 0., 0., 12.))
             .spacing(8.)
             .child(SvgViewer::new(LOGO).width(Size::px(18.)).height(Size::px(18.)))
-            .child(label().text(APP_NAME).color(DARK.text).font_size(13.))
+            .child(label().text(WINDOW_TITLE).color(DARK.text).font_size(13.))
             .child(rect().window_drag().width(Size::flex(1.)).height(Size::fill()))
             .child(WinButton(WinAction::Minimize))
             .child(WinButton(WinAction::Maximize))

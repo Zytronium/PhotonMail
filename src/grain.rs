@@ -27,6 +27,7 @@ uniform float r1;
 uniform float g1;
 uniform float b1;
 uniform float grain;
+uniform float alpha;
 
 // Sine-free hash: stable on every GPU, no precision banding.
 float hash12(float2 p) {
@@ -50,11 +51,11 @@ half4 main(float2 xy) {
   float n = hash12(cell) + hash12(cell + 17.0) - 1.0;
 
   base += n * grain;
-  return half4(half3(clamp(base, 0.0, 1.0)), 1.0);
+  return half4(half3(clamp(base, 0.0, 1.0)), alpha);
 }
 "#;
 
-fn build(top: Rgb, bottom: Rgb) -> Fill {
+fn build(top: Rgb, bottom: Rgb, alpha: f32) -> Fill {
     let effect =
         RuntimeEffect::make_for_shader(SKSL, None).expect("grain shader failed to compile");
 
@@ -72,6 +73,7 @@ fn build(top: Rgb, bottom: Rgb) -> Fill {
             c(bottom.1),
             c(bottom.2),
             GRAIN,
+            alpha,
         ];
 
         let mut data: Vec<u8> = Vec::with_capacity(values.len() * 4);
@@ -112,14 +114,15 @@ pub fn hover_colors() -> (Rgb, Rgb) {
 
 // Cached per thread: `ShaderFill` compares by pointer, so building a new one on
 // every render would make Freya think the background changed every frame.
+// Panel and surface use semi-transparent alpha so the flag.jpg background shows through.
 thread_local! {
-    static PANEL: Fill = { let (a, b) = gradient(DARK.panel); build(a, b) };
-    static SURFACE: Fill = { let (a, b) = gradient(DARK.bg); build(a, b) };
-    static TITLEBAR: Fill = { let (a, b) = gradient(DARK.titlebar); build(a, b) };
-    static HOVER: Fill = { let (a, b) = gradient(DARK.hover); build(a, b) };
-    static SELECTED: Fill = { let (a, b) = gradient(DARK.selected); build(a, b) };
-    static CLOSE_HOVER: Fill = { let (a, b) = gradient(DARK.close_hover); build(a, b) };
-    static DIALOG: Fill = { let (a, b) = gradient(DARK.panel); build(a, b) };
+    static PANEL: Fill = { let (a, b) = gradient(DARK.panel); build(a, b, 0.5) };
+    static SURFACE: Fill = { let (a, b) = gradient(DARK.bg); build(a, b, 0.5) };
+    static TITLEBAR: Fill = { let (a, b) = gradient(DARK.titlebar); build(a, b, 1.0) };
+    static HOVER: Fill = { let (a, b) = gradient(DARK.hover); build(a, b, 0.8) };
+    static SELECTED: Fill = { let (a, b) = gradient(DARK.selected); build(a, b, 1.0) };
+    static CLOSE_HOVER: Fill = { let (a, b) = gradient(DARK.close_hover); build(a, b, 1.0) };
+    static DIALOG: Fill = { let (a, b) = gradient(DARK.panel); build(a, b, 1.0) };
 }
 
 /// Sidebar and reader.

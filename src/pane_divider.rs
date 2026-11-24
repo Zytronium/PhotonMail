@@ -54,7 +54,7 @@ impl Component for PaneDivider {
             .background(if is_dragging() {
                 Fill::from(DARK.accent)
             } else if hovering() {
-                Fill::from((60, 60, 80))
+                Fill::from((50, 50, 90))
             } else {
                 Fill::from(DARK.divider)
             })

@@ -507,6 +507,13 @@ impl Component for ComposePane {
                 // Closing boundary
                 raw.push_str(&format!("--{}--\r\n", boundary));
 
+                // Play bald eagle screech on send
+                if let Ok(sounds_guard) = crate::SOUNDS.lock() {
+                    if let Some(ref sounds) = *sounds_guard {
+                        sounds.play_eagle();
+                    }
+                }
+
                 // Send the email via SMTP
                 s.send_email(account, raw);
 
@@ -847,19 +854,39 @@ impl Component for ComposePane {
                     on_press: save_draft_on_press,
                 }
             )
-            .child(
+            .child({
+                // FREEDOM GLOW on Send button
+                let mut send_glow = use_state(|| 0u32);
+                use_hook(|| {
+                    let mut sg = send_glow.clone();
+                    freya::prelude::spawn(async move {
+                        loop {
+                            futures_timer::Delay::new(std::time::Duration::from_millis(100)).await;
+                            let f = *sg.read();
+                            sg.set(f.wrapping_add(1));
+                        }
+                    });
+                });
+                let frame = *send_glow.read();
+                let phase = (frame % 30) as f32 / 30.0;
+                let colors = [(200, 40, 60), (240, 240, 255), (60, 60, 200)];
+                let glow_color = colors[(phase * 3.0) as usize % 3];
+                let send_on = send_on_press.clone();
                 rect()
                     .padding((6., 14., 6., 14.))
                     .corner_radius(6.)
                     .background(Fill::from(DARK.success))
+                    .border(Border::new()
+                        .width(2.)
+                        .fill(Color::from_rgb(glow_color.0, glow_color.1, glow_color.2)))
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(6.)
                     .cursor(freya::winit::window::CursorIcon::Pointer)
-                    .on_press(send_on_press)
+                    .on_press(send_on)
                     .child(icon(SEND, 14., DARK.text))
-                    .child(label().text("Send").color(DARK.text).font_size(13.).font_weight(FontWeight::BOLD)),
-            );
+                    .child(label().text("Send").color(DARK.text).font_size(13.).font_weight(FontWeight::BOLD))
+            });
 
         // --- From (account selector) ---
         let store_accounts = state.store.read().accounts.clone();
@@ -892,7 +919,7 @@ impl Component for ComposePane {
                             .padding((6., 10., 6., 10.))
                             .corner_radius(6.)
                             .background(Fill::from((20, 20, 31)))
-                            .border(Border::new().fill((58, 58, 78)).width(1.))
+                            .border(Border::new().fill((50, 50, 90)).width(1.))
                             .horizontal()
                             .content(Content::Flex)
                             .cross_align(Alignment::Center)
@@ -915,9 +942,9 @@ impl Component for ComposePane {
                 for (idx, acc) in store_accounts.iter().enumerate() {
                     let is_selected = idx == selected_idx;
                     let bg = if is_selected {
-                        Fill::from((46, 42, 82))
+                        Fill::from((40, 40, 100))
                     } else {
-                        Fill::from((30, 30, 46))
+                        Fill::from((25, 25, 55))
                     };
                     let text_color = if is_selected {
                         DARK.accent
@@ -977,8 +1004,8 @@ impl Component for ComposePane {
                         rect()
                             .width(Size::flex(1.))
                             .corner_radius(8.)
-                            .background(Fill::from((30, 30, 46)))
-                            .border(Border::new().fill((58, 58, 78)).width(1.))
+                            .background(Fill::from((25, 25, 55)))
+                            .border(Border::new().fill((50, 50, 90)).width(1.))
                             .child(
                                 ScrollView::new()
                                     .width(Size::fill())
@@ -1012,7 +1039,7 @@ impl Component for ComposePane {
                         .padding((6., 10., 6., 10.))
                         .corner_radius(6.)
                         .background(Fill::from((20, 20, 31)))
-                        .border(Border::new().fill((58, 58, 78)).width(1.))
+                        .border(Border::new().fill((50, 50, 90)).width(1.))
                         .child(
                             label()
                                 .text(account_name)
@@ -1296,7 +1323,7 @@ impl Component for ComposePane {
                                 .height(Size::px(120.))
                                 .corner_radius(6.)
                                 .background(Fill::from((20, 20, 31)))
-                                .border(Border::new().fill((58, 58, 78)).width(1.))
+                                .border(Border::new().fill((50, 50, 90)).width(1.))
                                 .center()
                                 .child(
                                     label()
@@ -1352,7 +1379,7 @@ impl Component for ComposePane {
                 rect()
                     .width(Size::flex(1.))
                     .height(Size::px(1.))
-                    .background(Fill::from((58, 58, 78)))
+                    .background(Fill::from((50, 50, 90)))
             };
             // "---- Forwarded message ----" divider
             let divider_row = rect()
@@ -1769,9 +1796,9 @@ impl Component for FormatButton {
         let bg = if active {
             Fill::from(DARK.accent)
         } else if hovering() {
-            Fill::from((45, 45, 62))
+            Fill::from((40, 40, 85))
         } else {
-            Fill::from((30, 30, 46))
+            Fill::from((25, 25, 55))
         };
 
         let mut style = label()
@@ -1820,7 +1847,7 @@ fn field_box(input: Input) -> Rect {
         .padding((2., 8., 2., 8.))
         .corner_radius(6.)
         .background(Fill::from((20, 20, 31)))
-        .border(Border::new().fill((58, 58, 78)).width(1.))
+        .border(Border::new().fill((50, 50, 90)).width(1.))
         .child(input)
 }
 

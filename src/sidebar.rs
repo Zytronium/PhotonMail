@@ -89,7 +89,30 @@ impl Component for Sidebar {
         }
 
         let mut compose_hover = use_state(|| false);
+        let mut compose_glow = use_state(|| 0u32);
+        // Animate FREEDOM GLOW on compose button
+        use_hook(|| {
+            let mut cg = compose_glow.clone();
+            freya::prelude::spawn(async move {
+                loop {
+                    futures_timer::Delay::new(std::time::Duration::from_millis(100)).await;
+                    let f = *cg.read();
+                    cg.set(f.wrapping_add(1));
+                }
+            });
+        });
+        let glow_frame = *compose_glow.read();
+        let glow_phase = (glow_frame % 30) as f32 / 30.0;
+        let glow_colors = [(200, 40, 60), (240, 240, 255), (60, 60, 200)];
+        let glow_idx = (glow_phase * 3.0) as usize % 3;
+        let glow_color = glow_colors[glow_idx];
+
         let mut s_compose = state;
+        let compose_bg = if compose_hover() {
+            Fill::from(DARK.accent)
+        } else {
+            Fill::from(DARK.accent)
+        };
         let compose = rect()
             .width(Size::fill())
             .padding(10.)
@@ -97,11 +120,10 @@ impl Component for Sidebar {
             .horizontal()
             .center()
             .spacing(8.)
-            .background(if compose_hover() {
-                Fill::from((120, 90, 255))
-            } else {
-                Fill::from(DARK.accent)
-            })
+            .background(compose_bg)
+            .border(freya::prelude::Border::new()
+                .width(2.)
+                .fill(Color::from_rgb(glow_color.0, glow_color.1, glow_color.2)))
             .on_pointer_enter(move |_| compose_hover.set(true))
             .on_pointer_leave(move |_| compose_hover.set(false))
             .on_press(move |_| {
