@@ -9,7 +9,7 @@ use std::{collections::HashSet, time::Duration};
 use lettre::{
     address::{Address, Envelope},
     message::Mailboxes,
-    transport::smtp::authentication::Credentials,
+    transport::smtp::authentication::{Credentials, Mechanism, DEFAULT_MECHANISMS},
     AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
 };
 
@@ -141,13 +141,26 @@ pub async fn send_email(
             .to_string()
     })?;
 
-    let creds = Credentials::new(cfg.username.clone(), password.to_string());
+    let oauth_token = password.strip_prefix("oauth2:");
+    if oauth_token.is_some_and(str::is_empty) {
+        return Err("OAuth2 access token is empty".to_string());
+    }
+    let creds = Credentials::new(
+        cfg.username.clone(),
+        oauth_token.unwrap_or(password).to_string(),
+    );
+    let mechanisms = if oauth_token.is_some() {
+        vec![Mechanism::Xoauth2]
+    } else {
+        DEFAULT_MECHANISMS.to_vec()
+    };
 
     let mailer = if smtp_port == 465 {
         AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_host.as_str())
             .map_err(|e| format!("Invalid SMTP host '{}': {e}", smtp_host))?
             .port(465)
             .credentials(creds)
+            .authentication(mechanisms)
             .timeout(Some(SEND_TIMEOUT))
             .build()
     } else {
@@ -156,7 +169,10 @@ pub async fn send_email(
         if smtp_port != 0 {
             b = b.port(smtp_port);
         }
-        b.credentials(creds).timeout(Some(SEND_TIMEOUT)).build()
+        b.credentials(creds)
+            .authentication(mechanisms)
+            .timeout(Some(SEND_TIMEOUT))
+            .build()
     };
 
     let (headers, body) = split_message(raw);

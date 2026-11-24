@@ -56,7 +56,7 @@ pub struct HeaderRow {
     pub from: String,
     pub from_email: String,
     pub subject: String,
-    /// INTERNALDATE as a unix timestamp.
+    /// RFC 5322 Date header as a unix timestamp, falling back to IMAP INTERNALDATE.
     pub ts: i64,
     pub size: u32,
     /// RFC 5322 Message-ID from the ENVELOPE, angle brackets removed.

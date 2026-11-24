@@ -25,11 +25,11 @@ pub struct AccountConfig {
     pub username: String,
     /// IMAP host.
     pub host: String,
-    /// IMAP implicit-TLS port (993 for nearly every provider).
+    /// IMAP port: implicit TLS on 993, or STARTTLS on 143.
     pub port: u16,
     /// SMTP host (auto-discovered from email domain for popular providers).
     pub smtp_host: String,
-    /// SMTP implicit-TLS port (465 for nearly every provider).
+    /// SMTP submission port: implicit TLS on 465, or STARTTLS on 587.
     pub smtp_port: u16,
 }
 

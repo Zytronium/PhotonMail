@@ -169,7 +169,27 @@ fn start_event_pump(app: AppState) {
                 // Persistent banner (the footer notice is wiped by the next sync status).
                 app.store.write().send_error = Some(format!("Message not sent: {error}"));
             }
-            let added = app.store.write().apply(event);
+            let (added, remap) = {
+                let mut store = app.store.write();
+                let added = store.apply(event);
+                let remap = store.compact_removed();
+                (added, remap)
+            };
+            if let Some(remap) = remap {
+                let selected = *app.selected.read();
+                app.selected
+                    .set(remap.get(selected).copied().flatten().unwrap_or(0));
+
+                let preview = *app.attachment_preview_mail.read();
+                if let Some(preview) = preview {
+                    if let Some(Some(new_index)) = remap.get(preview) {
+                        app.attachment_preview_mail.set(Some(*new_index));
+                    } else {
+                        app.attachment_preview_mail.set(None);
+                        app.attachment_preview_open.set(false);
+                    }
+                }
+            }
             if added {
                 // A new account just finished signing in: show its inbox.
                 let last = app.store.peek().accounts.len().saturating_sub(1);

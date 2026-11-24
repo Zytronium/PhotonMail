@@ -13,12 +13,11 @@ use crate::{
 /// Multi-step account setup flow, inspired by SubspaceMail's wizard-style onboarding.
 ///
 /// Steps:
-/// 1. **Account** — email address, display name, and password
-/// 2. **Server** — IMAP host, port, and security settings
+/// 1. **Account** — email address, display name, and password or OAuth access token
+/// 2. **Server** — IMAP host and port (993 for TLS, 143 for STARTTLS)
 /// 3. **Verify** — review settings and connect
 ///
-/// Provider selection (Gmail, Outlook, iCloud) is reserved for future OAuth support;
-/// only IMAP/SMTP is functional now.
+/// OAuth access tokens use XOAUTH2 and must be entered manually; token refresh is not supported.
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum SetupStep {
@@ -76,7 +75,6 @@ impl Component for AddAccountView {
         let password = use_state(String::new);
         let host = use_state(String::new);
         let port = use_state(|| "993".to_string());
-        let security = use_state(|| "SSL/TLS".to_string());
         let smtp_host = use_state(String::new);
         let smtp_port = use_state(|| "587".to_string());
         let mut working = use_state(|| false);
@@ -246,12 +244,12 @@ impl Component for AddAccountView {
                         secret: false,
                     })
                     .child(AddAccountFormField {
-                        label: "Password",
-                        placeholder: "Enter your email password or app password",
+                        label: "Password or OAuth access token",
+                        placeholder: "Password, app password, or OAuth token",
                         value: password.clone(),
                         secret: true,
                     })
-                    .child(label().text("If your provider requires it, use an app-specific password.").color(DARK.muted).font_size(11.))
+                    .child(label().text("Prefix OAuth access tokens with oauth2: — PhotonMail does not refresh tokens.").color(DARK.muted).font_size(11.))
             }
             SetupStep::Server => {
                 rect().spacing(12.)
@@ -262,27 +260,12 @@ impl Component for AddAccountView {
                         value: host.clone(),
                         secret: false,
                     })
-                    .child(
-                        rect()
-                            .horizontal()
-                            .spacing(8.)
-                            .child(
-                                rect().width(Size::flex(1.)).child(AddAccountFormField {
-                                    label: "Port",
-                                    placeholder: "993",
-                                    value: port.clone(),
-                                    secret: false,
-                                })
-                            )
-                            .child(
-                                rect().width(Size::flex(1.)).child(AddAccountFormField {
-                                    label: "Security",
-                                    placeholder: "SSL/TLS",
-                                    value: security.clone(),
-                                    secret: false,
-                                })
-                            )
-                    )
+                    .child(AddAccountFormField {
+                        label: "IMAP port (993 TLS, 143 STARTTLS)",
+                        placeholder: "993",
+                        value: port.clone(),
+                        secret: false,
+                    })
                     .child(label().text("Configure your SMTP (sending) server settings.").color(DARK.muted).font_size(13.))
                     .child(AddAccountFormField {
                         label: "SMTP server",
@@ -610,7 +593,7 @@ impl Component for EditAccountView {
                                 .spacing(8.)
                                 .child(
                                     rect().width(Size::flex(1.)).child(AddAccountFormField {
-                                        label: "Port",
+                                        label: "IMAP port (993 TLS, 143 STARTTLS)",
                                         placeholder: "993",
                                         value: port.clone(),
                                         secret: false,
@@ -819,7 +802,10 @@ impl Component for StepIndicator {
         let current = self.current;
         let current_idx = current.index();
 
-        let mut items = rect().horizontal().spacing(4.);
+        let mut items = rect()
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(4.);
 
         for (i, step) in SetupStep::all().into_iter().enumerate() {
             let is_active = i == current_idx;

@@ -31,11 +31,15 @@ use std::{
 use async_imap::{
     extensions::idle::IdleResponse,
     types::{Fetch, Flag, Name, NameAttribute},
+    Authenticator,
 };
 use futures::TryStreamExt;
 use tokio::{
     net::TcpStream,
-    sync::mpsc::{error::TryRecvError, unbounded_channel, UnboundedReceiver, UnboundedSender},
+    sync::{
+        mpsc::{error::TryRecvError, unbounded_channel, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
     time::{sleep, timeout},
 };
 use tokio_rustls::{
@@ -67,6 +71,7 @@ const OTHER_LIMIT: u32 = 100;
 const PREFETCH_COUNT: usize = 20;
 const PREFETCH_MAX_SIZE: u32 = 512 * 1024;
 const PREFETCH_BATCH: usize = 5;
+const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
 
 const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)";
 
@@ -95,6 +100,118 @@ fn not_connected() -> String {
     "not connected".to_string()
 }
 
+fn is_connection_failure(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error == "not connected"
+        || error.contains(": io:")
+        || error.starts_with("io:")
+        || error.contains(": connection lost")
+        || error.starts_with("connection lost")
+        || error.contains(": parse:")
+        || error.starts_with("parse:")
+        || error.contains("timed out")
+}
+
+fn message_id_for() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!(
+        "<{nanos:x}.{}.{:x}@photonmail.local>",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn message_timestamp(date: Option<&[u8]>, internal_date: Option<i64>) -> i64 {
+    date.and_then(|date| std::str::from_utf8(date).ok())
+        .and_then(|date| chrono::DateTime::parse_from_rfc2822(date).ok())
+        .map(|date| date.timestamp())
+        .or(internal_date)
+        .unwrap_or(0)
+}
+
+fn replace_message_id(raw: &str, message_id: &str) -> String {
+    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+    let (headers, body) = normalized.split_once("\n\n").unwrap_or((&normalized, ""));
+    let mut output = String::new();
+    let mut skipping_message_id = false;
+    for line in headers.lines() {
+        if line.starts_with([' ', '\t']) {
+            if !skipping_message_id {
+                output.push_str(line);
+                output.push_str("\r\n");
+            }
+            continue;
+        }
+        skipping_message_id = line
+            .split_once(':')
+            .is_some_and(|(name, _)| name.eq_ignore_ascii_case("message-id"));
+        if !skipping_message_id {
+            output.push_str(line);
+            output.push_str("\r\n");
+        }
+    }
+    output.push_str("Message-ID: ");
+    output.push_str(message_id);
+    output.push_str("\r\n\r\n");
+    output.push_str(&body.replace('\n', "\r\n"));
+    output
+}
+
+async fn expunge_uid(session: &mut Session, uid: u32, has_uidplus: bool) -> Res<()> {
+    let set = uid.to_string();
+    if has_uidplus {
+        io("UID EXPUNGE", async {
+            session.uid_expunge(&set).await?.try_collect::<Vec<u32>>().await
+        })
+        .await?;
+        return Ok(());
+    }
+
+    // RFC 4315's fallback preserves other clients' \\Deleted messages around EXPUNGE.
+    let deleted: std::collections::HashSet<u32> = io("UID SEARCH DELETED", session.uid_search("DELETED")).await?;
+    let preserve: Vec<String> = deleted
+        .into_iter()
+        .filter(|deleted_uid| *deleted_uid != uid)
+        .map(|deleted_uid| deleted_uid.to_string())
+        .collect();
+    let preserve_set = preserve.join(",");
+    if !preserve_set.is_empty() {
+        io("STORE", async {
+            session
+                .uid_store(&preserve_set, "-FLAGS.SILENT (\\Deleted)")
+                .await?
+                .try_collect::<Vec<Fetch>>()
+                .await
+        })
+        .await?;
+    }
+
+    let expunge_result = io("EXPUNGE", async {
+        session.expunge().await?.try_collect::<Vec<u32>>().await
+    })
+    .await;
+    let restore_result = if preserve_set.is_empty() {
+        Ok(())
+    } else {
+        io("STORE", async {
+            session
+                .uid_store(&preserve_set, "+FLAGS.SILENT (\\Deleted)")
+                .await?
+                .try_collect::<Vec<Fetch>>()
+                .await
+        })
+        .await
+        .map(|_| ())
+    };
+    expunge_result?;
+    restore_result
+}
+
 // ---------------------------------------------------------------------------
 // Connection
 // ---------------------------------------------------------------------------
@@ -119,7 +236,7 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
         .clone()
 }
 
-/// TCP → TLS (implicit, port 993) → LOGIN.
+/// TCP → TLS (implicit, normally port 993) or STARTTLS (port 143) → authenticate.
 async fn connect(cfg: &AccountConfig, password: &str) -> Res<Session> {
     let tcp = match timeout(CONNECT_TIMEOUT, TcpStream::connect((cfg.host.as_str(), cfg.port))).await
     {
@@ -129,15 +246,74 @@ async fn connect(cfg: &AccountConfig, password: &str) -> Res<Session> {
     };
     let _ = tcp.set_nodelay(true);
 
-    let name = ServerName::try_from(cfg.host.clone())
-        .map_err(|_| format!("Invalid server name: {}", cfg.host))?;
-    let tls = io("TLS handshake", TlsConnector::from(tls_config()).connect(name, tcp)).await?;
+    if cfg.port == 143 {
+        let mut client = async_imap::Client::new(tcp);
+        match timeout(IO_TIMEOUT, client.read_response()).await {
+            Ok(Ok(Some(_))) => {}
+            Ok(Ok(None)) => return Err("IMAP server closed before greeting".to_string()),
+            Ok(Err(e)) => return Err(format!("IMAP greeting: {e}")),
+            Err(_) => return Err("IMAP greeting timed out".to_string()),
+        }
+        match timeout(IO_TIMEOUT, client.run_command_and_check_ok("STARTTLS", None)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(format!("STARTTLS failed: {e}")),
+            Err(_) => return Err("STARTTLS timed out".to_string()),
+        }
+        let tcp = client.into_inner();
+        let tls = tls_stream(&cfg.host, tcp).await?;
+        authenticate(async_imap::Client::new(tls), cfg, password).await
+    } else {
+        let tls = tls_stream(&cfg.host, tcp).await?;
+        authenticate(async_imap::Client::new(tls), cfg, password).await
+    }
+}
 
-    let client = async_imap::Client::new(tls);
-    match timeout(IO_TIMEOUT, client.login(&cfg.username, password)).await {
+async fn tls_stream(
+    host: &str,
+    tcp: TcpStream,
+) -> Res<tokio_rustls::client::TlsStream<TcpStream>> {
+    let name = ServerName::try_from(host.to_string())
+        .map_err(|_| format!("Invalid server name: {host}"))?;
+    io("TLS handshake", TlsConnector::from(tls_config()).connect(name, tcp)).await
+}
+
+struct Xoauth2Authenticator {
+    username: String,
+    token: String,
+}
+
+impl Authenticator for Xoauth2Authenticator {
+    type Response = String;
+
+    fn process(&mut self, _challenge: &[u8]) -> Self::Response {
+        format!("user={}\x01auth=Bearer {}\x01\x01", self.username, self.token)
+    }
+}
+
+async fn authenticate(
+    client: async_imap::Client<tokio_rustls::client::TlsStream<TcpStream>>,
+    cfg: &AccountConfig,
+    secret: &str,
+) -> Res<Session> {
+    let auth = if let Some(token) = secret.strip_prefix("oauth2:") {
+        if token.is_empty() {
+            return Err("OAuth2 access token is empty".to_string());
+        }
+        timeout(
+            IO_TIMEOUT,
+            client.authenticate(
+                "XOAUTH2",
+                Xoauth2Authenticator { username: cfg.username.clone(), token: token.to_string() },
+            ),
+        )
+        .await
+    } else {
+        timeout(IO_TIMEOUT, client.login(&cfg.username, secret)).await
+    };
+    match auth {
         Ok(Ok(session)) => Ok(session),
-        Ok(Err((e, _client))) => Err(format!("Login failed: {e}")),
-        Err(_) => Err("Login timed out".to_string()),
+        Ok(Err((e, _client))) => Err(format!("Authentication failed: {e}")),
+        Err(_) => Err("Authentication timed out".to_string()),
     }
 }
 
@@ -323,7 +499,10 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
         from,
         from_email: email,
         subject,
-        ts: f.internal_date().map(|d| d.timestamp()).unwrap_or(0),
+        ts: message_timestamp(
+            env.and_then(|envelope| envelope.date.as_deref()),
+            f.internal_date().map(|date| date.timestamp()),
+        ),
         size: f.size.unwrap_or(0),
         message_id,
         in_reply_to,
@@ -348,9 +527,29 @@ struct FolderState {
     last_sync: Option<Instant>,
 }
 
+fn prune_known(known: &mut BTreeMap<u32, bool>, keep_limit: usize) -> Vec<u32> {
+    let remove_count = known.len().saturating_sub(keep_limit);
+    let removed: Vec<u32> = known.keys().take(remove_count).copied().collect();
+    for uid in &removed {
+        known.remove(uid);
+    }
+    removed
+}
+
 enum Job {
     Sync(usize),
     Prefetch { folder: usize, uids: Vec<u32> },
+}
+
+enum WorkerSignal {
+    Refresh,
+    SendFinished(SendResult),
+}
+
+struct SendResult {
+    raw: String,
+    draft_uid: Option<u32>,
+    result: Result<(), String>,
 }
 
 pub struct Worker {
@@ -359,23 +558,28 @@ pub struct Worker {
     password: String,
     events: async_channel::Sender<Event>,
     rx: UnboundedReceiver<WorkerCmd>,
+    signals_tx: UnboundedSender<WorkerSignal>,
+    signals_rx: UnboundedReceiver<WorkerSignal>,
     backlog: VecDeque<WorkerCmd>,
     jobs: VecDeque<Job>,
     session: Option<Session>,
     selected: Option<String>,
     paths: [Option<String>; 6],
     has_move: bool,
+    has_uidplus: bool,
     folders: [FolderState; 6],
     busy: bool,
 }
 
 impl Worker {
-    pub fn new(
+    fn new(
         index: usize,
         cfg: AccountConfig,
         password: String,
         events: async_channel::Sender<Event>,
         rx: UnboundedReceiver<WorkerCmd>,
+        signals_tx: UnboundedSender<WorkerSignal>,
+        signals_rx: UnboundedReceiver<WorkerSignal>,
     ) -> Self {
         Worker {
             index,
@@ -383,12 +587,15 @@ impl Worker {
             password,
             events,
             rx,
+            signals_tx,
+            signals_rx,
             backlog: VecDeque::new(),
             jobs: VecDeque::new(),
             session: None,
             selected: None,
             paths: Default::default(),
             has_move: false,
+            has_uidplus: false,
             folders: Default::default(),
             busy: false,
         }
@@ -439,32 +646,64 @@ impl Worker {
                 },
             };
 
+            let signal = if next.is_none() {
+                self.signals_rx.try_recv().ok()
+            } else {
+                None
+            };
+
             let result = if let Some(cmd) = next {
                 self.mark_busy();
                 self.handle(cmd).await
+            } else if let Some(signal) = signal {
+                match signal {
+                    WorkerSignal::Refresh => {
+                        self.push_sync_front(INBOX);
+                        Ok(())
+                    }
+                    WorkerSignal::SendFinished(result) => {
+                        self.mark_busy();
+                        self.finish_send(result).await
+                    }
+                }
             } else if let Some(job) = self.jobs.pop_front() {
                 self.mark_busy();
                 self.run_job(job).await
             } else {
                 self.mark_idle();
-                match self.rx.recv().await {
-                    Some(c) => {
-                        self.backlog.push_back(c);
-                        Ok(())
-                    }
-                    None => return,
+                let mut completed_send = None;
+                tokio::select! {
+                    cmd = self.rx.recv() => match cmd {
+                        Some(c) => self.backlog.push_back(c),
+                        None => return,
+                    },
+                    signal = self.signals_rx.recv() => match signal {
+                        Some(WorkerSignal::Refresh) => self.backlog.push_back(WorkerCmd::Refresh),
+                        Some(WorkerSignal::SendFinished(send)) => completed_send = Some(send),
+                        None => {}
+                    },
+                }
+                if let Some(send) = completed_send {
+                    self.mark_busy();
+                    self.finish_send(send).await
+                } else {
+                    Ok(())
                 }
             };
 
             // 3. Any connection-level failure: drop the session and start over.
             //    Folder state is kept, so the retry is an incremental sync.
             if let Err(e) = result {
-                self.session = None;
-                self.selected = None;
-                self.jobs.clear();
-                self.busy = false;
-                self.status(SyncStatus::Error(e));
-                sleep(Duration::from_secs(2)).await;
+                if is_connection_failure(&e) {
+                    self.session = None;
+                    self.selected = None;
+                    self.jobs.clear();
+                    self.busy = false;
+                    self.status(SyncStatus::Error(e));
+                    sleep(Duration::from_secs(2)).await;
+                } else {
+                    self.emit(Event::Notice { text: e });
+                }
             }
         }
     }
@@ -487,6 +726,7 @@ impl Worker {
         let mut session = connect(&self.cfg, &self.password).await?;
         let caps = io("CAPABILITY", session.capabilities()).await?;
         self.has_move = caps.has_str("MOVE");
+        self.has_uidplus = caps.has_str("UIDPLUS");
 
         let names: Vec<Name> = io("LIST", async {
             session.list(Some(""), Some("*")).await?.try_collect::<Vec<Name>>().await
@@ -546,7 +786,7 @@ impl Worker {
                         .into_iter()
                         .next()
                         .map(|(_, body)| body)
-                        .ok_or_else(|| "This message is no longer on the server.".to_string())
+                        .unwrap_or_else(|| Err("This message is no longer on the server.".to_string()))
                 } else {
                     Err("This folder isn't available on the server.".to_string())
                 };
@@ -616,45 +856,54 @@ impl Worker {
                 Ok(())
             }
             WorkerCmd::SendEmail { raw, draft_uid } => {
-                let result = super::smtp::send_email(&self.cfg, &self.password, &raw).await;
-                match result {
-                    Ok(()) => {
-                        self.emit(Event::EmailSent { account: self.index });
-                        // The message left; the draft it was written from is now obsolete.
-                        if let Some(uid) = draft_uid {
-                            match self.delete_message(DRAFTS, uid).await {
-                                Ok(()) => self.push_sync_front(DRAFTS),
-                                Err(e) => self.emit(Event::Notice {
-                                    text: format!("Sent, but could not remove the draft: {e}"),
-                                }),
-                            }
-                        }
-                        // Gmail files mail sent through its own SMTP server into Sent by itself;
-                        // every other server needs an APPEND.
-                        if !self.smtp_is_gmail() {
-                            if let Err(e) = self.append_sent(&raw).await {
-                                self.emit(Event::Notice {
-                                    text: format!("Sent, but could not save to Sent folder: {e}"),
-                                });
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        // Don't let the message disappear with the closed compose pane:
-                        // keep a copy in Drafts so the user can fix the problem and resend.
-                        let saved = match self.append_draft(raw).await {
-                            Ok(Some(_)) => " A copy was saved to Drafts.",
-                            _ => " It could not be saved to Drafts either.",
-                        };
-                        self.emit(Event::EmailSendFailed {
-                            account: self.index,
-                            error: format!("{}.{saved}", e.trim_end_matches('.')),
-                        });
-                    }
-                }
+                let cfg = self.cfg.clone();
+                let password = self.password.clone();
+                let signals = self.signals_tx.clone();
+                tokio::spawn(async move {
+                    let result = super::smtp::send_email(&cfg, &password, &raw).await;
+                    let _ = signals.send(WorkerSignal::SendFinished(SendResult {
+                        raw,
+                        draft_uid,
+                        result,
+                    }));
+                });
                 Ok(())
             }
         }
+    }
+
+    async fn finish_send(&mut self, send: SendResult) -> Res<()> {
+        match send.result {
+            Ok(()) => {
+                self.emit(Event::EmailSent { account: self.index });
+                if let Some(uid) = send.draft_uid {
+                    match self.delete_message(DRAFTS, uid).await {
+                        Ok(()) => self.push_sync_front(DRAFTS),
+                        Err(e) => self.emit(Event::Notice {
+                            text: format!("Sent, but could not remove the draft: {e}"),
+                        }),
+                    }
+                }
+                if !self.smtp_is_gmail() {
+                    if let Err(e) = self.append_sent(&send.raw).await {
+                        self.emit(Event::Notice {
+                            text: format!("Sent, but could not save to Sent folder: {e}"),
+                        });
+                    }
+                }
+            }
+            Err(error) => {
+                let saved = match self.append_draft(send.raw).await {
+                    Ok(Some(_)) => " A copy was saved to Drafts.",
+                    _ => " It could not be saved to Drafts either.",
+                };
+                self.emit(Event::EmailSendFailed {
+                    account: self.index,
+                    error: format!("{}.{saved}", error.trim_end_matches('.')),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// True when outgoing mail goes through Google's SMTP servers (which save their own Sent copy).
@@ -693,6 +942,8 @@ impl Worker {
             });
             return Ok(None);
         };
+        let message_id = message_id_for();
+        let raw = replace_message_id(&raw, &message_id);
         let session = self.session.as_mut().ok_or_else(not_connected)?;
         io("APPEND", async {
             session
@@ -700,8 +951,8 @@ impl Worker {
                 .await
         })
             .await?;
-        // Find the new UID by searching for the highest UID in the Drafts folder
-        let new_uid = self.fetch_highest_uid(DRAFTS).await.unwrap_or(None);
+        // Search for our unique Message-ID, not the highest UID (which may belong to another client).
+        let new_uid = self.find_message_uid(DRAFTS, &message_id).await?;
         // Queue a re-sync so the new draft appears in the list, but do it asynchronously
         // so the compose pane doesn't lose focus immediately.
         self.push_sync_front(DRAFTS);
@@ -728,6 +979,7 @@ impl Worker {
         if !self.ensure_selected(folder).await? {
             return Ok(());
         }
+        let has_uidplus = self.has_uidplus;
         let session = self.session.as_mut().ok_or_else(not_connected)?;
         let set = uid.to_string();
         io("STORE", async {
@@ -738,23 +990,20 @@ impl Worker {
                 .await
         })
             .await?;
-        io("EXPUNGE", async {
-            session.uid_expunge(&set).await?.try_collect::<Vec<u32>>().await
-        })
-            .await?;
+        expunge_uid(session, uid, has_uidplus).await?;
         self.folders[folder].known.remove(&uid);
         Ok(())
     }
 
-    /// Fetch the highest UID in a folder by doing a UID SEARCH ALL.
-    async fn fetch_highest_uid(&mut self, folder: usize) -> Res<Option<u32>> {
+    /// Find a newly appended message by its unique RFC 5322 Message-ID.
+    async fn find_message_uid(&mut self, folder: usize, message_id: &str) -> Res<Option<u32>> {
         if !self.ensure_selected(folder).await? {
             return Ok(None);
         }
         let session = self.session.as_mut().ok_or_else(not_connected)?;
-        let uids: std::collections::HashSet<u32> =
-            io("UID SEARCH", session.uid_search("ALL")).await?;
-        Ok(uids.iter().copied().max())
+        let query = format!("HEADER Message-ID \"{message_id}\"");
+        let uids: std::collections::HashSet<u32> = io("UID SEARCH", session.uid_search(query)).await?;
+        Ok(uids.into_iter().max())
     }
 
     /// Returns Ok(false) if the destination folder doesn't exist on this account.
@@ -766,6 +1015,7 @@ impl Worker {
             return Ok(false);
         }
         let has_move = self.has_move;
+        let has_uidplus = self.has_uidplus;
         let set = uid.to_string();
         let session = self.session.as_mut().ok_or_else(not_connected)?;
 
@@ -782,10 +1032,7 @@ impl Worker {
                     .await
             })
                 .await?;
-            io("EXPUNGE", async {
-                session.uid_expunge(&set).await?.try_collect::<Vec<u32>>().await
-            })
-                .await?;
+            expunge_uid(session, uid, has_uidplus).await?;
         }
 
         self.folders[folder].known.remove(&uid);
@@ -829,7 +1076,7 @@ impl Worker {
                         account: self.index,
                         folder,
                         uid,
-                        result: Ok(body),
+                        result: body,
                     });
                 }
                 Ok(())
@@ -853,14 +1100,45 @@ impl Worker {
 
     /// Fetch and parse full messages from the currently selected folder.
     /// Messages missing from the server are simply absent from the result.
-    async fn fetch_bodies(&mut self, uids: &[u32]) -> Res<Vec<(u32, BodyData)>> {
+    async fn fetch_bodies(&mut self, uids: &[u32]) -> Res<Vec<(u32, Res<BodyData>)>> {
         let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
         let session = self.session.as_mut().ok_or_else(not_connected)?;
-        let fetched = fetch_uid(session, &set, "BODY.PEEK[]").await?;
-        Ok(fetched
-            .iter()
-            .filter_map(|f| Some((f.uid?, parse::parse_body(f.body()?))))
-            .collect())
+        let sizes = fetch_uid(session, &set, "(UID RFC822.SIZE)").await?;
+        let mut results = Vec::new();
+        let mut allowed = Vec::new();
+        for fetch in &sizes {
+            let Some(uid) = fetch.uid else { continue };
+            if fetch.size.is_none() {
+                results.push((uid, Err("The server did not provide this message's size; it was not loaded to avoid an unbounded download.".to_string())));
+            } else if fetch.size.is_some_and(|size| size > MAX_MESSAGE_SIZE) {
+                results.push((uid, Err(format!(
+                    "This message is larger than the {} MiB display limit.",
+                    MAX_MESSAGE_SIZE / (1024 * 1024)
+                ))));
+            } else {
+                allowed.push(uid);
+            }
+        }
+        if allowed.is_empty() {
+            return Ok(results);
+        }
+
+        let allowed_set = allowed.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        let fetched = fetch_uid(session, &allowed_set, "BODY.PEEK[]").await?;
+        for fetch in &fetched {
+            let Some(uid) = fetch.uid else { continue };
+            let Some(body) = fetch.body() else { continue };
+            let result = if body.len() > MAX_MESSAGE_SIZE as usize {
+                Err(format!(
+                    "This message is larger than the {} MiB display limit.",
+                    MAX_MESSAGE_SIZE / (1024 * 1024)
+                ))
+            } else {
+                Ok(parse::parse_body(body))
+            };
+            results.push((uid, result));
+        }
+        Ok(results)
     }
 
     /// Bring one folder up to date. Returns the rows that were new in this pass.
@@ -957,15 +1235,42 @@ impl Worker {
                 }
             }
 
-            // (b) Anything newer than what we've seen. `N:*` always returns at least the
-            //     last message even when N is past the end, hence the uid filter.
+            // (b) Fetch only the newest window of new UIDs so a long-offline account cannot
+            //     create an unbounded header batch. UIDNEXT gives the current upper bound.
             let after = st.last_uid;
-            let fetched = fetch_uid(session, &format!("{}:*", after + 1), HEADER_QUERY).await?;
+            let keep_limit = if f == INBOX { INBOX_LIMIT } else { OTHER_LIMIT };
+            let (fetched, high_water) = if let Some(next_uid) = mailbox.uid_next {
+                let high_water = next_uid.saturating_sub(1);
+                if after >= high_water {
+                    (Vec::new(), high_water)
+                } else {
+                    let earliest_kept = high_water.saturating_sub(keep_limit - 1);
+                    let first_uid = earliest_kept.max(after.saturating_add(1));
+                    if first_uid > high_water {
+                        (Vec::new(), high_water)
+                    } else {
+                        (
+                            fetch_uid(
+                                session,
+                                &format!("{first_uid}:{high_water}"),
+                                HEADER_QUERY,
+                            )
+                            .await?,
+                            high_water,
+                        )
+                    }
+                }
+            } else {
+                // UIDNEXT is optional; sequence numbers still let us fetch a bounded newest page.
+                let first_sequence = mailbox.exists.saturating_sub(keep_limit - 1).max(1);
+                (fetch_seq(session, &format!("{first_sequence}:*"), HEADER_QUERY).await?, 0)
+            };
             let rows: Vec<HeaderRow> = fetched
                 .iter()
                 .filter(|x| x.uid.is_some_and(|u| u > after))
                 .filter_map(|x| header_row(x, sent_like))
                 .collect();
+            st.last_uid = st.last_uid.max(high_water);
             for r in &rows {
                 st.known.insert(r.uid, r.unread);
                 st.last_uid = st.last_uid.max(r.uid);
@@ -974,6 +1279,12 @@ impl Worker {
                 new_rows.extend(rows.iter().cloned());
                 let _ = events.try_send(Event::Headers { account: index, folder: f, rows });
             }
+        }
+
+        let keep_limit = if f == INBOX { INBOX_LIMIT as usize } else { OTHER_LIMIT as usize };
+        let removed = prune_known(&mut st.known, keep_limit);
+        if !removed.is_empty() {
+            let _ = events.try_send(Event::Removed { account: index, folder: f, uids: removed });
         }
 
         st.synced = true;
@@ -988,21 +1299,33 @@ impl Worker {
 
 /// Keeps a dedicated connection in IMAP IDLE on INBOX and pokes the worker when the
 /// server reports a change. Reconnects forever with backoff.
-pub async fn idle_loop(cfg: AccountConfig, password: String, poke: UnboundedSender<WorkerCmd>) {
+async fn idle_loop(
+    cfg: AccountConfig,
+    password: String,
+    poke: UnboundedSender<WorkerSignal>,
+    mut cancel: oneshot::Receiver<()>,
+) {
     let mut backoff = Duration::from_secs(5);
     loop {
-        match idle_session(&cfg, &password, &poke).await {
+        let result = tokio::select! {
+            _ = &mut cancel => return,
+            result = idle_session(&cfg, &password, &poke) => result,
+        };
+        match result {
             Ok(()) => backoff = Duration::from_secs(5),
             Err(_) => backoff = (backoff * 2).min(Duration::from_secs(300)),
         }
-        sleep(backoff).await;
+        tokio::select! {
+            _ = &mut cancel => return,
+            _ = sleep(backoff) => {}
+        }
     }
 }
 
 async fn idle_session(
     cfg: &AccountConfig,
     password: &str,
-    poke: &UnboundedSender<WorkerCmd>,
+    poke: &UnboundedSender<WorkerSignal>,
 ) -> Res<()> {
     let mut session = connect(cfg, password).await?;
     let caps = io("CAPABILITY", session.capabilities()).await?;
@@ -1011,7 +1334,7 @@ async fn idle_session(
         // Rare: no push support. Fall back to a gentle poll.
         loop {
             sleep(Duration::from_secs(120)).await;
-            if poke.send(WorkerCmd::Refresh).is_err() {
+            if poke.send(WorkerSignal::Refresh).is_err() {
                 return Ok(());
             }
         }
@@ -1027,7 +1350,7 @@ async fn idle_session(
         session = io("DONE", handle.done()).await?;
 
         if let IdleResponse::NewData(_) = reason {
-            if poke.send(WorkerCmd::Refresh).is_err() {
+            if poke.send(WorkerSignal::Refresh).is_err() {
                 return Ok(()); // worker is gone
             }
             sleep(Duration::from_secs(1)).await; // coalesce bursts of notifications
@@ -1049,7 +1372,6 @@ pub fn spawn_account(
     events: async_channel::Sender<Event>,
 ) -> UnboundedSender<WorkerCmd> {
     let (tx, rx) = unbounded_channel();
-    let poke = tx.clone();
 
     tokio::spawn(async move {
         let password = match password {
@@ -1074,9 +1396,78 @@ pub fn spawn_account(
             }
         };
 
-        tokio::spawn(idle_loop(cfg.clone(), password.clone(), poke));
-        Worker::new(index, cfg, password, events, rx).run().await;
+        let (signals_tx, signals_rx) = unbounded_channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        tokio::spawn(idle_loop(
+            cfg.clone(),
+            password.clone(),
+            signals_tx.clone(),
+            cancel_rx,
+        ));
+        Worker::new(index, cfg, password, events, rx, signals_tx, signals_rx).run().await;
+        let _ = cancel_tx.send(());
     });
 
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_uid_window_prunes_only_oldest_uids() {
+        let mut known = BTreeMap::from([(1, true), (2, false), (3, true), (4, false)]);
+        let removed = prune_known(&mut known, 2);
+        assert_eq!(removed, vec![1, 2]);
+        assert_eq!(known, BTreeMap::from([(3, true), (4, false)]));
+    }
+
+    #[test]
+    fn date_header_wins_and_internal_date_is_a_fallback() {
+        let date = b"Fri, 21 Nov 1997 09:55:06 -0600";
+        let expected = chrono::DateTime::parse_from_rfc2822(
+            std::str::from_utf8(date).expect("valid date text"),
+        )
+        .expect("valid RFC 2822 date")
+        .timestamp();
+        assert_eq!(message_timestamp(Some(date), Some(123)), expected);
+        assert_eq!(message_timestamp(None, Some(123)), 123);
+        assert_eq!(message_timestamp(Some(b"not a date"), Some(123)), 123);
+    }
+
+    #[test]
+    fn draft_message_id_is_unique_and_header_replacement_is_single() {
+        let first = message_id_for();
+        let second = message_id_for();
+        assert_ne!(first, second);
+        let replaced = replace_message_id(
+            "Subject: test\r\nMessage-ID: <old@example.com>\r\n\tcontinued\r\n\r\nbody",
+            &first,
+        );
+        assert_eq!(replaced.matches("Message-ID:").count(), 1);
+        assert!(replaced.contains(&format!("Message-ID: {first}\r\n")));
+        assert!(replaced.ends_with("\r\n\r\nbody"));
+    }
+
+    #[test]
+    fn only_transport_errors_trigger_reconnects() {
+        assert!(is_connection_failure("SELECT: io: connection reset"));
+        assert!(is_connection_failure("SELECT: connection lost"));
+        assert!(is_connection_failure("SELECT: timed out"));
+        assert!(!is_connection_failure("STORE: no response: mailbox is read-only"));
+        assert!(!is_connection_failure("UID MOVE: bad response: unsupported"));
+    }
+
+    #[test]
+    fn xoauth2_response_uses_the_standard_bearer_payload() {
+        let mut authenticator = Xoauth2Authenticator {
+            username: "alice@example.com".to_string(),
+            token: "access-token".to_string(),
+        };
+        assert_eq!(
+            authenticator.process(&[]),
+            "user=alice@example.com\x01auth=Bearer access-token\x01\x01"
+        );
+    }
 }
