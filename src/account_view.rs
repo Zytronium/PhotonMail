@@ -10,6 +10,12 @@ use crate::{
     widgets::{avatar, divider, icon},
 };
 
+const GMAIL_LOGO: &[u8] = include_bytes!("../assets/provider-logos/gmail.svg");
+const OUTLOOK_LOGO: &[u8] = include_bytes!("../assets/provider-logos/outlook.svg");
+const ICLOUD_LOGO: &[u8] = include_bytes!("../assets/provider-logos/icloud.svg");
+const YAHOO_LOGO: &[u8] = include_bytes!("../assets/provider-logos/yahoo.svg");
+const FASTMAIL_LOGO: &[u8] = include_bytes!("../assets/provider-logos/fastmail.svg");
+
 /// Multi-step account setup flow, inspired by SubspaceMail's wizard-style onboarding.
 ///
 /// Steps:
@@ -79,6 +85,7 @@ impl Component for AddAccountView {
         let smtp_port = use_state(|| "587".to_string());
         let mut working = use_state(|| false);
         let current_step = use_state(|| SetupStep::Account);
+        let show_provider_picker = use_state(|| true);
 
         // Auto-detect status: tracks the async DNS/autoconfig discovery
         let detecting = use_state(|| false);
@@ -89,112 +96,53 @@ impl Component for AddAccountView {
             working.set(false);
         }
 
-        // Auto-discover server settings from email domain when advancing from Account step.
-        // Uses the built-in provider database (discover_settings) for known providers,
-        // and falls back to heuristic guessing for unknown domains.
-        let discover_host = {
+        // Runs discovery away from the UI executor and only returns results to Freya state.
+        let discover = {
             let email = email.clone();
-            let mut host = host.clone();
-            let mut port = port.clone();
-            let mut smtp_host = smtp_host.clone();
-            let mut smtp_port = smtp_port.clone();
-            move || {
-                if host.read().is_empty() || smtp_host.read().is_empty() {
-                    let addr = email.read().trim().to_string();
-                    // Try the built-in provider database first
-                    if let Some(settings) = crate::mail::config::discover_settings(&addr) {
-                        if host.read().is_empty() {
-                            host.set(settings.imap.host.to_string());
-                        }
-                        if port.read().as_str() == "993" {
-                            port.set(settings.imap.port.to_string());
-                        }
-                        if smtp_host.read().is_empty() {
-                            smtp_host.set(settings.smtp.host.to_string());
-                        }
-                        if smtp_port.read().as_str() == "587" {
-                            smtp_port.set(settings.smtp.port.to_string());
-                        }
-                        return;
-                    }
-                    // Fallback: heuristic guessing for unknown domains
-                    if host.read().is_empty() {
-                        if let Some(domain) = addr.split('@').nth(1) {
-                            host.set(format!("imap.{domain}"));
-                        }
-                    }
-                    if smtp_host.read().is_empty() {
-                        let h = host.read().trim().to_lowercase();
-                        if !h.is_empty() {
-                            let suggested = if let Some(rest) = ["imap-mail.", "imap.", "imaps."]
-                                .iter()
-                                .find_map(|p| h.strip_prefix(p))
-                            {
-                                format!("smtp.{rest}")
-                            } else if h.starts_with("smtp.") || h.starts_with("mail.") {
-                                h.clone()
-                            } else {
-                                format!("smtp.{}", h.trim_start_matches("imap.").trim_start_matches("imap-").trim_start_matches("imaps."))
-                            };
-                            smtp_host.set(suggested);
-                        }
-                    }
-                }
-            }
-        };
-
-        // Auto-detect: triggered by the "Auto-detect" button.
-        // First tries the built-in provider database (instant), then falls back to
-        // async DNS/autoconfig discovery for unknown domains.
-        // Uses a channel to send results back to the UI thread (Freya State is !Send).
-        let auto_detect = {
-            let email = email.clone();
-            let mut host = host.clone();
-            let mut port = port.clone();
-            let mut smtp_host = smtp_host.clone();
-            let mut smtp_port = smtp_port.clone();
+            let host = host.clone();
+            let port = port.clone();
+            let smtp_host = smtp_host.clone();
+            let smtp_port = smtp_port.clone();
             let mut detecting = detecting.clone();
             let mut detect_status = detect_status.clone();
-            move || {
-                let addr = email.read().trim().to_string();
-
-                // Try built-in database first (instant, offline)
-                if let Some(settings) = crate::mail::config::discover_settings(&addr) {
-                    host.set(settings.imap.host.to_string());
-                    port.set(settings.imap.port.to_string());
-                    smtp_host.set(settings.smtp.host.to_string());
-                    smtp_port.set(settings.smtp.port.to_string());
-                    detect_status.set("✓ Settings found from provider database".to_string());
+            move |force: bool| {
+                if !force && !host.read().is_empty() && !smtp_host.read().is_empty() {
                     return;
                 }
-
-                // Not in database — run DNS/autoconfig discovery on a background thread
-                // with its own Tokio runtime (hickory-resolver requires Tokio).
+                let addr = email.read().trim().to_string();
                 detecting.set(true);
                 detect_status.set("Looking up server settings…".to_string());
 
-                let mut h = host.clone();
-                let mut p = port.clone();
-                let mut sh = smtp_host.clone();
-                let mut sp = smtp_port.clone();
-                let mut det = detecting.clone();
-                let mut ds = detect_status.clone();
-
+                let result = crate::mail::discovery::discover_in_background(addr);
+                let mut result_host = host.clone();
+                let mut result_port = port.clone();
+                let mut result_smtp_host = smtp_host.clone();
+                let mut result_smtp_port = smtp_port.clone();
+                let mut result_detecting = detecting.clone();
+                let mut result_status = detect_status.clone();
                 freya::prelude::spawn(async move {
-                    let result = crate::mail::discovery::discover_sync(&addr);
+                    let result = result.recv().await.unwrap_or_else(|_| {
+                        crate::mail::discovery::DiscoveryResult::Failed(
+                            "Server discovery could not be started.".to_string(),
+                        )
+                    });
                     match result {
                         crate::mail::discovery::DiscoveryResult::Found(s) => {
-                            h.set(s.imap_host);
-                            p.set(s.imap_port.to_string());
-                            sh.set(s.smtp_host);
-                            sp.set(s.smtp_port.to_string());
-                            ds.set("✓ Server settings detected automatically".to_string());
+                            if force || result_host.read().is_empty() {
+                                result_host.set(s.imap_host);
+                                result_port.set(s.imap_port.to_string());
+                            }
+                            if force || result_smtp_host.read().is_empty() {
+                                result_smtp_host.set(s.smtp_host);
+                                result_smtp_port.set(s.smtp_port.to_string());
+                            }
+                            result_status.set("✓ Server settings detected automatically".to_string());
                         }
                         crate::mail::discovery::DiscoveryResult::Failed(msg) => {
-                            ds.set(format!("✗ {msg}"));
+                            result_status.set(format!("✗ {msg}"));
                         }
                     }
-                    det.set(false);
+                    result_detecting.set(false);
                 });
             }
         };
@@ -210,18 +158,36 @@ impl Component for AddAccountView {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(12.)
-                    .child(label().text("Add account").font_size(20.).font_weight(FontWeight::BOLD).color(DARK.text))
+                    .child(label().text("Add a mailbox").font_size(20.).font_weight(FontWeight::BOLD).color(DARK.text))
             );
 
         if demo {
             return col.child(label().text("Demo mode: accounts are disabled. Run without --demo to add one.").color(DARK.muted));
         }
 
-        // Step indicator
-        col = col.child(StepIndicator { current: *current_step.read() });
+        if !*show_provider_picker.read() {
+            col = col.child(StepIndicator { current: *current_step.read() });
+        }
 
         // Step content (scrollable so buttons aren't cut off)
-        let step_content = match *current_step.read() {
+        let step_content = if *show_provider_picker.read() {
+            let mut show_picker = show_provider_picker.clone();
+            let other_handler = EventHandler::new(move |_| show_picker.set(false));
+            rect()
+                .spacing(14.)
+                .child(label().text("Choose your email provider to get started.").color(DARK.muted).font_size(14.))
+                .child(
+                    rect()
+                        .spacing(10.)
+                        .child(provider_choice("Gmail", GMAIL_LOGO, false, None))
+                        .child(provider_choice("Outlook", OUTLOOK_LOGO, false, None))
+                        .child(provider_choice("iCloud", ICLOUD_LOGO, false, None))
+                        .child(provider_choice("Yahoo", YAHOO_LOGO, false, None))
+                        .child(provider_choice("Fastmail", FASTMAIL_LOGO, false, None))
+                        .child(provider_choice("Other (IMAP / SMTP)", MAIL, true, Some(other_handler))),
+                )
+        } else {
+            match *current_step.read() {
             SetupStep::Account => {
                 rect().spacing(12.)
                     .child(label().text("Enter your email details to get started.").color(DARK.muted).font_size(13.))
@@ -281,7 +247,7 @@ impl Component for AddAccountView {
                     })
                     .child({
                         // Auto-detect button
-                        let mut detect = auto_detect.clone();
+                        let mut detect = discover.clone();
                         let is_detecting = detecting.clone();
                         rect()
                             .padding((6., 14., 6., 14.))
@@ -298,7 +264,7 @@ impl Component for AddAccountView {
                             .spacing(6.)
                             .on_press(move |_| {
                                 if !*is_detecting.read() {
-                                    detect();
+                                    detect(true);
                                 }
                             })
                             .child(icon(SEARCH, 14., DARK.muted))
@@ -357,13 +323,18 @@ impl Component for AddAccountView {
                             .child(VerifyRow { label: "Auth", value: "Password".to_string() })
                     )
             }
+            }
         };
-        col = col.child(
-            ScrollView::new()
-                .width(Size::fill())
-                .height(Size::flex(1.))
-                .child(step_content)
-        );
+        if *show_provider_picker.read() {
+            col = col.child(step_content);
+        } else {
+            col = col.child(
+                ScrollView::new()
+                    .width(Size::fill())
+                    .height(Size::flex(1.))
+                    .child(step_content),
+            );
+        }
 
         // Error / working status
         if let Some(e) = error {
@@ -441,7 +412,7 @@ impl Component for AddAccountView {
                 .child(label().text(if *working.read() { "Connecting…" } else { "Connect" }).color(DARK.text).font_size(13.).font_weight(FontWeight::BOLD))
         } else {
             let mut step = current_step;
-            let mut discover = discover_host.clone();
+            let mut start_discovery = discover.clone();
             rect()
                 .padding((8., 18., 8., 18.))
                 .corner_radius(6.)
@@ -450,7 +421,9 @@ impl Component for AddAccountView {
                 .cursor(freya::winit::window::CursorIcon::Pointer)
                 .on_press(move |_| {
                     if can_next {
-                        discover();
+                        if *step.read() == SetupStep::Account {
+                            start_discovery(false);
+                        }
                         let next = std::cmp::min(step.read().index() + 1, 2);
                         step.set(SetupStep::all()[next]);
                     }
@@ -500,7 +473,9 @@ impl Component for AddAccountView {
             })
             .child(action_button);
 
-        col = col.child(nav_row);
+        if !*show_provider_picker.read() {
+            col = col.child(nav_row);
+        }
         col
     }
 }
@@ -616,10 +591,10 @@ impl Component for EditAccountView {
                         .child({
                             // Auto-detect button for Edit Account — supports async DNS discovery
                             let email = email.clone();
-                            let mut host = host.clone();
-                            let mut port = port.clone();
-                            let mut smtp_host = smtp_host.clone();
-                            let mut smtp_port = smtp_port.clone();
+                            let host = host.clone();
+                            let port = port.clone();
+                            let smtp_host = smtp_host.clone();
+                            let smtp_port = smtp_port.clone();
                             let mut is_detecting = edit_detecting.clone();
                             let mut detect_status = edit_detect_status.clone();
                             rect()
@@ -640,19 +615,9 @@ impl Component for EditAccountView {
                                         return;
                                     }
                                     let addr = email.read().trim().to_string();
-                                    // Try built-in database first
-                                    if let Some(settings) = crate::mail::config::discover_settings(&addr) {
-                                        host.set(settings.imap.host.to_string());
-                                        port.set(settings.imap.port.to_string());
-                                        smtp_host.set(settings.smtp.host.to_string());
-                                        smtp_port.set(settings.smtp.port.to_string());
-                                        detect_status.set("✓ Settings found from provider database".to_string());
-                                        return;
-                                    }
-                                    // DNS/autoconfig discovery — runs on a background thread with its own
-                                    // Tokio runtime (hickory-resolver requires Tokio).
                                     is_detecting.set(true);
                                     detect_status.set("Looking up server settings…".to_string());
+                                    let result = crate::mail::discovery::discover_in_background(addr);
                                     let mut h = host.clone();
                                     let mut p = port.clone();
                                     let mut sh = smtp_host.clone();
@@ -660,7 +625,11 @@ impl Component for EditAccountView {
                                     let mut det = is_detecting.clone();
                                     let mut ds = detect_status.clone();
                                     freya::prelude::spawn(async move {
-                                        let result = crate::mail::discovery::discover_sync(&addr);
+                                        let result = result.recv().await.unwrap_or_else(|_| {
+                                            crate::mail::discovery::DiscoveryResult::Failed(
+                                                "Server discovery could not be started.".to_string(),
+                                            )
+                                        });
                                         match result {
                                             crate::mail::discovery::DiscoveryResult::Found(s) => {
                                                 h.set(s.imap_host);
@@ -957,6 +926,68 @@ fn field(name: &str, value: &str, color: (u8, u8, u8)) -> Rect {
         .spacing(12.)
         .child(label().text(format!("{name}:")).color(DARK.muted))
         .child(label().text(value.to_string()).color(color))
+}
+
+fn provider_choice(
+    title: &'static str,
+    logo: &'static [u8],
+    enabled: bool,
+    on_press: Option<EventHandler<Event<PressEventData>>>,
+) -> Rect {
+    let choice = rect()
+        .width(Size::fill())
+        .height(Size::px(68.))
+        .padding((12., 16., 12., 16.))
+        .corner_radius(10.)
+        .background(crate::grain::panel())
+        .border(Border::new().fill((47, 47, 52)).width(1.))
+        .horizontal()
+        .content(Content::Flex)
+        .cross_align(Alignment::Center)
+        .spacing(12.)
+        .child(
+            rect()
+                .width(Size::px(30.))
+                .height(Size::px(30.))
+                .center()
+                .child(
+                    SvgViewer::new(logo)
+                        .key(title)
+                        .width(Size::px(26.))
+                        .height(Size::px(26.))
+                        .show_loader(false),
+                ),
+        )
+        .child(
+            rect()
+                .width(Size::flex(1.))
+                .spacing(2.)
+                .child(
+                    label()
+                        .text(title)
+                        .color(if enabled { DARK.text } else { DARK.muted })
+                        .font_size(14.),
+                )
+                .child(
+                    label()
+                        .text(if enabled { "" } else { "Coming soon" })
+                        .color(DARK.muted)
+                        .font_size(10.),
+                ),
+        );
+
+    if enabled {
+        if let Some(handler) = on_press {
+            choice
+                .cursor(freya::winit::window::CursorIcon::Pointer)
+                .on_press(handler)
+        } else {
+            choice
+        }
+    } else {
+        choice
+            .cursor(freya::winit::window::CursorIcon::Default)
+    }
 }
 
 #[derive(PartialEq, Clone)]
