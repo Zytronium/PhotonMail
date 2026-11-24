@@ -70,6 +70,8 @@ pub struct HtmlHandle {
     history: State<HtmlHistory>,
     view: State<Option<Rc<RefCell<BlitzState>>>>,
     anchor: State<Option<AnchorRect>>,
+    intercept_navigation: State<bool>,
+    pending_navigation: State<Option<String>>,
 }
 
 impl HtmlHandle {
@@ -89,6 +91,8 @@ impl HtmlHandle {
             }),
             view: State::create(None),
             anchor: State::create(None),
+            intercept_navigation: State::create(false),
+            pending_navigation: State::create(None),
         }
     }
 
@@ -101,6 +105,8 @@ impl HtmlHandle {
             }),
             view: State::create_global(None),
             anchor: State::create_global(None),
+            intercept_navigation: State::create_global(false),
+            pending_navigation: State::create_global(None),
         }
     }
 
@@ -126,7 +132,28 @@ impl HtmlHandle {
 
     /// Load the URL, discarding any forward history.
     pub fn navigate(&mut self, url: impl Into<String>) {
-        self.push(HtmlSource::Url(url.into()));
+        let url = url.into();
+        if *self.intercept_navigation.peek() {
+            self.pending_navigation.set(Some(url));
+        } else {
+            self.push(HtmlSource::Url(url));
+        }
+    }
+
+    /// Intercept navigations initiated by links instead of loading their targets.
+    pub fn set_navigation_interception(&mut self, intercept: bool) {
+        if *self.intercept_navigation.peek() != intercept {
+            self.intercept_navigation.set(intercept);
+        }
+    }
+
+    /// Consume a link target intercepted by this handle without changing the displayed document.
+    pub fn take_intercepted_navigation(&mut self) -> Option<String> {
+        let url = self.pending_navigation.read().clone();
+        if url.is_some() {
+            self.pending_navigation.set(None);
+        }
+        url
     }
 
     /// Load inline HTML + CSS and its configuration, discarding any forward history.

@@ -20,6 +20,7 @@ use crate::{
         image_content_type, image_extension_for_content_type, quoted_printable_encode,
     },
     state::{AppState, ComposePre},
+    model::NoticeSeverity,
     theme::DARK,
     widgets::{divider, icon, IconButton},
 };
@@ -91,6 +92,165 @@ fn missing_image(images: &[(char, String)]) -> Option<String> {
                 .unwrap_or(path.as_str())
                 .to_string()
         })
+}
+
+fn build_raw_message(
+    from_header: &str,
+    from_email: &str,
+    to: &str,
+    cc: &str,
+    bcc: &str,
+    subject: &str,
+    body: &str,
+    formats: &[FormatFlags],
+    links: &[String],
+    images: &[(char, String)],
+    forwarded_html: Option<&str>,
+    forwarded_plain: Option<&str>,
+    threading: Option<&ComposePreThreading>,
+    include_message_id: bool,
+) -> String {
+    let mut html_body = build_html_body_with_images(body, formats, links, images);
+    let mut plain_body = body.chars().filter(|character| !is_placeholder(*character)).collect::<String>();
+
+    if let Some(forwarded_html) = forwarded_html {
+        if !html_body.is_empty() {
+            html_body.push_str(forwarded_html);
+        } else {
+            html_body = forwarded_html.to_string();
+        }
+    }
+    if let Some(forwarded_plain) = forwarded_plain {
+        if !plain_body.is_empty() {
+            plain_body.push('\n');
+        }
+        plain_body.push_str(forwarded_plain);
+    }
+
+    let boundary = generate_mime_boundary("alt");
+    let boundary_related = generate_mime_boundary("related");
+    let mut raw = String::new();
+    if !from_header.is_empty() {
+        append_header(&mut raw, "From", from_header);
+    }
+    let to_header = format_address_list(to).unwrap_or_else(|_| clean_header_value(to));
+    append_header(&mut raw, "To", &to_header);
+    if !cc.is_empty() {
+        let cc_header = format_address_list(cc).unwrap_or_else(|_| clean_header_value(cc));
+        append_header(&mut raw, "Cc", &cc_header);
+    }
+    if !bcc.is_empty() {
+        let bcc_header = format_address_list(bcc).unwrap_or_else(|_| clean_header_value(bcc));
+        append_header(&mut raw, "Bcc", &bcc_header);
+    }
+    append_header(&mut raw, "Subject", &encode_unstructured_header(subject));
+    append_header(
+        &mut raw,
+        "Date",
+        &chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000").to_string(),
+    );
+    if include_message_id {
+        append_header(
+            &mut raw,
+            "Message-ID",
+            &format!("<{}>", generate_message_id(from_email)),
+        );
+    }
+    if let Some(threading) = threading {
+        if !threading.original_message_id.is_empty() {
+            append_header(
+                &mut raw,
+                "In-Reply-To",
+                &format!("<{}>", threading.original_message_id),
+            );
+            let ancestors = if threading.original_references.is_empty() {
+                threading.original_in_reply_to.as_str()
+            } else {
+                threading.original_references.as_str()
+            };
+            append_header(
+                &mut raw,
+                "References",
+                &build_references(ancestors, &threading.original_message_id),
+            );
+        }
+    }
+    append_header(&mut raw, "MIME-Version", "1.0");
+
+    let has_images = !images.is_empty();
+    append_header(
+        &mut raw,
+        "Content-Type",
+        &format!("multipart/alternative; boundary=\"{boundary}\""),
+    );
+    raw.push_str("\r\n");
+
+    raw.push_str(&format!("--{boundary}\r\n"));
+    append_header(&mut raw, "Content-Type", "text/plain; charset=UTF-8");
+    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
+    raw.push_str("\r\n");
+    raw.push_str(&quoted_printable_encode(&plain_body));
+    raw.push_str("\r\n");
+
+    if has_images {
+        raw.push_str(&format!("--{boundary}\r\n"));
+        append_header(
+            &mut raw,
+            "Content-Type",
+            &format!("multipart/related; type=\"text/html\"; boundary=\"{boundary_related}\""),
+        );
+        raw.push_str("\r\n");
+        raw.push_str(&format!("--{boundary_related}\r\n"));
+        append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
+        append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
+        raw.push_str("\r\n");
+        raw.push_str(&quoted_printable_encode(&html_body));
+        raw.push_str("\r\n");
+
+        for (character, path) in images {
+            let Ok(data) = std::fs::read(path) else { continue };
+            let path = Path::new(path);
+            let extension = path.extension().and_then(|extension| extension.to_str()).unwrap_or("");
+            let content_type = image_content_type(extension);
+            let image_id = format!("img_{}@photonmail", u32::from(*character));
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("image");
+            let filename = encode_mime_parameter(&clean_header_value(filename));
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            raw.push_str(&format!("--{boundary_related}\r\n"));
+            append_header(
+                &mut raw,
+                "Content-Type",
+                &format!("{content_type}; name*=UTF-8''{filename}"),
+            );
+            append_header(&mut raw, "Content-Transfer-Encoding", "base64");
+            append_header(&mut raw, "Content-ID", &format!("<{image_id}>"));
+            append_header(
+                &mut raw,
+                "Content-Disposition",
+                &format!("inline; filename*=UTF-8''{filename}"),
+            );
+            raw.push_str("\r\n");
+            for chunk in encoded.as_bytes().chunks(76) {
+                raw.push_str(std::str::from_utf8(chunk).unwrap_or(""));
+                raw.push_str("\r\n");
+            }
+        }
+        raw.push_str(&format!("--{boundary_related}--\r\n"));
+    } else {
+        raw.push_str(&format!("--{boundary}\r\n"));
+        append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
+        append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
+        raw.push_str("\r\n");
+        raw.push_str(&quoted_printable_encode(&html_body));
+        raw.push_str("\r\n");
+    }
+
+    raw.push_str(&format!("--{boundary}--\r\n"));
+    raw
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
@@ -438,9 +598,10 @@ impl Component for ComposePane {
                 let all_links = links.read().clone();
                 let all_images = images.read().clone();
                 if let Some(name) = missing_image(&all_images) {
-                    s.store.write().notice = Some(format!(
-                        "Couldn't read the image \"{name}\" (moved or deleted?). Remove it from the message and try again."
-                    ));
+                    s.store.write().set_notice(
+                        format!("Couldn't read the image \"{name}\" (moved or deleted?). Remove it from the message and try again."),
+                        NoticeSeverity::Error,
+                    );
                     return;
                 }
                 let account = *selected_account.read();
@@ -448,183 +609,34 @@ impl Component for ComposePane {
                 let forwarded_plain_val = forwarded_plain.read().clone();
 
                 // Look up the sender's address and name from the selected account
-                let from_addr = {
+                let (from_addr, from_email) = {
                     let store = s.store.read();
-                    store.accounts.get(account)
-                        .map(|a| {
-                            format_mailbox_header(
-                                (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
-                                &a.addr,
-                            )
-                        })
-                        .unwrap_or_default()
+                    store.accounts.get(account).map(|a| (
+                        format_mailbox_header(
+                            (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
+                            &a.addr,
+                        ),
+                        a.addr.clone(),
+                    )).unwrap_or_default()
                 };
 
-                // Build HTML body from the editor text + formatting flags (with inline images)
-                let mut html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
-                let mut plain_body = body_val.chars().filter(|c| !is_placeholder(*c)).collect::<String>();
-
-                // Append forwarded content
-                if let Some(ref fwd_html) = forwarded_html_val {
-                    if !html_body.is_empty() {
-                        html_body.push_str(fwd_html);
-                    } else {
-                        html_body = fwd_html.clone();
-                    }
-                }
-                if let Some(ref fwd_plain) = forwarded_plain_val {
-                    if !plain_body.is_empty() {
-                        plain_body.push('\n');
-                    }
-                    plain_body.push_str(fwd_plain);
-                }
-
-                // Build a multipart/alternative RFC-2822 message with embedded images
-                let boundary = generate_mime_boundary("alt");
-                let boundary_related = generate_mime_boundary("related");
-                let mut raw = String::new();
-                if !from_addr.is_empty() {
-                    append_header(&mut raw, "From", &from_addr);
-                }
-                let to_header = format_address_list(&to_val)
-                    .unwrap_or_else(|_| clean_header_value(&to_val));
-                append_header(&mut raw, "To", &to_header);
-                if !cc_val.is_empty() {
-                    let cc_header = format_address_list(&cc_val)
-                        .unwrap_or_else(|_| clean_header_value(&cc_val));
-                    append_header(&mut raw, "Cc", &cc_header);
-                }
-                // Bcc is stripped from the headers by the SMTP layer before transmission
-                if !bcc_val.is_empty() {
-                    let bcc_header = format_address_list(&bcc_val)
-                        .unwrap_or_else(|_| clean_header_value(&bcc_val));
-                    append_header(&mut raw, "Bcc", &bcc_header);
-                }
-                append_header(&mut raw, "Subject", &encode_unstructured_header(&subject_val));
-                append_header(
-                    &mut raw,
-                    "Date",
-                    &chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000").to_string(),
+                // The outgoing message gets a Message-ID that is shared with its Sent copy.
+                let raw = build_raw_message(
+                    &from_addr,
+                    &from_email,
+                    &to_val,
+                    &cc_val,
+                    &bcc_val,
+                    &subject_val,
+                    &body_val,
+                    &all_formats,
+                    &all_links,
+                    &all_images,
+                    forwarded_html_val.as_deref(),
+                    forwarded_plain_val.as_deref(),
+                    threading.as_ref(),
+                    true,
                 );
-                // Our own Message-ID, so the Sent copy matches what recipients receive
-                let from_bare = s
-                    .store
-                    .read()
-                    .accounts
-                    .get(account)
-                    .map(|a| a.addr.clone())
-                    .unwrap_or_default();
-                append_header(
-                    &mut raw,
-                    "Message-ID",
-                    &format!("<{}>", generate_message_id(&from_bare)),
-                );
-                // Add In-Reply-To and References headers for reply threading
-                if let Some(ref thr) = threading {
-                    if !thr.original_message_id.is_empty() {
-                        append_header(
-                            &mut raw,
-                            "In-Reply-To",
-                            &format!("<{}>", thr.original_message_id),
-                        );
-                        // Fall back to the parent's In-Reply-To when its References are unknown
-                        let ancestors = if thr.original_references.is_empty() {
-                            thr.original_in_reply_to.as_str()
-                        } else {
-                            thr.original_references.as_str()
-                        };
-                        append_header(
-                            &mut raw,
-                            "References",
-                            &build_references(ancestors, &thr.original_message_id),
-                        );
-                    }
-                }
-                append_header(&mut raw, "MIME-Version", "1.0");
-
-                // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
-                let has_images = !all_images.is_empty();
-                append_header(
-                    &mut raw,
-                    "Content-Type",
-                    &format!("multipart/alternative; boundary=\"{}\"", boundary),
-                );
-                raw.push_str("\r\n");
-
-                // Plain text part
-                raw.push_str(&format!("--{}\r\n", boundary));
-                append_header(&mut raw, "Content-Type", "text/plain; charset=UTF-8");
-                append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
-                raw.push_str("\r\n");
-                raw.push_str(&quoted_printable_encode(&plain_body));
-                raw.push_str("\r\n");
-
-                if has_images {
-                    raw.push_str(&format!("--{}\r\n", boundary));
-                    append_header(
-                        &mut raw,
-                        "Content-Type",
-                        &format!(
-                            "multipart/related; type=\"text/html\"; boundary=\"{}\"",
-                            boundary_related
-                        ),
-                    );
-                    raw.push_str("\r\n");
-
-                    // HTML part
-                    raw.push_str(&format!("--{}\r\n", boundary_related));
-                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
-                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
-                    raw.push_str("\r\n");
-                    raw.push_str(&quoted_printable_encode(&html_body));
-                    raw.push_str("\r\n");
-
-                    // Embedded images
-                    for (ch, path) in &all_images {
-                        let Ok(data) = std::fs::read(path) else { continue };
-                        let p = std::path::Path::new(path);
-                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                        let content_type = image_content_type(ext);
-                        let img_id = format!("img_{}@photonmail", u32::from(*ch));
-                        let filename = p
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("image")
-                            .to_string();
-                        let filename = encode_mime_parameter(&clean_header_value(&filename));
-                        use base64::Engine;
-                        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-                        raw.push_str(&format!("--{}\r\n", boundary_related));
-                        append_header(
-                            &mut raw,
-                            "Content-Type",
-                            &format!("{}; name*=UTF-8''{}", content_type, filename),
-                        );
-                        append_header(&mut raw, "Content-Transfer-Encoding", "base64");
-                        append_header(&mut raw, "Content-ID", &format!("<{}>", img_id));
-                        append_header(
-                            &mut raw,
-                            "Content-Disposition",
-                            &format!("inline; filename*=UTF-8''{}", filename),
-                        );
-                        raw.push_str("\r\n");
-                        for chunk in encoded.as_bytes().chunks(76) {
-                            raw.push_str(std::str::from_utf8(chunk).unwrap_or(""));
-                            raw.push_str("\r\n");
-                        }
-                    }
-                    raw.push_str(&format!("--{}--\r\n", boundary_related));
-                } else {
-                    raw.push_str(&format!("--{}\r\n", boundary));
-                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
-                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
-                    raw.push_str("\r\n");
-                    raw.push_str(&quoted_printable_encode(&html_body));
-                    raw.push_str("\r\n");
-                }
-
-                // Closing boundary
-                raw.push_str(&format!("--{}--\r\n", boundary));
 
                 // If this message was being edited as a draft, that draft is deleted once the
                 // send succeeds. (A draft in a different account is deleted right away; if the
@@ -675,9 +687,10 @@ impl Component for ComposePane {
                 let all_links = links.read().clone();
                 let all_images = images.read().clone();
                 if let Some(name) = missing_image(&all_images) {
-                    s.store.write().notice = Some(format!(
-                        "Couldn't read the image \"{name}\" (moved or deleted?). Remove it from the message and try again."
-                    ));
+                    s.store.write().set_notice(
+                        format!("Couldn't read the image \"{name}\" (moved or deleted?). Remove it from the message and try again."),
+                        NoticeSeverity::Error,
+                    );
                     return;
                 }
                 let account = *selected_account.read();
@@ -685,170 +698,33 @@ impl Component for ComposePane {
                 let forwarded_plain_val = forwarded_plain.read().clone();
 
                 // Look up the sender's address and name from the selected account
-                let from_addr = {
+                let (from_addr, from_email) = {
                     let store = s.store.read();
-                    store.accounts.get(account)
-                        .map(|a| {
-                            format_mailbox_header(
-                                (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
-                                &a.addr,
-                            )
-                        })
-                        .unwrap_or_default()
+                    store.accounts.get(account).map(|a| (
+                        format_mailbox_header(
+                            (!a.sender_name.is_empty()).then_some(a.sender_name.as_str()),
+                            &a.addr,
+                        ),
+                        a.addr.clone(),
+                    )).unwrap_or_default()
                 };
 
-                // Build HTML body from the editor text + formatting flags (with inline images)
-                let mut html_body = build_html_body_with_images(&body_val, &all_formats, &all_links, &all_images);
-                let mut plain_body = body_val.chars().filter(|c| !is_placeholder(*c)).collect::<String>();
-
-                // Append forwarded content
-                if let Some(ref fwd_html) = forwarded_html_val {
-                    if !html_body.is_empty() {
-                        html_body.push_str(fwd_html);
-                    } else {
-                        html_body = fwd_html.clone();
-                    }
-                }
-                if let Some(ref fwd_plain) = forwarded_plain_val {
-                    if !plain_body.is_empty() {
-                        plain_body.push('\n');
-                    }
-                    plain_body.push_str(fwd_plain);
-                }
-
-                // Build a multipart/alternative RFC-2822 message with embedded images
-                let boundary = generate_mime_boundary("alt");
-                let boundary_related = generate_mime_boundary("related");
-                let mut raw = String::new();
-                if !from_addr.is_empty() {
-                    append_header(&mut raw, "From", &from_addr);
-                }
-                let to_header = format_address_list(&to_val)
-                    .unwrap_or_else(|_| clean_header_value(&to_val));
-                append_header(&mut raw, "To", &to_header);
-                if !cc_val.is_empty() {
-                    let cc_header = format_address_list(&cc_val)
-                        .unwrap_or_else(|_| clean_header_value(&cc_val));
-                    append_header(&mut raw, "Cc", &cc_header);
-                }
-                if !bcc_val.is_empty() {
-                    let bcc_header = format_address_list(&bcc_val)
-                        .unwrap_or_else(|_| clean_header_value(&bcc_val));
-                    append_header(&mut raw, "Bcc", &bcc_header);
-                }
-                append_header(&mut raw, "Subject", &encode_unstructured_header(&subject_val));
-                append_header(
-                    &mut raw,
-                    "Date",
-                    &chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000").to_string(),
+                let raw = build_raw_message(
+                    &from_addr,
+                    &from_email,
+                    &to_val,
+                    &cc_val,
+                    &bcc_val,
+                    &subject_val,
+                    &body_val,
+                    &all_formats,
+                    &all_links,
+                    &all_images,
+                    forwarded_html_val.as_deref(),
+                    forwarded_plain_val.as_deref(),
+                    threading.as_ref(),
+                    false,
                 );
-                // Add In-Reply-To and References headers for reply threading
-                if let Some(ref thr) = threading {
-                    if !thr.original_message_id.is_empty() {
-                        append_header(
-                            &mut raw,
-                            "In-Reply-To",
-                            &format!("<{}>", thr.original_message_id),
-                        );
-                        // Fall back to the parent's In-Reply-To when its References are unknown
-                        let ancestors = if thr.original_references.is_empty() {
-                            thr.original_in_reply_to.as_str()
-                        } else {
-                            thr.original_references.as_str()
-                        };
-                        append_header(
-                            &mut raw,
-                            "References",
-                            &build_references(ancestors, &thr.original_message_id),
-                        );
-                    }
-                }
-                append_header(&mut raw, "MIME-Version", "1.0");
-
-                // Structure: multipart/alternative { text/plain, text/html | multipart/related { text/html, images } }
-                let has_images = !all_images.is_empty();
-                append_header(
-                    &mut raw,
-                    "Content-Type",
-                    &format!("multipart/alternative; boundary=\"{}\"", boundary),
-                );
-                raw.push_str("\r\n");
-
-                // Plain text part
-                raw.push_str(&format!("--{}\r\n", boundary));
-                append_header(&mut raw, "Content-Type", "text/plain; charset=UTF-8");
-                append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
-                raw.push_str("\r\n");
-                raw.push_str(&quoted_printable_encode(&plain_body));
-                raw.push_str("\r\n");
-
-                if has_images {
-                    raw.push_str(&format!("--{}\r\n", boundary));
-                    append_header(
-                        &mut raw,
-                        "Content-Type",
-                        &format!(
-                            "multipart/related; type=\"text/html\"; boundary=\"{}\"",
-                            boundary_related
-                        ),
-                    );
-                    raw.push_str("\r\n");
-
-                    // HTML part
-                    raw.push_str(&format!("--{}\r\n", boundary_related));
-                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
-                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
-                    raw.push_str("\r\n");
-                    raw.push_str(&quoted_printable_encode(&html_body));
-                    raw.push_str("\r\n");
-
-                    // Embedded images (one part per placeholder, CID matches the <img> in the HTML)
-                    for (ch, path) in &all_images {
-                        let Ok(data) = std::fs::read(path) else { continue };
-                        let p = std::path::Path::new(path);
-                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                        let content_type = image_content_type(ext);
-                        let img_id = format!("img_{}@photonmail", u32::from(*ch));
-                        let filename = p
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("image")
-                            .to_string();
-                        let filename = encode_mime_parameter(&clean_header_value(&filename));
-                        use base64::Engine;
-                        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-                        raw.push_str(&format!("--{}\r\n", boundary_related));
-                        append_header(
-                            &mut raw,
-                            "Content-Type",
-                            &format!("{}; name*=UTF-8''{}", content_type, filename),
-                        );
-                        append_header(&mut raw, "Content-Transfer-Encoding", "base64");
-                        append_header(&mut raw, "Content-ID", &format!("<{}>", img_id));
-                        append_header(
-                            &mut raw,
-                            "Content-Disposition",
-                            &format!("inline; filename*=UTF-8''{}", filename),
-                        );
-                        raw.push_str("\r\n");
-                        // 76-char lines, CRLF-terminated
-                        for chunk in encoded.as_bytes().chunks(76) {
-                            raw.push_str(std::str::from_utf8(chunk).unwrap_or(""));
-                            raw.push_str("\r\n");
-                        }
-                    }
-                    raw.push_str(&format!("--{}--\r\n", boundary_related));
-                } else {
-                    raw.push_str(&format!("--{}\r\n", boundary));
-                    append_header(&mut raw, "Content-Type", "text/html; charset=UTF-8");
-                    append_header(&mut raw, "Content-Transfer-Encoding", "quoted-printable");
-                    raw.push_str("\r\n");
-                    raw.push_str(&quoted_printable_encode(&html_body));
-                    raw.push_str("\r\n");
-                }
-
-                // Closing boundary
-                raw.push_str(&format!("--{}--\r\n", boundary));
 
                 // Check if we're updating an existing draft or creating a new one. Read the
                 // current value: the UID changes every time the draft is saved.
@@ -2539,22 +2415,115 @@ fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
     Some((ct, data))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwarded_draft_split_keeps_user_authored_blockquotes() {
+        let user_html = "<p>My reply</p><blockquote><p>A quote I wrote</p></blockquote>";
+        let html = format!(
+            "{user_html}<p>--- Forwarded message ---</p><blockquote><p>Original</p></blockquote>"
+        );
+
+        let (actual_user_html, forwarded_html) =
+            split_draft_forwarded_html(&html).expect("forwarded section should be found");
+
+        assert_eq!(actual_user_html, user_html);
+        assert!(forwarded_html.contains("Original"));
+        assert!(!actual_user_html.contains("Forwarded message"));
+    }
+
+    #[test]
+    fn forwarded_draft_split_recognizes_the_private_section_marker() {
+        let html = concat!(
+            "<p>My reply</p><blockquote><p>User quote</p></blockquote>",
+            "<p data-photonmail-forwarded=\"true\">--- Forwarded message ---</p>",
+            "<blockquote><p>Original message</p></blockquote>",
+        );
+
+        let (user_html, forwarded_html) =
+            split_draft_forwarded_html(html).expect("marked forwarded section should be found");
+
+        assert!(user_html.contains("User quote"));
+        assert!(!user_html.contains("Forwarded message"));
+        assert!(forwarded_html.contains("Original message"));
+    }
+
+    #[test]
+    fn common_serializer_keeps_message_id_send_only() {
+        let threading = ComposePreThreading {
+            original_message_id: "parent@example.test".to_string(),
+            original_in_reply_to: String::new(),
+            original_references: String::new(),
+        };
+        let serialize = |include_message_id| {
+            build_raw_message(
+                "Sender <sender@example.test>",
+                "sender@example.test",
+                "recipient@example.test",
+                "",
+                "",
+                "Re: Test",
+                "",
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                Some(&threading),
+                include_message_id,
+            )
+        };
+        let sent = serialize(true);
+        let draft = serialize(false);
+
+        assert!(sent.contains("Message-ID: <"));
+        assert!(!draft.contains("Message-ID:"));
+        for raw in [&sent, &draft] {
+            assert!(raw.contains("In-Reply-To: <parent@example.test>"));
+            assert!(raw.contains("References: <parent@example.test>"));
+            assert!(raw.contains("Content-Type: multipart/alternative;"));
+            assert!(raw.contains("boundary=\""));
+        }
+    }
+}
+
 /// Split a saved draft's HTML body into the user's typed content and the forwarded HTML.
 ///
-/// When a forward-draft is saved, the HTML body contains the user's message followed by
-/// the forwarded HTML wrapped in a `<blockquote>`. This function finds the first
-/// `<blockquote>` tag and splits the HTML there, returning (user_html, forwarded_html).
-/// Returns None if no blockquote is found (i.e., not a forwarded draft).
+/// New drafts carry a private marker on the generated forwarded section; older drafts are
+/// recognized by the generated "Forwarded message" label and its following blockquote.
 fn split_draft_forwarded_html(html: &str) -> Option<(String, String)> {
-    // Find the first <blockquote tag (case-insensitive)
     let lower = html.to_ascii_lowercase();
-    let blockquote_pos = lower.find("<blockquote")?;
+    let new_marker = "<p data-photonmail-forwarded=\"true\">--- forwarded message ---</p>";
+    let (split_pos, forwarded_pos) = if let Some(marker_pos) = lower.find(new_marker) {
+        let mut forwarded_pos = marker_pos + new_marker.len();
+        while html.as_bytes().get(forwarded_pos).is_some_and(u8::is_ascii_whitespace) {
+            forwarded_pos += 1;
+        }
+        if !lower[forwarded_pos..].starts_with("<blockquote") {
+            return None;
+        }
+        (marker_pos, forwarded_pos)
+    } else {
+        let old_marker = "<p>--- forwarded message ---</p>";
+        let mut search_from = 0;
+        loop {
+            let marker_pos = lower[search_from..].find(old_marker)? + search_from;
+            let mut forwarded_pos = marker_pos + old_marker.len();
+            while html.as_bytes().get(forwarded_pos).is_some_and(u8::is_ascii_whitespace) {
+                forwarded_pos += 1;
+            }
+            if lower[forwarded_pos..].starts_with("<blockquote") {
+                break (marker_pos, forwarded_pos);
+            }
+            search_from = marker_pos + old_marker.len();
+        }
+    };
 
-    // The user's content is everything before the <blockquote>
-    let user_html = html[..blockquote_pos].trim().to_string();
+    let user_html = html[..split_pos].trim().to_string();
 
-    // The forwarded content is the <blockquote> and everything after it
-    let forwarded_html = crate::html_viewer::sanitize_forwarded_html(&html[blockquote_pos..]);
+    let forwarded_html = crate::html_viewer::sanitize_forwarded_html(&html[forwarded_pos..]);
 
     Some((user_html, forwarded_html))
 }

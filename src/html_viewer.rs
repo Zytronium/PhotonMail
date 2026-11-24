@@ -31,10 +31,13 @@ use crate::theme::DARK;
 use crate::widgets::QuoteToggle;
 
 static RE_BG_DECL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)(?:background(?:-color)?\s*:\s*|bgcolor\s*=\s*["']?)([^;}"']+)"#).unwrap()
+    Regex::new(r#"(?is)(?:background(?:-(?:color|image))?\s*:\s*|bgcolor\s*=\s*["']?)([^;}"']+)"#).unwrap()
 });
 static RE_CSS_COLOR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|\b(?:black|white|navy|darkblue|midnightblue|darkslategray|darkslategrey|gray|grey)\b").unwrap()
+});
+static RE_CSS_TEXT_COLOR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(^|[^\w-])(color\s*:\s*)([^;{}]+)").unwrap()
 });
 static RE_COLOR_SCHEME_DARK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)(?:color-scheme\s*:\s*[^;"}]*\bdark\b|<meta[^>]*name=["']color-scheme["'][^>]*dark|supported-color-schemes[^>]*dark)"#).unwrap()
@@ -67,8 +70,12 @@ fn parse_color(v: &str) -> Option<(u8, u8, u8)> {
     if let Some(hex) = v.strip_prefix('#') {
         let h: Vec<u8> = hex.chars().filter_map(|c| c.to_digit(16).map(|d| d as u8)).collect();
         return match h.len() {
-            3 | 4 => Some((h[0] * 17, h[1] * 17, h[2] * 17)),
-            6 | 8 => Some((h[0] * 16 + h[1], h[2] * 16 + h[3], h[4] * 16 + h[5])),
+            3 => Some((h[0] * 17, h[1] * 17, h[2] * 17)),
+            4 if h[3] != 0 => Some((h[0] * 17, h[1] * 17, h[2] * 17)),
+            6 => Some((h[0] * 16 + h[1], h[2] * 16 + h[3], h[4] * 16 + h[5])),
+            8 if h[6] != 0 || h[7] != 0 => {
+                Some((h[0] * 16 + h[1], h[2] * 16 + h[3], h[4] * 16 + h[5]))
+            }
             _ => None,
         };
     }
@@ -103,37 +110,73 @@ fn luminance((r, g, b): (u8, u8, u8)) -> f32 {
     (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
 }
 
-/// Heuristic: does this email already ship with a dark design?
-/// Looks for a declared dark color scheme, or a dark page background on
-/// html/body/the outermost table (the first background declarations in the document).
-fn is_already_dark(html: &str) -> bool {
-    if RE_COLOR_SCHEME_DARK.is_match(html) {
-        return true;
-    }
-    // Only consider the first few background declarations: those belong to the
-    // outermost wrappers (html/body/main table), not to small inner accents.
-    let mut seen = 0;
-    let mut dark_votes = 0;
-    let mut light_votes = 0;
-    for background in RE_BG_DECL.captures_iter(html) {
-        for color in RE_CSS_COLOR.find_iter(&background[1]) {
-            if let Some(c) = parse_color(color.as_str()) {
-                if luminance(c) < 0.35 {
-                    dark_votes += 1;
-                } else {
-                    light_votes += 1;
-                }
-                seen += 1;
-                if seen >= 4 {
-                    break;
-                }
+/// Only apply dark-mode text adjustments when the message has no visible authored background.
+fn has_authored_background(html: &str) -> bool {
+    RE_BG_DECL.captures_iter(html).any(|background| {
+        let value = background[1]
+            .trim()
+            .trim_end_matches("!important")
+            .trim()
+            .to_ascii_lowercase();
+        !value.is_empty()
+            && !matches!(
+                value.as_str(),
+                "transparent" | "none" | "initial" | "unset" | "revert"
+            )
+    })
+}
+
+fn lighten_dark_text_colors(css: &str) -> String {
+    RE_CSS_TEXT_COLOR
+        .replace_all(css, |captures: &regex::Captures<'_>| {
+            let value = &captures[3];
+            if value.to_ascii_lowercase().contains("var(") {
+                return captures[0].to_owned();
             }
-        }
-        if seen >= 4 {
-            break;
-        }
-    }
-    dark_votes > 0 && dark_votes >= light_votes
+            let replacement = RE_CSS_COLOR
+                .find_iter(value)
+                .find_map(|color| parse_color(color.as_str()))
+                .and_then(|color| {
+                    let current_luminance = luminance(color);
+                    let target_luminance = 0.72;
+                    (current_luminance < 0.55).then(|| {
+                        let mix = ((target_luminance - current_luminance)
+                            / (1.0 - current_luminance))
+                            .clamp(0.0, 1.0);
+                        let lighten = |channel: u8| {
+                            (channel as f32 + (255.0 - channel as f32) * mix).round() as u8
+                        };
+                        let (red, green, blue) = color;
+                        format!(
+                            "#{:02x}{:02x}{:02x}",
+                            lighten(red),
+                            lighten(green),
+                            lighten(blue)
+                        )
+                    })
+                });
+            let Some(replacement) = replacement else {
+                return captures[0].to_owned();
+            };
+            let important = if value.to_ascii_lowercase().contains("!important") {
+                "!important"
+            } else {
+                ""
+            };
+            format!("{}{}{replacement}{important}", &captures[1], &captures[2])
+        })
+        .into_owned()
+}
+
+fn adjust_dark_text_colors(html: &str) -> String {
+    let styled_blocks = RE_STYLE_BLOCK.replace_all(html, |captures: &regex::Captures<'_>| {
+        format!("<style>{}</style>", lighten_dark_text_colors(&captures[1]))
+    });
+    RE_STYLE_ATTRIBUTE
+        .replace_all(&styled_blocks, |captures: &regex::Captures<'_>| {
+            format!("style=\"{}\"", lighten_dark_text_colors(&captures[1]))
+        })
+        .into_owned()
 }
 
 /// Analyze an HTML body and return a sanitized version plus privacy warnings.
@@ -163,14 +206,13 @@ fn sanitize_html_with_policy(
 
     // Ammonia parses a fragment using the HTML5 parsing algorithm, so document
     // wrapper casing and doctype placement no longer affect style insertion.
-    let style = if is_already_dark(html) {
-        "<style>a{cursor:pointer!important}</style>".to_string()
+    let has_background = has_authored_background(html);
+    let adjust_dark_text = !has_background && !RE_COLOR_SCHEME_DARK.is_match(html);
+    let style = if adjust_dark_text {
+        result = adjust_dark_text_colors(&result);
+        "<style>html,body{color:#e5e7eb!important}a{cursor:pointer!important}</style>".to_string()
     } else {
-        r#"<style>
-html{filter:invert(1) hue-rotate(180deg)!important}
-img,video,iframe{filter:invert(1) hue-rotate(180deg)!important}
-a{cursor:pointer!important}
-</style>"#.to_string()
+        "<style>a{cursor:pointer!important}</style>".to_string()
     };
     result.push_str(&style);
     result.push_str(
@@ -825,34 +867,24 @@ impl Component for SecureHtmlViewer {
         // Initialize the HtmlHandle with the sanitized HTML.
         // When the email changes, the parent keys this component by the mail index,
         // forcing a full remount so use_hook runs again with the new HTML.
-        let handle = use_html(|| HtmlSource::html(sanitized.clone()));
+        let mut handle = use_html(|| HtmlSource::html(sanitized.clone()));
+        handle.set_navigation_interception(true);
 
-        // Watch for link clicks: when current_url() becomes Some, a link was clicked.
-        // We immediately navigate back to the original HTML and show the dialog via AppState.
+        // Watch for link clicks without navigating away from the email document.
         // Use create_sync so the first run is immediate and establishes reactive deps right away.
         use_hook(|| {
             let mut handle = handle;
-            let html = html.clone();
             let sender_email = sender_email.clone();
-            let remote_content_allowed = remote_content_allowed.clone();
-            let tracking_pixels_allowed = tracking_pixels_allowed.clone();
             let mut dialog_url = state.link_dialog_url.clone();
             let mut dialog_sender = state.link_dialog_sender.clone();
             let mut dialog_open = state.link_dialog_open.clone();
             let link_prefs = state.link_prefs.clone();
 
             Effect::create_sync(move || {
-                let url = match handle.current_url() {
+                let url = match handle.take_intercepted_navigation() {
                     Some(u) => u,
                     None => return,
                 };
-
-                // Navigate back to the original HTML immediately
-                let allow_remote = *remote_content_allowed.read();
-                let allow_tracking_pixels = *tracking_pixels_allowed.read();
-                let sanitized =
-                    sanitize_html_with_policy(&html, allow_remote, allow_tracking_pixels).sanitized;
-                handle.replace_html(sanitized);
 
                 let Some(url) = safe_external_url(&url) else {
                     return;
@@ -1303,6 +1335,29 @@ mod tests {
         assert!(!sanitized.contains("@import"));
         assert!(sanitized.contains("body{width:720px;max-width:720px;margin:0 auto}"));
         assert!(!sanitized.contains("html,body{width:100%!important"));
+    }
+
+    #[test]
+    fn dark_text_is_lightened_without_inverting_backgroundless_emails() {
+        let sanitized = sanitize_html("<p style=\"color:#111\">Message text</p>").sanitized;
+
+        assert!(sanitized.contains("color:#b8b8b8"), "{sanitized}");
+        assert!(sanitized.contains("html,body{color:#e5e7eb!important}"), "{sanitized}");
+        assert!(!sanitized.contains("filter:invert"), "{sanitized}");
+    }
+
+    #[test]
+    fn white_background_emails_keep_their_authored_background_and_text_colors() {
+        let sanitized = sanitize_html(concat!(
+            "<style>body{background-color:#fff}.copy{color:#222}</style>",
+            "<body><p class=\"copy\">Message text</p></body>",
+        ))
+        .sanitized;
+
+        assert!(sanitized.contains("background-color:#fff"), "{sanitized}");
+        assert!(sanitized.contains("color:#222"), "{sanitized}");
+        assert!(!sanitized.contains("html,body{color:"), "{sanitized}");
+        assert!(!sanitized.contains("filter:invert"), "{sanitized}");
     }
 
     #[test]

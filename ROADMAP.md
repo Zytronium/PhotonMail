@@ -39,7 +39,7 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
 - Email signatures
 - Smarter email dark mode rendering
 - More advanced rich text editor for composing emails
-- Mailing list banner on messages from a mailing list
+- Mailing list banner (with unsubscribe button) on messages from a mailing list
 - Auto-updater
 - Encryption key support
 - Gravatar logos for profile pictures in email list (can be turned off in settings)

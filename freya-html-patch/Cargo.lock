@@ -1168,6 +1168,7 @@ dependencies = [
  "blitz-html",
  "blitz-paint",
  "blitz-traits",
+ "cursor-icon",
  "freya-components",
  "freya-core",
  "freya-engine",

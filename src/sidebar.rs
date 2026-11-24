@@ -115,6 +115,7 @@ impl Component for Sidebar {
         let (dot, footer_text) = match state.store.read().summary() {
             Summary::NoAccounts => (DARK.muted, "No accounts yet".to_string()),
             Summary::Error(msg) => (DARK.danger, msg),
+            Summary::Notice(msg) => (DARK.success, msg),
             Summary::Syncing => (DARK.accent, "Syncing…".to_string()),
             Summary::Synced => (DARK.success, "All accounts synced".to_string()),
         };

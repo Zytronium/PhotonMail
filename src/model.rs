@@ -117,8 +117,15 @@ pub struct Mail {
 pub enum Summary {
     NoAccounts,
     Error(String),
+    Notice(String),
     Syncing,
     Synced,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum NoticeSeverity {
+    Info,
+    Error,
 }
 
 #[derive(Default)]
@@ -127,8 +134,9 @@ pub struct Store {
     pub mails: Vec<Mail>,
     index: HashMap<(usize, usize, u32), usize>,
     pub demo: bool,
-    /// Last transient problem (failed move, config write error…), shown in the footer.
-    pub notice: Option<String>,
+    /// Current informational or error notice shown in the footer.
+    notice: Option<(String, NoticeSeverity, u64)>,
+    notice_revision: u64,
     /// Set by a failed "Add account"; shown on the form.
     pub add_error: Option<String>,
     /// Set when sending fails; shown as a dismissible banner until the user closes it.
@@ -214,8 +222,11 @@ impl Store {
         if self.accounts.is_empty() {
             return Summary::NoAccounts;
         }
-        if let Some(n) = &self.notice {
-            return Summary::Error(n.clone());
+        if let Some((text, severity, _)) = &self.notice {
+            return match severity {
+                NoticeSeverity::Info => Summary::Notice(text.clone()),
+                NoticeSeverity::Error => Summary::Error(text.clone()),
+            };
         }
         if let Some(a) = self.accounts.iter().find(|a| a.is_error()) {
             return Summary::Error(format!("{}: sync problem", a.name));
@@ -227,6 +238,18 @@ impl Store {
         if busy { Summary::Syncing } else { Summary::Synced }
     }
 
+    pub fn set_notice(&mut self, text: impl Into<String>, severity: NoticeSeverity) -> u64 {
+        self.notice_revision = self.notice_revision.wrapping_add(1);
+        self.notice = Some((text.into(), severity, self.notice_revision));
+        self.notice_revision
+    }
+
+    pub fn clear_notice_if_revision(&mut self, revision: u64) {
+        if self.notice.as_ref().is_some_and(|(_, _, current)| *current == revision) {
+            self.notice = None;
+        }
+    }
+
     // -- mutation ---------------------------------------------------------------
 
     /// Apply a worker event. Returns true if it added an account.
@@ -234,9 +257,6 @@ impl Store {
         match event {
             Event::Status { account, status } => {
                 if let Some(a) = self.accounts.get_mut(account) {
-                    if matches!(status, SyncStatus::Idle { .. }) {
-                        self.notice = None;
-                    }
                     a.status = status;
                 }
             }
@@ -296,7 +316,9 @@ impl Store {
                     }
                 }
             }
-            Event::Notice { text } => self.notice = Some(text),
+            Event::Notice { text } => {
+                self.set_notice(text, NoticeSeverity::Error);
+            }
             Event::AccountAdded { cfg } => {
                 self.push_account(&cfg);
                 self.add_error = None;
@@ -459,6 +481,47 @@ mod tests {
             attachments: Vec::new(),
             references: Vec::new(),
         }
+    }
+
+    fn store_with_idle_account() -> Store {
+        let mut store = Store::default();
+        store.accounts.push(Account {
+            id: "account".to_string(),
+            name: "Account".to_string(),
+            sender_name: String::new(),
+            addr: "user@example.test".to_string(),
+            host: "mail.example.test".to_string(),
+            color: PALETTE[0],
+            status: SyncStatus::Idle { at: 0 },
+            demo_sync: None,
+        });
+        store
+    }
+
+    #[test]
+    fn success_notices_are_informational_and_idle_does_not_clear_notices() {
+        let mut store = store_with_idle_account();
+        let revision = store.set_notice("Message sent successfully.", NoticeSeverity::Info);
+
+        store.apply(Event::Status { account: 0, status: SyncStatus::Idle { at: 1 } });
+
+        assert!(matches!(store.summary(), Summary::Notice(message) if message == "Message sent successfully."));
+        store.clear_notice_if_revision(revision);
+        assert!(matches!(store.summary(), Summary::Synced));
+    }
+
+    #[test]
+    fn stale_notice_timer_cannot_clear_a_newer_error() {
+        let mut store = store_with_idle_account();
+        let old_revision = store.set_notice("Message sent successfully.", NoticeSeverity::Info);
+        store.set_notice("Sent, but could not save to Sent folder.", NoticeSeverity::Error);
+
+        store.clear_notice_if_revision(old_revision);
+
+        assert!(matches!(
+            store.summary(),
+            Summary::Error(message) if message == "Sent, but could not save to Sent folder."
+        ));
     }
 
     #[test]

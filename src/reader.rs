@@ -219,7 +219,7 @@ impl Component for MailView {
                                 s_reply.compose_pre.set(Some(ComposePre {
                                     to: reply_to.clone(),
                                     cc: String::new(),
-                                    subject: format!("Re: {}", reply_subject),
+                                    subject: subject_with_prefix("Re", &reply_subject),
                                     body: build_reply_body(&reply_from_name, &reply_date, &reply_body),
                                     html_body: None,
                                     forwarded_plain: None,
@@ -279,7 +279,7 @@ impl Component for MailView {
                                 s_reply_all.compose_pre.set(Some(ComposePre {
                                     to: reply_all_to.clone(),
                                     cc: reply_all_cc.clone(),
-                                    subject: format!("Re: {}", reply_all_subject),
+                                    subject: subject_with_prefix("Re", &reply_all_subject),
                                     body: build_reply_body(&reply_all_from_name, &reply_all_date, &reply_all_body),
                                     html_body: None,
                                     forwarded_plain: None,
@@ -329,7 +329,7 @@ impl Component for MailView {
                                 s_forward.compose_pre.set(Some(ComposePre {
                                     to: String::new(),
                                     cc: String::new(),
-                                    subject: format!("Fwd: {}", forward_subject),
+                                    subject: subject_with_prefix("Fwd", &forward_subject),
                                     body: if forward_html_body.is_some() { String::new() } else { build_forward_body(&forward_body_text) },
                                     html_body: html_body_val,
                                     forwarded_plain: forward_html_body.as_ref().map(|_| build_forward_body(&forward_body_text)),
@@ -544,6 +544,33 @@ fn build_reply_body(from_name: &str, date: &str, body: &str) -> String {
     }
 }
 
+fn subject_with_prefix(prefix: &str, subject: &str) -> String {
+    let prefixes: &[&str] = match prefix {
+        "Re" => &["re"],
+        "Fwd" => &["fwd", "fw"],
+        _ => &[prefix],
+    };
+    if prefixes.iter().any(|prefix| has_subject_prefix(subject, prefix)) {
+        subject.to_string()
+    } else {
+        format!("{prefix}: {subject}")
+    }
+}
+
+fn has_subject_prefix(subject: &str, prefix: &str) -> bool {
+    let subject = subject.trim_start().to_ascii_lowercase();
+    if subject.starts_with(&format!("{prefix}:")) {
+        return true;
+    }
+    let Some(suffix) = subject.strip_prefix(&format!("{prefix}[")) else {
+        return false;
+    };
+    let Some((number, _)) = suffix.split_once("]:") else {
+        return false;
+    };
+    !number.is_empty() && number.chars().all(|character| character.is_ascii_digit())
+}
+
 /// Build the forwarded message body with the original message below.
 fn build_forward_body(body: &str) -> String {
     if body.trim().is_empty() {
@@ -567,7 +594,7 @@ fn build_forward_body_html(html: &str) -> String {
     } else {
         let safe_html = crate::html_viewer::sanitize_forwarded_html(html);
         format!(
-            "<p>--- Forwarded message ---</p><blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex\">{}</blockquote>",
+            "<p data-photonmail-forwarded=\"true\">--- Forwarded message ---</p><blockquote style=\"margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex\">{}</blockquote>",
             safe_html
         )
     }
@@ -587,6 +614,20 @@ fn build_collapsed_html_body(state: AppState, mail_idx: usize, html: String, sen
             quote_toggle_idx: Some(mail_idx),
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reply_and_forward_subjects_do_not_get_duplicate_prefixes() {
+        assert_eq!(subject_with_prefix("Re", "Re: Project update"), "Re: Project update");
+        assert_eq!(subject_with_prefix("Re", "RE[2]: Project update"), "RE[2]: Project update");
+        assert_eq!(subject_with_prefix("Re", "Project update"), "Re: Project update");
+        assert_eq!(subject_with_prefix("Fwd", "FW: Project update"), "FW: Project update");
+        assert_eq!(subject_with_prefix("Fwd", "Project update"), "Fwd: Project update");
+    }
 }
 
 /// Render a plain-text reply: new content → "..." button → quoted content (when expanded).

@@ -6,7 +6,7 @@ use crate::{
     keyboard::FocusState,
     link_prefs::LinkPrefs,
     mail::{config, Engine, WorkerCmd, ARCHIVE, INBOX, TRASH},
-    model::{BodyState, Store},
+    model::{BodyState, NoticeSeverity, Store},
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -155,18 +155,21 @@ fn start_event_pump(app: AppState) {
             }
             // Handle email send results: show a notice and close the compose window on success.
             if let crate::mail::Event::EmailSent { account: _ } = &event {
-                app.store.write().send_error = None;
-                app.store.write().notice = Some("Message sent successfully.".to_string());
+                let revision = {
+                    let mut store = app.store.write();
+                    store.send_error = None;
+                    store.set_notice("Message sent successfully.", NoticeSeverity::Info)
+                };
                 // Clear the notice after a delay — use futures-timer instead of tokio::time::sleep
                 // because Freya's spawn runs on futures-lite, not a Tokio runtime.
                 let mut app_clone = app.clone();
                 freya::prelude::spawn(async move {
                     futures_timer::Delay::new(std::time::Duration::from_secs(3)).await;
-                    app_clone.store.write().notice = None;
+                    app_clone.store.write().clear_notice_if_revision(revision);
                 });
             }
             if let crate::mail::Event::EmailSendFailed { error, .. } = &event {
-                // Persistent banner (the footer notice is wiped by the next sync status).
+                // Keep failures visible in the compose banner until the user dismisses them.
                 app.store.write().send_error = Some(format!("Message not sent: {error}"));
             }
             let (added, remap) = {
