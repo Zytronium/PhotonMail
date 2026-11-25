@@ -273,8 +273,15 @@ impl HtmlHandle {
 
 async fn load_url(view: Rc<RefCell<BlitzState>>, url: String) {
     let fetched = match url::Url::parse(&url) {
-        Ok(parsed) => freya_components::http::fetch(parsed).await,
-        Err(err) => Err(err.into()),
+        Ok(parsed) => {
+            let Some(permit) = crate::http::try_acquire_fetch() else {
+                tracing::warn!("Remote HTML fetch limit reached for {url}");
+                return;
+            };
+            let fetched = crate::http::fetch(parsed, permit).await;
+            fetched
+        }
+        Err(err) => Err(err.to_string()),
     };
     match fetched {
         Ok(bytes) => view

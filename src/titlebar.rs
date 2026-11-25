@@ -14,7 +14,6 @@ pub struct Titlebar;
 impl Component for Titlebar {
     fn render(&self) -> impl IntoElement {
         rect()
-            .layer(Layer::OverlayLevel(2))
             .horizontal()
             .content(Content::Flex)
             .width(Size::fill())

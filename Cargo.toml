@@ -9,7 +9,7 @@ homepage = "https://photonmail.zytronium.dev"
 license = "MIT"
 keywords = ["email", "mail-client", "gui", "freya"]
 categories = ["gui"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 [dependencies]
 ammonia = "4.2.5"
@@ -20,7 +20,7 @@ freya-html = "0.5.2"
 open = "5"
 regex = "1"
 rfd = "0.17.2"
-url = "2"
+url = "2.5.9"
 
 # --- mail backend ---
 async-channel = "2"
@@ -44,7 +44,7 @@ webpki-roots = "1"
 # SMTP email sending — uses tokio1 + rustls (ring) + webpki-roots to match the existing TLS setup
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "ring", "builder", "hostname", "webpki-roots"] }
 # DNS resolver for auto-discovering email server settings (MX/SRV records)
-hickory-resolver = { version = "0.25", default-features = false, features = ["system-config", "tokio"] }
+hickory-resolver = { version = "0.26", default-features = false, features = ["system-config", "tokio"] }
 # HTTP client for fetching autoconfig XML from provider servers
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 

@@ -917,7 +917,7 @@ impl Component for SecureHtmlViewer {
         // where elements_at() hit testing fails.
         let cursor_icon = use_state(|| CursorIcon::Default);
 
-        let mut viewer = HtmlViewer::new(handle).expanded();
+        let mut viewer = HtmlViewer::new(handle).height(Size::flex(1.));
         if quote_toggle_idx.is_some() {
             // Report where the spacer is so the native button can be drawn over it
             viewer = viewer.track(crate::mail::quoting::ANCHOR_ID);
@@ -927,6 +927,7 @@ impl Component for SecureHtmlViewer {
             .height(Size::fill())
             .width(Size::fill())
             .vertical()
+            .content(Content::Flex)
             .cursor(*cursor_icon.read())
             .on_mouse_move({
                 let h = handle;
@@ -980,7 +981,7 @@ impl Component for SecureHtmlViewer {
                     String::new()
                 };
                 format!(
-                    "{} remote resource(s) blocked to protect your privacy{}",
+                    "{} remote resource(s) blocked to protect your privacy{}. Loading them may reveal your IP address and that you opened this message.",
                     remote_resources_blocked, tracking_note
                 )
             };
@@ -988,13 +989,17 @@ impl Component for SecureHtmlViewer {
                 .width(Size::fill())
                 .padding((4., 8., 4., 8.))
                 .horizontal()
-                .spacing(6.)
+                .content(Content::Flex)
+                .spacing(8.)
                 .cross_align(Alignment::Center)
                 .child(
-                    label()
-                        .text(warning_text)
-                        .color((240, 140, 40))
-                        .font_size(11.),
+                    rect().width(Size::flex(1.)).child(
+                        paragraph()
+                            .width(Size::fill())
+                            .span(warning_text)
+                            .color((240, 140, 40))
+                            .font_size(11.),
+                    ),
                 );
 
             if !allow_remote {

@@ -36,6 +36,7 @@ mod content;
 mod element;
 mod fonts;
 mod handle;
+mod http;
 mod net;
 mod state;
 

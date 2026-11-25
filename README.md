@@ -22,7 +22,7 @@ email client built with pure Rust.
 
 ### Build Requirements
 
-- Rust 1.85 or later
+- Rust 1.88 or later
 - A C compiler (for Skia/freya build dependencies)
 - On Linux: `dbus` package (for keyring password storage via Secret Service)
 

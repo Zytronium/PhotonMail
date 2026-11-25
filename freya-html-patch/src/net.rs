@@ -21,9 +21,12 @@ use blitz_traits::{
 use futures_channel::mpsc::UnboundedSender;
 use url::Url;
 
-use crate::cache::ResourceCache;
+use crate::{
+    cache::ResourceCache,
+    http::{self, FetchPermit},
+};
 
-pub(crate) type FetchRequest = (Url, Box<dyn NetHandler>);
+pub(crate) type FetchRequest = (Url, Box<dyn NetHandler>, FetchPermit);
 
 pub(crate) struct HttpNetProvider {
     pub fetch: UnboundedSender<FetchRequest>,
@@ -41,7 +44,10 @@ impl NetProvider for HttpNetProvider {
             return;
         }
 
-        let _ = self.fetch.unbounded_send((request.url, handler));
+        let Some(permit) = http::try_acquire_fetch() else {
+            return;
+        };
+        let _ = self.fetch.unbounded_send((request.url, handler, permit));
     }
 }
 

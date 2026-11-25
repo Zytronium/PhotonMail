@@ -114,11 +114,12 @@ impl Component for HtmlViewer {
             });
 
             spawn(async move {
-                while let Some((url, handler)) = fetch_rx.next().await {
+                while let Some((url, handler, permit)) = fetch_rx.next().await {
                     let resource_cache = resource_cache.clone();
 
                     spawn(async move {
-                        match freya_components::http::fetch(url.clone()).await {
+                        let fetched = crate::http::fetch(url.clone(), permit).await;
+                        match fetched {
                             Ok(bytes) => {
                                 let resolved_url = url.to_string();
                                 resource_cache.set(url, bytes.clone());

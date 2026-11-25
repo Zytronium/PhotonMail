@@ -7,11 +7,20 @@
 //! 4. The built-in table keyed by email domain
 //! 5. Heuristic fallback — guesses `imap.{domain}` / `smtp.{domain}`
 
-use std::thread;
-use std::time::Duration;
+use std::{
+    net::{IpAddr, SocketAddr},
+    thread,
+    time::Duration,
+};
 
-use hickory_resolver::{TokioResolver, config::ResolverOpts, proto::rr::RecordType};
+use hickory_resolver::{
+    TokioResolver,
+    config::ResolverOpts,
+    proto::rr::{RData, RecordType},
+};
 use rand::Rng;
+use reqwest::{Client, redirect::Policy};
+use url::{Host, Url};
 
 /// Discovered IMAP and SMTP server settings.
 #[derive(Clone, Debug)]
@@ -80,7 +89,7 @@ fn build_resolver() -> Option<TokioResolver> {
         .ok()?
         .with_options(opts)
         .build()
-        .into()
+        .ok()
 }
 
 // ─── DNS SRV Records (RFC 6186) ───────────────────────────────────────────────
@@ -121,18 +130,21 @@ async fn lookup_srv_service(
 ) -> Option<SrvTarget> {
     let response = resolver.lookup(query, RecordType::SRV).await.ok()?;
     let targets: Vec<SrvTarget> = response
-        .record_iter()
+        .answers()
+        .iter()
         .filter_map(|record| {
-            let srv = record.data().as_srv()?;
-            let host = srv.target().to_string();
+            let RData::SRV(srv) = &record.data else {
+                return None;
+            };
+            let host = srv.target.to_string();
             let host = host.trim_end_matches('.');
-            if host.is_empty() || host == "." || srv.port() != expected_port {
+            if host.is_empty() || host == "." || srv.port != expected_port {
                 return None;
             }
             Some(SrvTarget {
-                priority: srv.priority(),
-                weight: srv.weight(),
-                port: srv.port(),
+                priority: srv.priority,
+                weight: srv.weight,
+                port: srv.port,
                 host: host.to_string(),
             })
         })
@@ -185,12 +197,12 @@ async fn lookup_mx_provider_settings(domain: &str) -> Option<DiscoveredSettings>
     let resolver = build_resolver()?;
     let response = resolver.lookup(domain, RecordType::MX).await.ok()?;
     let mut mx_hosts = Vec::new();
-    for record in response.record_iter() {
-        if let Some(mx) = record.data().as_mx() {
-            let host = mx.exchange().to_string();
+    for record in response.answers() {
+        if let RData::MX(mx) = &record.data {
+            let host = mx.exchange.to_string();
             let host = host.trim_end_matches('.');
             if !host.is_empty() {
-                mx_hosts.push((mx.preference(), host.to_string()));
+                mx_hosts.push((mx.preference, host.to_string()));
             }
         }
     }
@@ -215,30 +227,145 @@ fn settings_for_mx_hosts(mut mx_hosts: Vec<(u16, String)>) -> Option<DiscoveredS
 // ─── HTTPS Autoconfig (Mozilla/Thunderbird) ───────────────────────────────────
 
 async fn lookup_autoconfig(domain: &str) -> Option<DiscoveredSettings> {
-    let url = format!("https://autoconfig.{domain}/mail/config-v1.1.xml");
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 5 || attempt.url().scheme() != "https" {
-                attempt.stop()
-            } else {
-                attempt.follow()
-            }
-        }))
-        .build()
-        .ok()?;
-
-    let resp = client.get(&url).send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-
-    let body = resp.text().await.ok()?;
-    if body.len() > 1_048_576 {
-        return None;
-    }
+    let url = Url::parse(&format!("https://autoconfig.{domain}/mail/config-v1.1.xml")).ok()?;
+    let body = tokio::time::timeout(Duration::from_secs(10), fetch_autoconfig_body(url))
+        .await
+        .ok()??;
     parse_autoconfig_xml(&body, domain)
+}
+
+async fn fetch_autoconfig_body(mut url: Url) -> Option<String> {
+    const MAX_BODY_BYTES: usize = 1_048_576;
+    const MAX_REDIRECTS: usize = 5;
+    const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+    for redirect_count in 0..=MAX_REDIRECTS {
+        if !valid_autoconfig_url(&url) {
+            return None;
+        }
+        let addresses = resolve_public_addresses(&url).await?;
+        let builder = Client::builder()
+            .no_proxy()
+            .redirect(Policy::none())
+            .timeout(REQUEST_TIMEOUT);
+        let builder = match url.host()? {
+            Host::Domain(domain) => builder.resolve_to_addrs(domain, &addresses),
+            _ => builder,
+        };
+        let client = builder.build().ok()?;
+        let response = client.get(url.clone()).send().await.ok()?;
+
+        if response.status().is_redirection() {
+            if redirect_count == MAX_REDIRECTS {
+                return None;
+            }
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)?
+                .to_str()
+                .ok()?;
+            url = url.join(location).ok()?;
+            continue;
+        }
+        if !response.status().is_success()
+            || response
+                .content_length()
+                .is_some_and(|length| length > MAX_BODY_BYTES as u64)
+        {
+            return None;
+        }
+
+        let capacity = response
+            .content_length()
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or_default();
+        let mut body = Vec::with_capacity(capacity);
+        let mut response = response;
+        while let Some(chunk) = response.chunk().await.ok()? {
+            if !append_bounded_chunk(&mut body, &chunk, MAX_BODY_BYTES) {
+                return None;
+            }
+        }
+        return String::from_utf8(body).ok();
+    }
+    None
+}
+
+fn valid_autoconfig_url(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+}
+
+async fn resolve_public_addresses(url: &Url) -> Option<Vec<SocketAddr>> {
+    let port = url.port_or_known_default()?;
+    let addresses = match url.host()? {
+        Host::Domain(domain) => {
+            if is_blocked_hostname(domain) {
+                return None;
+            }
+            tokio::net::lookup_host((domain, port))
+                .await
+                .ok()?
+                .collect()
+        }
+        Host::Ipv4(address) => vec![SocketAddr::new(IpAddr::V4(address), port)],
+        Host::Ipv6(address) => vec![SocketAddr::new(IpAddr::V6(address), port)],
+    };
+    if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+        return None;
+    }
+    Some(addresses)
+}
+
+fn is_blocked_hostname(hostname: &str) -> bool {
+    let hostname = hostname.trim_end_matches('.').to_ascii_lowercase();
+    hostname == "localhost"
+        || hostname.ends_with(".localhost")
+        || hostname.ends_with(".local")
+        || hostname.ends_with(".internal")
+        || hostname.ends_with(".lan")
+        || hostname.ends_with(".home.arpa")
+}
+
+fn is_public_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            !(address.is_private()
+                || address.is_loopback()
+                || address.is_link_local()
+                || address.is_unspecified()
+                || address.is_broadcast()
+                || address.is_multicast()
+                || octets[0] == 0
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+                || (octets[0] == 192
+                    && ((octets[1] == 0 && octets[2] == 0)
+                        || (octets[1] == 0 && octets[2] == 2)
+                        || (octets[1] == 88 && octets[2] == 99)))
+                || (octets[0] == 198
+                    && ((octets[1] == 18 || octets[1] == 19)
+                        || (octets[1] == 51 && octets[2] == 100)))
+                || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+                || octets[0] >= 240)
+        }
+        IpAddr::V6(address) => {
+            let segments = address.segments();
+            (segments[0] & 0xe000) == 0x2000
+                && !(segments[0] == 0x2001 && (segments[1] <= 0x01ff || segments[1] == 0x0db8))
+                && segments[0] != 0x2002
+        }
+    }
+}
+
+fn append_bounded_chunk(body: &mut Vec<u8>, chunk: &[u8], max_bytes: usize) -> bool {
+    if chunk.len() > max_bytes.saturating_sub(body.len()) {
+        return false;
+    }
+    body.extend_from_slice(chunk);
+    true
 }
 
 fn parse_autoconfig_xml(body: &str, domain: &str) -> Option<DiscoveredSettings> {
@@ -372,6 +499,31 @@ pub fn discover_in_background(email: String) -> async_channel::Receiver<Discover
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autoconfig_body_limit_is_enforced_while_streaming() {
+        let mut body = Vec::new();
+        assert!(append_bounded_chunk(&mut body, b"1234", 6));
+        assert!(append_bounded_chunk(&mut body, b"56", 6));
+        assert!(!append_bounded_chunk(&mut body, b"7", 6));
+        assert_eq!(body, b"123456");
+    }
+
+    #[test]
+    fn autoconfig_rejects_private_and_local_destinations() {
+        assert!(is_blocked_hostname("autoconfig.internal"));
+        assert!(!is_public_ip("10.0.0.1".parse().unwrap()));
+        assert!(!is_public_ip("169.254.0.1".parse().unwrap()));
+        assert!(is_public_ip("8.8.8.8".parse().unwrap()));
+    }
+
+    #[test]
+    fn autoconfig_redirects_are_https_only() {
+        let https = Url::parse("https://autoconfig.example.com/config.xml").unwrap();
+        let http = Url::parse("http://autoconfig.example.com/config.xml").unwrap();
+        assert!(valid_autoconfig_url(&https));
+        assert!(!valid_autoconfig_url(&http));
+    }
 
     #[test]
     fn background_discovery_runs_with_its_own_runtime() {
