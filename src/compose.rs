@@ -627,7 +627,7 @@ impl Component for ComposePane {
                 s.draft_mail.set(None);
                 s.draft_pin.set(None);
                 s.compose_pre.set(None);
-                s.view.set(crate::state::View::Mail);
+                s.set_view(crate::state::View::Mail);
             })
         };
 
@@ -706,24 +706,20 @@ impl Component for ComposePane {
                     true,
                 );
 
-                // If this message was being edited as a draft, that draft is deleted once the
-                // send succeeds. (A draft in a different account is deleted right away; if the
-                // send then fails, the worker saves the message to Drafts again.)
+                // Keep the source draft until the undo window expires. Undo updates that draft
+                // with the current message contents instead of losing the edit.
                 let (same_account_draft, other_account_draft) = match *s.draft_mail.peek() {
                     Some((da, _, uid)) if uid != 0 && da == account => (Some(uid), None),
                     Some((da, _, uid)) if uid != 0 => (None, Some((da, uid))),
                     _ => (None, None),
                 };
-                s.send_email(account, raw, same_account_draft);
-                if let Some((da, uid)) = other_account_draft {
-                    s.delete_draft(da, uid);
-                }
+                s.queue_send_email(account, raw, same_account_draft, other_account_draft);
 
                 // Close the compose window
                 s.draft_mail.set(None);
                 s.draft_pin.set(None);
                 s.compose_pre.set(None);
-                s.view.set(crate::state::View::Mail);
+                s.set_view(crate::state::View::Mail);
             })
         };
 

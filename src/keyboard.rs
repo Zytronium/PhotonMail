@@ -425,7 +425,7 @@ fn handle_compose(
             // TODO: trigger send
             state.draft_mail.set(None);
             state.draft_pin.set(None);
-            state.view.set(View::Mail);
+            state.set_view(View::Mail);
             *focus = FocusArea::MessageList;
             HandleResult::Consumed
         }
@@ -440,7 +440,7 @@ fn handle_compose(
         Key::Named(NamedKey::Escape) => {
             state.draft_mail.set(None);
             state.draft_pin.set(None);
-            state.view.set(View::Mail);
+            state.set_view(View::Mail);
             *focus = FocusArea::MessageList;
             HandleResult::Unfocus
         }

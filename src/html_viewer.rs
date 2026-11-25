@@ -853,17 +853,22 @@ impl Component for SecureHtmlViewer {
         let html_for_analysis = html.clone();
         let remote_allowed_for_analysis = remote_content_allowed.clone();
         let tracking_allowed_for_analysis = tracking_pixels_allowed.clone();
+        let state_for_analysis = state;
         let analysis = use_memo(move || {
-            let allow_remote = *remote_allowed_for_analysis.read();
-            let allow_tracking_pixels = *tracking_allowed_for_analysis.read();
+            let settings = state_for_analysis.settings.read();
+            let allow_remote = !settings.block_remote_images || *remote_allowed_for_analysis.read();
+            let allow_tracking_pixels =
+                !settings.block_tracking_pixels || *tracking_allowed_for_analysis.read();
             if allow_remote || allow_tracking_pixels {
                 sanitize_html_with_policy(&html_for_analysis, allow_remote, allow_tracking_pixels)
             } else {
                 sanitize_html(&html_for_analysis)
             }
         });
-        let allow_remote = *remote_content_allowed.read();
-        let allow_tracking_pixels = *tracking_pixels_allowed.read();
+        let settings = state.settings.read();
+        let allow_remote = !settings.block_remote_images || *remote_content_allowed.read();
+        let allow_tracking_pixels =
+            !settings.block_tracking_pixels || *tracking_pixels_allowed.read();
         let sanitized_ref = analysis.read();
         let sanitized = sanitized_ref.sanitized.clone();
         let remote_resources_blocked = sanitized_ref.remote_resources_blocked;
@@ -875,6 +880,11 @@ impl Component for SecureHtmlViewer {
         // When the email changes, the parent keys this component by the mail index,
         // forcing a full remount so use_hook runs again with the new HTML.
         let mut handle = use_html(|| HtmlSource::html(sanitized.clone()));
+        let mut rendered_html = use_state(|| sanitized.clone());
+        if *rendered_html.read() != sanitized {
+            handle.replace_html(sanitized.clone());
+            rendered_html.set(sanitized.clone());
+        }
         handle.set_navigation_interception(true);
 
         // Watch for link clicks without navigating away from the email document.

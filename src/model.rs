@@ -402,6 +402,14 @@ impl Store {
             m.removed = false;
             return;
         }
+        let to = if matches!(folder, crate::mail::DRAFTS | crate::mail::SENT) {
+            row.from
+                .strip_prefix("To: ")
+                .unwrap_or(&row.from)
+                .to_string()
+        } else {
+            String::new()
+        };
         self.mails.push(Mail {
             account,
             folder,
@@ -409,7 +417,7 @@ impl Store {
             unread: row.unread,
             from: row.from,
             from_email: row.from_email,
-            to: String::new(),
+            to,
             to_email: row.to_emails.join(", "),
             cc_email: row.cc_emails.join(", "),
             bcc_email: row.bcc_emails.join(", "),
@@ -572,6 +580,26 @@ mod tests {
         );
         store.clear_notice_if_revision(revision);
         assert!(matches!(store.summary(), Summary::Synced));
+    }
+
+    #[test]
+    fn sent_headers_preserve_recipient_name_and_all_recipient_emails() {
+        let mut store = Store::default();
+        let mut sent = row(1);
+        sent.from = "To: Alice Example".to_string();
+        sent.from_email = "alice@example.test".to_string();
+        sent.to_emails = vec![
+            "alice@example.test".to_string(),
+            "bob@example.test".to_string(),
+        ];
+
+        store.upsert(0, crate::mail::SENT, sent);
+
+        assert_eq!(store.mails[0].to, "Alice Example");
+        assert_eq!(
+            store.mails[0].to_email,
+            "alice@example.test, bob@example.test"
+        );
     }
 
     #[test]

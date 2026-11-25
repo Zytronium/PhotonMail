@@ -3,14 +3,8 @@
 Below is a **non-exhaustive** list of planned features for Photon Mail.
 
 - Add Gmail, Outlook, iCloud, Yahoo, and Fastmail providers for new accounts
-- Notifications
 - Local email cache for seamless email list loading upon opening app
-- Settings screen
-  - Privacy settings (block tracking pixels, block remote images, Gravatar profile pictures, etc.)
-  - Auto sync frequency
-  - Send notifications (globally or per account)
-  - Mark as read after X duration after opening message
-  - Undo send timer
+- Settings
   - Force dark mode email rendering
   - Themes and accent color
   - Minimize to system tray on close

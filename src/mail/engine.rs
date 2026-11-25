@@ -4,6 +4,7 @@
 //! with a small multi-threaded tokio runtime. The UI talks to it with `Engine::send`
 //! (commands in) and drains `Engine::events` (events out) from a Freya task.
 
+use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use super::{
@@ -29,7 +30,7 @@ impl Engine {
     }
 
     /// Start the I/O thread and connect every saved account.
-    pub fn start(accounts: Vec<AccountConfig>) -> Self {
+    pub fn start(accounts: Vec<AccountConfig>, auto_sync_interval: Option<Duration>) -> Self {
         let (event_tx, event_rx) = async_channel::unbounded();
         let (cmd_tx, cmd_rx) = unbounded_channel();
 
@@ -42,7 +43,7 @@ impl Engine {
                     .thread_name("photon-mail-rt")
                     .build()
                     .expect("failed to start the mail runtime");
-                runtime.block_on(manager(accounts, cmd_rx, event_tx));
+                runtime.block_on(manager(accounts, cmd_rx, event_tx, auto_sync_interval));
             })
             .expect("failed to spawn the mail I/O thread");
 
@@ -61,6 +62,10 @@ impl Engine {
     pub fn account(&self, account: usize, cmd: WorkerCmd) {
         self.send(Command::Account { account, cmd });
     }
+
+    pub fn set_auto_sync_interval(&self, interval: Option<Duration>) {
+        self.send(Command::SetAutoSyncInterval { interval });
+    }
 }
 
 /// Owns the per-account workers and handles "add account".
@@ -68,12 +73,19 @@ async fn manager(
     accounts: Vec<AccountConfig>,
     mut cmd_rx: UnboundedReceiver<Command>,
     events: async_channel::Sender<Event>,
+    mut auto_sync_interval: Option<Duration>,
 ) {
     let mut configs = accounts.clone();
     // Worker position == account index in the UI's store.
     let mut workers: Vec<UnboundedSender<WorkerCmd>> = Vec::new();
     for (index, cfg) in accounts.into_iter().enumerate() {
-        workers.push(imap::spawn_account(index, cfg, None, events.clone()));
+        workers.push(imap::spawn_account(
+            index,
+            cfg,
+            None,
+            events.clone(),
+            auto_sync_interval,
+        ));
     }
 
     type Verified = (AccountConfig, String, Result<(), String>);
@@ -122,6 +134,12 @@ async fn manager(
                             let _ = worker.send(WorkerCmd::UpdateConfig { cfg });
                         }
                     }
+                    Command::SetAutoSyncInterval { interval } => {
+                        auto_sync_interval = interval;
+                        for worker in &workers {
+                            let _ = worker.send(WorkerCmd::SetAutoSyncInterval { interval });
+                        }
+                    }
                 }
             }
 
@@ -154,7 +172,13 @@ async fn manager(
                 // so the store always knows the index events refer to.
                 let index = workers.len();
                 let _ = events.try_send(Event::AccountAdded { cfg: cfg.clone() });
-                workers.push(imap::spawn_account(index, cfg, Some(password), events.clone()));
+                workers.push(imap::spawn_account(
+                    index,
+                    cfg,
+                    Some(password),
+                    events.clone(),
+                    auto_sync_interval,
+                ));
             }
         }
     }

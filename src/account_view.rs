@@ -7,7 +7,7 @@ use crate::{
     icons::*,
     state::AppState,
     theme::DARK,
-    widgets::{avatar, divider, icon},
+    widgets::{ProfileAvatar, divider, icon},
 };
 
 const GMAIL_LOGO: &[u8] = include_bytes!("../assets/provider-logos/gmail.svg");
@@ -520,12 +520,12 @@ impl Component for AddAccountView {
             })
             .child(rect().width(Size::flex(1.)))
             .child({
-                let mut s_back = state;
+                let s_back = state;
                 rect()
                     .padding((8., 14., 8., 14.))
                     .corner_radius(6.)
                     .cursor(freya::winit::window::CursorIcon::Pointer)
-                    .on_press(move |_| s_back.view.set(crate::state::View::Mail))
+                    .on_press(move |_| s_back.set_view(crate::state::View::Mail))
                     .child(label().text("Cancel").color(DARK.muted).font_size(13.))
             })
             .child(action_button);
@@ -747,13 +747,13 @@ impl Component for EditAccountView {
             .content(Content::Flex)
             .spacing(8.)
             .child({
-                let mut s_back = state;
+                let s_back = state;
                 rect()
                     .padding((8., 14., 8., 14.))
                     .corner_radius(6.)
                     .background(crate::grain::hover())
                     .cursor(freya::winit::window::CursorIcon::Pointer)
-                    .on_press(move |_| s_back.view.set(crate::state::View::Settings(index)))
+                    .on_press(move |_| s_back.set_view(crate::state::View::Settings(index)))
                     .child(label().text("Cancel").color(DARK.muted).font_size(13.))
             })
             .child(rect().width(Size::flex(1.)))
@@ -806,7 +806,7 @@ impl Component for EditAccountView {
                             smtp_port: smtp_port_num,
                         };
                         state.update_account_config(index, updated_cfg);
-                        state.view.set(crate::state::View::Settings(index));
+                        state.set_view(crate::state::View::Settings(index));
                     })
                 };
                 rect()
@@ -991,7 +991,13 @@ impl Component for AccountSettings {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(14.)
-                    .child(avatar(&a.name, a.color, 56.))
+                    .child(ProfileAvatar {
+                        name: a.name.clone(),
+                        email: a.addr.clone(),
+                        color: a.color,
+                        size: 56.,
+                        state,
+                    })
                     .child(
                         rect()
                             .spacing(2.)
@@ -1028,13 +1034,13 @@ impl Component for AccountSettings {
                         on_press: EventHandler::new(move |_| state.sync_account(index)),
                     })
                     .child({
-                        let mut s_edit = state;
+                        let s_edit = state;
                         AccountButton {
                             text: "Edit".to_string(),
                             bg: crate::grain::hover(),
                             hover_bg: Fill::from((45, 45, 62)),
                             on_press: EventHandler::new(move |_| {
-                                s_edit.view.set(crate::state::View::EditAccount(index))
+                                s_edit.set_view(crate::state::View::EditAccount(index))
                             }),
                         }
                     })

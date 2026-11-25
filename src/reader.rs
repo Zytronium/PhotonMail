@@ -10,9 +10,10 @@ use crate::{
     icons::{CHEVRON_LEFT, *},
     mail::{AttachmentInfo, DRAFTS, quoting},
     model::BodyState,
+    settings_view::PreferencesView,
     state::{AppState, ComposePre, View},
     theme::DARK,
-    widgets::{Action, IconButton, QuoteToggle, avatar, divider, icon},
+    widgets::{Action, IconButton, ProfileAvatar, QuoteToggle, divider, icon},
 };
 
 /// Generate a fake http URL for caching attachment image data in the ResourceCache.
@@ -33,14 +34,14 @@ impl Component for Reader {
         let view = *state.view.read();
         let show_back = matches!(
             view,
-            View::AddAccount | View::Settings(_) | View::EditAccount(_)
+            View::AddAccount | View::Preferences | View::Settings(_) | View::EditAccount(_)
         );
 
         let mut col = rect().spacing(16.).padding(10.);
 
         // Back button when in a sub-view (not for Compose, which has its own close)
         if show_back {
-            let mut s_back = state;
+            let s_back = state;
             col = col.child(
                 rect()
                     .width(Size::px(120.))
@@ -50,7 +51,7 @@ impl Component for Reader {
                     .cross_align(Alignment::Center)
                     .spacing(6.)
                     .background(crate::grain::hover())
-                    .on_press(move |_| s_back.view.set(View::Mail))
+                    .on_press(move |_| s_back.set_view(View::Mail))
                     .child(icon(CHEVRON_LEFT, 14., DARK.text))
                     .child(label().text("Back").color(DARK.text).font_size(13.)),
             );
@@ -99,6 +100,7 @@ impl Component for Reader {
                 compose_key: compose_key.clone(),
             }),
             View::AddAccount => rect().child(AddAccountView { state }),
+            View::Preferences => rect().child(PreferencesView { state }),
             View::Settings(index) => rect().child(AccountSettings { state, index }),
             View::EditAccount(index) => rect().child(EditAccountView { state, index }),
         };
@@ -205,10 +207,14 @@ impl Component for MailView {
                 } else {
                     format!("{} → {}", m.from, account.addr)
                 };
-                let display_from = if m.folder == 1 || m.folder == 2 {
-                    if m.to.is_empty() { &m.from } else { &m.to }
+                let (display_from, display_email) = if m.folder == 1 || m.folder == 2 {
+                    if m.to.is_empty() {
+                        (&m.from, &m.from_email)
+                    } else {
+                        (&m.to, &m.to_email)
+                    }
                 } else {
-                    &m.from
+                    (&m.from, &m.from_email)
                 };
                 // Subject on its own line, then the sender row (Proton-style).
                 let header = rect()
@@ -228,7 +234,13 @@ impl Component for MailView {
                             .content(Content::Flex)
                             .cross_align(Alignment::Center)
                             .spacing(12.)
-                            .child(avatar(display_from, account.color, 40.))
+                            .child(ProfileAvatar {
+                                name: display_from.clone(),
+                                email: display_email.clone(),
+                                color: account.color,
+                                size: 40.,
+                                state,
+                            })
                             .child(
                                 rect()
                                     .width(Size::flex(1.))
@@ -390,7 +402,7 @@ impl Component for MailView {
                             *s_reply.compose_pre_gen.write() += 1;
                             s_reply.draft_mail.set(None);
                             s_reply.draft_pin.set(None);
-                            s_reply.view.set(View::Compose);
+                            s_reply.set_view(View::Compose);
                         }),
                     });
 
@@ -454,7 +466,7 @@ impl Component for MailView {
                             *s_reply_all.compose_pre_gen.write() += 1;
                             s_reply_all.draft_mail.set(None);
                             s_reply_all.draft_pin.set(None);
-                            s_reply_all.view.set(View::Compose);
+                            s_reply_all.set_view(View::Compose);
                         }),
                     });
 
@@ -515,7 +527,7 @@ impl Component for MailView {
                             *s_forward.compose_pre_gen.write() += 1;
                             s_forward.draft_mail.set(None);
                             s_forward.draft_pin.set(None);
-                            s_forward.view.set(View::Compose);
+                            s_forward.set_view(View::Compose);
                         }),
                     });
                 }

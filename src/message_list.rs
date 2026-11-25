@@ -4,14 +4,18 @@ use freya_components::input::InputColorsThemePartial;
 use crate::{
     data::FOLDERS,
     icons::*,
-    mail::DRAFTS,
+    mail::{DRAFTS, SENT},
     state::AppState,
     theme::DARK,
-    widgets::{Chip, avatar, divider, dot, icon},
+    widgets::{Chip, ProfileAvatar, divider, dot, icon},
 };
 
 pub struct MessageList {
     pub state: AppState,
+}
+
+fn first_email_address(email_list: &str) -> &str {
+    email_list.split(',').next().unwrap_or_default().trim()
 }
 
 impl PartialEq for MessageList {
@@ -279,7 +283,7 @@ impl Component for MessageRow {
         };
 
         // For Sent (folder 2) and Drafts (folder 1), show the recipient instead of the sender
-        let (display_name, display_email) = if m.folder == 1 || m.folder == 2 {
+        let (display_name, display_email) = if m.folder == DRAFTS || m.folder == SENT {
             (m.to.clone(), m.to_email.clone())
         } else {
             (m.from.clone(), m.from_email.clone())
@@ -293,7 +297,7 @@ impl Component for MessageRow {
             .child(
                 rect().width(Size::flex(1.)).child(
                     label()
-                        .text(display_name)
+                        .text(display_name.clone())
                         .color(DARK.text)
                         .font_size(15.)
                         .font_weight(weight)
@@ -319,7 +323,7 @@ impl Component for MessageRow {
             .spacing(6.)
             .child(
                 label()
-                    .text(display_email)
+                    .text(display_email.clone())
                     .color(DARK.muted)
                     .font_size(12.)
                     .max_lines(1)
@@ -351,7 +355,7 @@ impl Component for MessageRow {
                     let mut s_compose = state.clone();
                     s_compose.draft_mail.set(Some((m.account, m.folder, m.uid)));
                     s_compose.draft_pin.set(None);
-                    s_compose.view.set(crate::state::View::Compose);
+                    s_compose.set_view(crate::state::View::Compose);
                 } else {
                     s_select.select(i);
                 }
@@ -367,7 +371,13 @@ impl Component for MessageRow {
                         rect().width(Size::px(8.)).height(Size::px(8.))
                     }),
             )
-            .child(avatar(&m.from, account.color, 36.))
+            .child(ProfileAvatar {
+                name: display_name,
+                email: first_email_address(&display_email).to_string(),
+                color: account.color,
+                size: 36.,
+                state,
+            })
             .child(
                 rect()
                     .width(Size::flex(1.))
@@ -390,5 +400,23 @@ impl Component for MessageRow {
                             .text_overflow(freya::prelude::TextOverflow::Ellipsis),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_email_address;
+
+    #[test]
+    fn avatar_uses_only_the_first_recipient_email() {
+        assert_eq!(
+            first_email_address("alice@example.test, bob@example.test"),
+            "alice@example.test"
+        );
+        assert_eq!(
+            first_email_address(" alice@example.test "),
+            "alice@example.test"
+        );
+        assert_eq!(first_email_address(""), "");
     }
 }

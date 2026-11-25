@@ -122,6 +122,7 @@ pub enum Event {
     },
     /// Newly received unread messages, emitted only after the initial inbox sync.
     NewMail {
+        account: usize,
         messages: Vec<NewMailMessage>,
     },
     /// Flag changes made elsewhere: (uid, unread).
@@ -186,6 +187,10 @@ pub enum WorkerCmd {
     },
     /// Re-sync every folder now.
     SyncAll,
+    /// Change the periodic sync interval for this worker; `None` disables it.
+    SetAutoSyncInterval {
+        interval: Option<std::time::Duration>,
+    },
     /// Incremental INBOX sync (sent by the IDLE task).
     Refresh,
     FetchBody {
@@ -242,6 +247,10 @@ pub enum Command {
     UpdateAccount {
         index: usize,
         cfg: AccountConfig,
+    },
+    /// Update periodic syncing for every running account worker.
+    SetAutoSyncInterval {
+        interval: Option<std::time::Duration>,
     },
 }
 

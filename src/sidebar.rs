@@ -47,11 +47,11 @@ impl Component for Sidebar {
         for (i, a) in accounts.iter().enumerate() {
             let open = state.is_expanded(i);
             let mut s_toggle = state;
-            let mut s_gear = state;
+            let s_gear = state;
             let gear_on_press: EventHandler<Event<PressEventData>> =
                 (move |e: Event<PressEventData>| {
                     e.stop_propagation();
-                    s_gear.view.set(View::Settings(i));
+                    s_gear.set_view(View::Settings(i));
                 })
                 .into();
             rows.push(rect().child(GroupHeader {
@@ -118,7 +118,7 @@ impl Component for Sidebar {
             .on_press(move |_| {
                 s_compose.draft_mail.set(None);
                 s_compose.draft_pin.set(None);
-                s_compose.view.set(View::Compose);
+                s_compose.set_view(View::Compose);
             })
             .child(icon(PENCIL, 16., DARK.text))
             .child(
@@ -142,6 +142,19 @@ impl Component for Sidebar {
             .padding((8., 4., 0., 4.))
             .child(dot(8., status))
             .child(label().text(footer_text).color(DARK.muted).font_size(12.));
+
+        let settings_state = state;
+        let settings_button = rect()
+            .width(Size::fill())
+            .padding((8., 10., 8., 10.))
+            .corner_radius(8.)
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(8.)
+            .cursor(freya::winit::window::CursorIcon::Pointer)
+            .on_press(move |_| settings_state.set_view(View::Preferences))
+            .child(icon(SETTINGS, 16., DARK.muted))
+            .child(label().text("Settings").color(DARK.text).font_size(13.));
 
         let fs = *state.focus_state.read();
         let has_focus = fs.keyboard_active && fs.area == crate::keyboard::FocusArea::Sidebar;
@@ -173,6 +186,7 @@ impl Component for Sidebar {
             )
             .child(divider())
             .child(footer)
+            .child(settings_button)
     }
 }
 
@@ -210,11 +224,11 @@ impl Component for SectionHeader {
             )
             .child(rect().width(Size::flex(1.)));
         if show_add {
-            let mut s_add = state;
+            let s_add = state;
             r = r.child(IconButton {
                 bytes: PLUS,
                 color: DARK.muted,
-                on_press: (move |_| s_add.view.set(View::AddAccount)).into(),
+                on_press: (move |_| s_add.set_view(View::AddAccount)).into(),
             });
         }
         r

@@ -62,7 +62,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(20 * 60); // servers may drop IDLE at 30 min
 const REFRESH_AFTER: Duration = Duration::from_secs(20);
-const AUTO_SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Newest messages fetched first, so the list paints quickly.
 const FIRST_PAGE: u32 = 50;
@@ -563,6 +562,17 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
 // Worker
 // ---------------------------------------------------------------------------
 
+fn make_auto_sync_timer(interval: Option<Duration>) -> Option<tokio::time::Interval> {
+    interval
+        .filter(|interval| !interval.is_zero())
+        .map(|interval| {
+            let mut timer =
+                tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+            timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            timer
+        })
+}
+
 #[derive(Default)]
 struct FolderState {
     uid_validity: Option<u32>,
@@ -614,6 +624,7 @@ pub struct Worker {
     has_move: bool,
     has_uidplus: bool,
     folders: [FolderState; 6],
+    auto_sync: Option<tokio::time::Interval>,
     busy: bool,
 }
 
@@ -626,6 +637,7 @@ impl Worker {
         rx: UnboundedReceiver<WorkerCmd>,
         signals_tx: UnboundedSender<WorkerSignal>,
         signals_rx: UnboundedReceiver<WorkerSignal>,
+        auto_sync_interval: Option<Duration>,
     ) -> Self {
         Worker {
             index,
@@ -643,6 +655,7 @@ impl Worker {
             has_move: false,
             has_uidplus: false,
             folders: Default::default(),
+            auto_sync: make_auto_sync_timer(auto_sync_interval),
             busy: false,
         }
     }
@@ -660,11 +673,6 @@ impl Worker {
 
     pub async fn run(mut self) {
         let mut backoff = Duration::from_secs(2);
-        let mut auto_sync = tokio::time::interval_at(
-            tokio::time::Instant::now() + AUTO_SYNC_INTERVAL,
-            AUTO_SYNC_INTERVAL,
-        );
-        auto_sync.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             // 1. Make sure we have a live session.
             if self.session.is_none() {
@@ -736,7 +744,13 @@ impl Worker {
                         Some(WorkerSignal::SendFinished(send)) => completed_send = Some(send),
                         None => {}
                     },
-                    _ = auto_sync.tick() => self.backlog.push_back(WorkerCmd::SyncAll),
+                    _ = async {
+                        if let Some(interval) = &mut self.auto_sync {
+                            interval.tick().await;
+                        } else {
+                            std::future::pending::<()>().await;
+                        }
+                    } => self.backlog.push_back(WorkerCmd::SyncAll),
                 }
                 if let Some(send) = completed_send {
                     self.mark_busy();
@@ -833,6 +847,10 @@ impl Worker {
                         self.push_sync_front(f);
                     }
                 }
+                Ok(())
+            }
+            WorkerCmd::SetAutoSyncInterval { interval } => {
+                self.auto_sync = make_auto_sync_timer(interval);
                 Ok(())
             }
             WorkerCmd::Refresh => {
@@ -1424,6 +1442,7 @@ impl Worker {
                 });
                 if !notifications.is_empty() {
                     let _ = events.try_send(Event::NewMail {
+                        account: index,
                         messages: notifications,
                     });
                 }
@@ -1527,6 +1546,7 @@ pub fn spawn_account(
     cfg: AccountConfig,
     password: Option<String>,
     events: async_channel::Sender<Event>,
+    auto_sync_interval: Option<Duration>,
 ) -> UnboundedSender<WorkerCmd> {
     let (tx, rx) = unbounded_channel();
 
@@ -1561,9 +1581,18 @@ pub fn spawn_account(
             signals_tx.clone(),
             cancel_rx,
         ));
-        Worker::new(index, cfg, password, events, rx, signals_tx, signals_rx)
-            .run()
-            .await;
+        Worker::new(
+            index,
+            cfg,
+            password,
+            events,
+            rx,
+            signals_tx,
+            signals_rx,
+            auto_sync_interval,
+        )
+        .run()
+        .await;
         let _ = cancel_tx.send(());
     });
 

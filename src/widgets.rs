@@ -1,5 +1,6 @@
 use freya::prelude::*;
 use freya::winit::window::CursorIcon;
+use sha2::{Digest, Sha256};
 
 use crate::{
     state::AppState,
@@ -64,6 +65,88 @@ pub fn avatar(name: &str, color: Rgb, size: f32) -> Rect {
                 .font_size(size * 0.42)
                 .font_weight(FontWeight::BOLD),
         )
+}
+
+#[derive(PartialEq)]
+pub struct ProfileAvatar {
+    pub name: String,
+    pub email: String,
+    pub color: Rgb,
+    pub size: f32,
+    pub state: AppState,
+}
+
+impl Component for ProfileAvatar {
+    fn render(&self) -> impl IntoElement {
+        let name = self.name.clone();
+        let email = self.email.clone();
+        let color = self.color;
+        let size = self.size;
+        let show_gravatar = self.state.settings.read().gravatar_enabled();
+        let container = rect()
+            .width(Size::px(size))
+            .height(Size::px(size))
+            .corner_radius(size / 2.)
+            .background(color);
+        let Some(url) = show_gravatar
+            .then(|| gravatar_url(&email, size))
+            .flatten()
+            .and_then(|url| url::Url::parse(&url).ok())
+        else {
+            return container.center().child(
+                label()
+                    .text(initials(&name))
+                    .color(DARK.text)
+                    .font_size(size * 0.42)
+                    .font_weight(FontWeight::BOLD),
+            );
+        };
+
+        container.child(
+            ImageViewer::new(url)
+                .width(Size::px(size))
+                .height(Size::px(size))
+                .corner_radius(size / 2.)
+                .loading_placeholder(avatar(&name, color, size))
+                .error_renderer(move |_| avatar(&name, color, size).into()),
+        )
+    }
+}
+
+fn gravatar_url(email: &str, size: f32) -> Option<String> {
+    let email = email.trim().to_ascii_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        return None;
+    }
+    let digest = Sha256::digest(email.as_bytes());
+    let hash = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Some(format!(
+        "https://www.gravatar.com/avatar/{hash}?s={}&d=404",
+        size.round() as u32
+    ))
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::*;
+
+    #[test]
+    fn gravatar_uses_normalized_sha256_email_and_rejects_empty_addresses() {
+        let normalized = gravatar_url(" Alice@Example.com ", 40.).unwrap();
+        assert_eq!(normalized, gravatar_url("alice@example.com", 40.).unwrap());
+        assert!(normalized.contains("/avatar/"));
+        assert!(normalized.ends_with("?s=40&d=404"));
+        assert!(gravatar_url("not-an-address", 40.).is_none());
+    }
+
+    #[test]
+    fn gravatar_uses_sha256_digest() {
+        let url = gravatar_url("alice@example.com", 36.).unwrap();
+        assert!(url.contains("ff8d9819fc0e12bf0d24892e45987e249a28dce836a85cad60e28eaaa8c6d976"));
+    }
 }
 
 #[derive(PartialEq, Clone)]

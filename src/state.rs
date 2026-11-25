@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::io::Cursor;
+use std::time::Duration;
 
 use freya::prelude::*;
 use notify_rust::Notification as DesktopNotification;
@@ -10,6 +11,7 @@ use crate::{
     link_prefs::LinkPrefs,
     mail::{ARCHIVE, Engine, INBOX, NewMailMessage, TRASH, WorkerCmd, config},
     model::{BodyState, NoticeSeverity, Store},
+    settings_view::AppSettings,
 };
 
 const NOTIFICATION_SOUND: &[u8] = include_bytes!("../assets/sounds/notification-classic.mp3");
@@ -19,6 +21,7 @@ pub enum View {
     Mail,
     Compose,
     AddAccount,
+    Preferences,
     Settings(usize),
     EditAccount(usize),
 }
@@ -32,6 +35,10 @@ pub struct AppState {
     pub engine: State<Engine>,      // channel to the background IMAP workers
     pub expanded: State<Vec<bool>>, // per-account sidebar group (missing = open)
     pub view: State<View>,
+    pub settings: State<AppSettings>,
+    pub mark_read_generation: State<u64>,
+    pub pending_sends: State<Vec<PendingSend>>,
+    pub next_pending_send_id: State<u64>,
     pub unread_only: State<bool>,
     pub sidebar_width: State<f32>,
     pub message_list_width: State<f32>,
@@ -59,6 +66,15 @@ pub struct AppState {
     pub compose_pre_gen: State<u32>,
     /// Set of message indices that have their quoted text expanded.
     pub quoted_expanded: State<std::collections::HashSet<usize>>,
+}
+
+#[derive(Clone)]
+pub struct PendingSend {
+    pub id: u64,
+    pub delay_seconds: u32,
+    account: usize,
+    raw: String,
+    draft_origin: Option<(usize, u32)>,
 }
 
 /// Pre-filled compose data for reply and forward actions.
@@ -99,6 +115,8 @@ pub fn use_app_state() -> AppState {
         }
     });
     let first_run = !demo && configs.is_empty();
+    let settings = use_state(AppSettings::load_from_disk);
+    let auto_sync_interval = settings.peek().auto_sync_interval();
 
     let store_configs = configs.clone();
     let store = use_state(move || {
@@ -113,7 +131,7 @@ pub fn use_app_state() -> AppState {
         if demo {
             Engine::offline()
         } else {
-            Engine::start(configs.clone())
+            Engine::start(configs.clone(), auto_sync_interval)
         }
     });
 
@@ -132,6 +150,10 @@ pub fn use_app_state() -> AppState {
                 View::Mail
             }
         }),
+        settings,
+        mark_read_generation: use_state(|| 0),
+        pending_sends: use_state(Vec::new),
+        next_pending_send_id: use_state(|| 0),
         unread_only: use_state(|| false),
         sidebar_width: use_state(|| 260.),
         message_list_width: use_state(|| 380.),
@@ -166,17 +188,30 @@ fn start_event_pump(app: AppState) {
     spawn(async move {
         let mut app = app;
         while let Ok(event) = rx.recv().await {
-            if let crate::mail::Event::NewMail { messages } = &event
-                && !*is_app_focused.read()
-            {
-                let (summary, body) = new_mail_notification(messages);
-                std::thread::spawn(play_notification_sound);
-                std::thread::spawn(move || {
-                    let _ = DesktopNotification::new()
-                        .summary(&summary)
-                        .body(&body)
-                        .show();
-                });
+            if let crate::mail::Event::NewMail { account, messages } = &event {
+                let account_id = app
+                    .store
+                    .peek()
+                    .accounts
+                    .get(*account)
+                    .map(|account| account.id.clone());
+                let settings = app.settings.peek().clone();
+                if !*is_app_focused.read()
+                    && account_id
+                        .as_deref()
+                        .is_some_and(|id| settings.notifications_for_account(id))
+                {
+                    let (summary, body) = new_mail_notification(messages);
+                    if settings.notification_sound {
+                        std::thread::spawn(play_notification_sound);
+                    }
+                    std::thread::spawn(move || {
+                        let _ = DesktopNotification::new()
+                            .summary(&summary)
+                            .body(&body)
+                            .show();
+                    });
+                }
             }
             // Handle DraftSaved before applying to store. The server gives the saved draft a
             // new UID; track it (also for brand-new drafts) and pin the compose pane's key so
@@ -237,7 +272,7 @@ fn start_event_pump(app: AppState) {
                 let last = app.store.peek().accounts.len().saturating_sub(1);
                 app.account.set(Some(last));
                 app.folder.set(INBOX);
-                app.view.set(View::Mail);
+                app.set_view(View::Mail);
             }
         }
     });
@@ -350,9 +385,10 @@ impl AppState {
     }
 
     pub fn go(&mut self, account: Option<usize>, folder: usize) {
+        self.cancel_mark_read_timer();
         self.account.set(account);
         self.folder.set(folder);
-        self.view.set(View::Mail);
+        self.set_view(View::Mail);
 
         // Make sure what's on screen is fresh. Workers skip folders synced in the last
         // few seconds, so this is cheap to call on every navigation.
@@ -363,11 +399,31 @@ impl AppState {
         }
     }
 
-    /// Select a mail: mark it read (locally and on the server) and fetch its body if
-    /// it isn't already cached.
+    pub fn set_view(&self, view: View) {
+        if *self.view.peek() != view {
+            self.cancel_mark_read_timer();
+        }
+        let mut current_view = self.view.clone();
+        current_view.set(view);
+    }
+
+    pub fn cancel_mark_read_timer(&self) {
+        let mut generation = self.mark_read_generation.clone();
+        let mut generation = generation.write();
+        *generation = generation.wrapping_add(1);
+    }
+
+    /// Select a mail and fetch its body if it isn't already cached. Unread messages
+    /// are marked read immediately or after the configured delay.
     pub fn select(&mut self, i: usize) {
-        self.view.set(View::Mail);
+        self.set_view(View::Mail);
         self.selected.set(Some(i));
+        let mark_read_generation = {
+            let mut generation = self.mark_read_generation.write();
+            *generation = generation.wrapping_add(1);
+            *generation
+        };
+        let mark_read_after = self.settings.read().mark_read_after_millis;
 
         let (account, folder, uid, was_unread, needs_body) = {
             let store = self.store.read();
@@ -383,9 +439,6 @@ impl AppState {
 
         {
             let mut store = self.store.write();
-            if was_unread {
-                store.mails[i].unread = false;
-            }
             if needs_body && uid != 0 {
                 store.mails[i].body = BodyState::Loading;
             }
@@ -394,16 +447,48 @@ impl AppState {
             if needs_body {
                 self.send(account, WorkerCmd::FetchBody { folder, uid });
             }
-            if was_unread {
-                self.send(
-                    account,
-                    WorkerCmd::SetSeen {
-                        folder,
-                        uid,
-                        seen: true,
-                    },
-                );
+        }
+        if was_unread {
+            if mark_read_after == 0 {
+                self.mark_mail_read(i, account, folder, uid);
+            } else {
+                let mut state = *self;
+                spawn(async move {
+                    futures_timer::Delay::new(Duration::from_millis(u64::from(mark_read_after)))
+                        .await;
+                    if *state.mark_read_generation.read() == mark_read_generation
+                        && *state.selected.read() == Some(i)
+                        && *state.view.read() == View::Mail
+                    {
+                        state.mark_mail_read(i, account, folder, uid);
+                    }
+                });
             }
+        }
+    }
+
+    fn mark_mail_read(&mut self, index: usize, account: usize, folder: usize, uid: u32) {
+        let should_mark = {
+            let mut store = self.store.write();
+            let Some(mail) = store.mails.get_mut(index) else {
+                return;
+            };
+            if mail.account != account || mail.uid != uid || !mail.unread {
+                false
+            } else {
+                mail.unread = false;
+                true
+            }
+        };
+        if should_mark && uid != 0 {
+            self.send(
+                account,
+                WorkerCmd::SetSeen {
+                    folder,
+                    uid,
+                    seen: true,
+                },
+            );
         }
     }
 
@@ -481,6 +566,24 @@ impl AppState {
         }
     }
 
+    pub fn update_settings(&mut self, update: impl FnOnce(&mut AppSettings)) {
+        let previous = self.settings.read().clone();
+        let updated = {
+            let mut settings = self.settings.write();
+            update(&mut settings);
+            settings.clone()
+        };
+        if updated == previous {
+            return;
+        }
+        updated.save_to_disk();
+        if updated.auto_sync_interval() != previous.auto_sync_interval() {
+            self.engine
+                .peek()
+                .set_auto_sync_interval(updated.auto_sync_interval());
+        }
+    }
+
     /// Save a new draft (no existing UID) to the server.
     pub fn save_new_draft(&self, account: usize, raw: String) {
         self.send(account, WorkerCmd::AppendDraft { raw });
@@ -520,6 +623,89 @@ impl AppState {
     /// worker deletes it once the message has gone out.
     pub fn send_email(&self, account: usize, raw: String, draft_uid: Option<u32>) {
         self.send(account, WorkerCmd::SendEmail { raw, draft_uid });
+    }
+
+    pub fn queue_send_email(
+        &mut self,
+        account: usize,
+        raw: String,
+        same_account_draft: Option<u32>,
+        other_account_draft: Option<(usize, u32)>,
+    ) {
+        let delay_seconds = self.settings.read().undo_send_seconds;
+        let id = {
+            let mut next_id = self.next_pending_send_id.write();
+            *next_id = next_id.wrapping_add(1);
+            *next_id
+        };
+        let pending = PendingSend {
+            id,
+            delay_seconds,
+            account,
+            raw,
+            draft_origin: same_account_draft
+                .map(|uid| (account, uid))
+                .or(other_account_draft),
+        };
+
+        if delay_seconds == 0 {
+            self.dispatch_pending_send(pending);
+        } else {
+            self.pending_sends.write().push(pending);
+            let mut state = *self;
+            spawn(async move {
+                futures_timer::Delay::new(Duration::from_secs(u64::from(delay_seconds))).await;
+                state.commit_pending_send(id);
+            });
+        }
+    }
+
+    pub fn undo_pending_send(&mut self, id: u64) {
+        let pending = {
+            let mut pending_sends = self.pending_sends.write();
+            pending_sends
+                .iter()
+                .position(|pending| pending.id == id)
+                .map(|index| pending_sends.remove(index))
+        };
+        let Some(pending) = pending else {
+            return;
+        };
+
+        if let Some((account, uid)) = pending.draft_origin {
+            self.update_draft(account, uid, pending.raw);
+        } else {
+            self.save_new_draft(pending.account, pending.raw);
+        }
+        self.store.write().set_notice(
+            "Send canceled; message saved to Drafts.",
+            NoticeSeverity::Info,
+        );
+    }
+
+    fn commit_pending_send(&mut self, id: u64) {
+        let pending = {
+            let mut pending_sends = self.pending_sends.write();
+            pending_sends
+                .iter()
+                .position(|pending| pending.id == id)
+                .map(|index| pending_sends.remove(index))
+        };
+        if let Some(pending) = pending {
+            self.dispatch_pending_send(pending);
+        }
+    }
+
+    fn dispatch_pending_send(&self, pending: PendingSend) {
+        let draft_uid = pending.draft_origin.and_then(|(draft_account, uid)| {
+            if draft_account == pending.account {
+                Some(uid)
+            } else {
+                self.delete_draft(draft_account, uid);
+                None
+            }
+        });
+        self.send_email(pending.account, pending.raw, draft_uid);
     }
 
     /// Update an account's persisted config (e.g. SMTP settings) and save to disk.

@@ -11,6 +11,7 @@ mod message_list;
 mod model;
 mod pane_divider;
 mod reader;
+mod settings_view;
 mod sidebar;
 mod state;
 mod theme;
@@ -60,6 +61,7 @@ fn main() {
                     .with_background(Color::TRANSPARENT)
                     .with_on_close(|renderer, window_id| {
                         if let Some(window) = renderer.windows.get_mut(&window_id) {
+                            window.window_mut().set_minimized(true);
                             window.window_mut().set_visible(false);
                         }
                         CloseDecision::KeepOpen
@@ -87,6 +89,7 @@ fn main() {
                             "open" => {
                                 for window in renderer.windows.values_mut() {
                                     let window = window.window_mut();
+                                    window.set_minimized(false);
                                     window.set_visible(true);
                                     window.request_redraw();
                                     window.focus_window();
@@ -123,6 +126,7 @@ fn app() -> impl IntoElement {
     };
 
     let send_error = state.store.read().send_error.clone();
+    let pending_sends = state.pending_sends.read().clone();
     let dismiss_send_error = {
         let mut store = state.store.clone();
         EventHandler::new(move |_| {
@@ -168,6 +172,44 @@ fn app() -> impl IntoElement {
                                 .font_size(13.),
                         ),
                 )
+        }))
+        .maybe_child((!pending_sends.is_empty()).then(|| {
+            rect()
+                .vertical()
+                .spacing(4.)
+                .children(pending_sends.iter().map(|pending| {
+                    let id = pending.id;
+                    let delay_seconds = pending.delay_seconds;
+                    let mut state = state;
+                    rect()
+                        .horizontal()
+                        .width(Size::fill())
+                        .padding(8.)
+                        .spacing(12.)
+                        .background(DARK.accent)
+                        .child(
+                            label()
+                                .text(format!(
+                                    "Message queued — {}-second undo window",
+                                    delay_seconds
+                                ))
+                                .color((255, 255, 255))
+                                .font_size(13.),
+                        )
+                        .child(
+                            rect()
+                                .padding((2., 10., 2., 10.))
+                                .corner_radius(4.)
+                                .cursor(freya::winit::window::CursorIcon::Pointer)
+                                .on_press(move |_| state.undo_pending_send(id))
+                                .child(
+                                    label()
+                                        .text("Undo send")
+                                        .color((255, 255, 255))
+                                        .font_size(13.),
+                                ),
+                        )
+                }))
         }))
         .child(
             rect()

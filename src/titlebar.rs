@@ -98,6 +98,7 @@ impl Component for WinButton {
                 }
                 WinAction::Close => {
                     Platform::get().with_window(Platform::window_id(), |window| {
+                        window.set_minimized(true);
                         window.set_visible(false);
                     });
                 }
