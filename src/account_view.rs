@@ -426,6 +426,7 @@ impl Component for AddAccountView {
                     let cfg = crate::mail::AccountConfig {
                         id: crate::mail::config::new_id(),
                         name: name_val,
+                        color: None,
                         sender_name: sender_name_val,
                         email: addr.clone(),
                         username: addr,
@@ -797,6 +798,7 @@ impl Component for EditAccountView {
                         let updated_cfg = crate::mail::AccountConfig {
                             id: cfg.id.clone(),
                             name: name_val,
+                            color: cfg.color,
                             sender_name: sender_name_val,
                             email: addr,
                             username: cfg.username.clone(),
@@ -1012,6 +1014,38 @@ impl Component for AccountSettings {
                     ),
             )
             .child(divider())
+            .child(
+                label()
+                    .text("Account color")
+                    .color(DARK.muted)
+                    .font_size(13.),
+            )
+            .child(
+                rect()
+                    .horizontal()
+                    .width(Size::fill())
+                    .spacing(10.)
+                    .content(Content::wrap_spacing(10.))
+                    .children(crate::theme::ACCOUNT_COLORS.iter().map(|&color| {
+                        let mut s_color = state;
+                        rect()
+                            .width(Size::px(24.))
+                            .height(Size::px(24.))
+                            .corner_radius(12.)
+                            .background(Fill::from(color))
+                            .border(
+                                Border::new()
+                                    .width(if a.color == color { 2. } else { 1. })
+                                    .fill(if a.color == color {
+                                        DARK.text
+                                    } else {
+                                        DARK.divider
+                                    }),
+                            )
+                            .cursor(freya::winit::window::CursorIcon::Pointer)
+                            .on_press(move |_| s_color.set_account_color(index, color))
+                    })),
+            )
             .child(field(
                 "Sync status",
                 &format!("● {}", a.sync_label()),

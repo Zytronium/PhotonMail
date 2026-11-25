@@ -380,6 +380,58 @@ impl AppState {
             .count()
     }
 
+    pub fn sidebar_account_indices(&self) -> Vec<usize> {
+        let account_ids: Vec<String> = self
+            .store
+            .read()
+            .accounts
+            .iter()
+            .map(|account| account.id.clone())
+            .collect();
+        self.settings
+            .read()
+            .ordered_account_ids(&account_ids)
+            .iter()
+            .filter_map(|id| account_ids.iter().position(|account_id| account_id == id))
+            .collect()
+    }
+
+    pub fn reorder_sidebar_accounts(&mut self, from_id: &str, to_id: &str) {
+        let account_ids: Vec<String> = self
+            .store
+            .read()
+            .accounts
+            .iter()
+            .map(|account| account.id.clone())
+            .collect();
+        self.update_settings(|settings| {
+            settings.reorder_sidebar_accounts(&account_ids, from_id, to_id);
+        });
+    }
+
+    pub fn set_account_color(&mut self, index: usize, color: crate::theme::Rgb) {
+        if self.store.read().demo {
+            if let Some(account) = self.store.write().accounts.get_mut(index) {
+                account.color = color;
+            }
+            return;
+        }
+
+        let mut configs = config::load_accounts();
+        let Some(cfg) = configs.get_mut(index) else {
+            return;
+        };
+        if cfg.color == Some(color) {
+            return;
+        }
+        cfg.color = Some(color);
+        let cfg = cfg.clone();
+        if let Some(account) = self.store.write().accounts.get_mut(index) {
+            account.color = color;
+        }
+        self.update_account_config(index, cfg);
+    }
+
     pub fn send(&self, account: usize, cmd: WorkerCmd) {
         self.engine.peek().account(account, cmd);
     }

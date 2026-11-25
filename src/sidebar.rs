@@ -22,7 +22,9 @@ impl Component for Sidebar {
         let view = *state.view.read();
         let in_mail = view == View::Mail;
         let accounts = state.store.read().accounts.clone();
+        let account_indices = state.sidebar_account_indices();
         let demo = state.store.read().demo;
+        let dragged_account = use_state(|| None::<String>);
 
         let mut rows: Vec<Rect> = Vec::new();
 
@@ -44,10 +46,26 @@ impl Component for Sidebar {
             state: state.clone(),
         }));
 
-        for (i, a) in accounts.iter().enumerate() {
+        for i in account_indices {
+            let Some(a) = accounts.get(i) else {
+                continue;
+            };
             let open = state.is_expanded(i);
             let mut s_toggle = state;
             let s_gear = state;
+            let drag_source_id = a.id.clone();
+            let mut drag_source = dragged_account.clone();
+            let on_drag_start = EventHandler::new(move |_| {
+                drag_source.set(Some(drag_source_id.clone()));
+            });
+            let drag_target_id = a.id.clone();
+            let drag_target = dragged_account.clone();
+            let mut s_reorder = state;
+            let on_drag_over = EventHandler::new(move |_| {
+                if let Some(source_id) = drag_target.read().clone() {
+                    s_reorder.reorder_sidebar_accounts(&source_id, &drag_target_id);
+                }
+            });
             let gear_on_press: EventHandler<Event<PressEventData>> =
                 (move |e: Event<PressEventData>| {
                     e.stop_propagation();
@@ -62,6 +80,8 @@ impl Component for Sidebar {
                 count: state.inbox_unread(Some(i)),
                 show_gear: true,
                 gear_on_press: gear_on_press.clone(),
+                on_drag_start,
+                on_drag_over,
                 on_press: (move |_| s_toggle.toggle_expanded(i)).into(),
             }));
             if open {
@@ -158,6 +178,7 @@ impl Component for Sidebar {
 
         let fs = *state.focus_state.read();
         let has_focus = fs.keyboard_active && fs.area == crate::keyboard::FocusArea::Sidebar;
+        let mut clear_drag = dragged_account.clone();
 
         rect()
             .width(Size::px(*state.sidebar_width.read()))
@@ -187,6 +208,7 @@ impl Component for Sidebar {
             .child(divider())
             .child(footer)
             .child(settings_button)
+            .on_global_pointer_up(move |_| clear_drag.set(None))
     }
 }
 
@@ -244,6 +266,8 @@ struct GroupHeader {
     count: usize,
     show_gear: bool,
     gear_on_press: EventHandler<Event<PressEventData>>,
+    on_drag_start: EventHandler<()>,
+    on_drag_over: EventHandler<()>,
     on_press: EventHandler<Event<PressEventData>>,
 }
 
@@ -257,6 +281,8 @@ impl Component for GroupHeader {
         let count = self.count;
         let show_gear = self.show_gear;
         let gear_on_press = self.gear_on_press.clone();
+        let on_drag_start = self.on_drag_start.clone();
+        let on_drag_over = self.on_drag_over.clone();
         let on_press = self.on_press.clone();
         let mut r = rect()
             .width(Size::fill())
@@ -267,8 +293,12 @@ impl Component for GroupHeader {
             .content(Content::Flex)
             .cross_align(Alignment::Center)
             .spacing(6.)
-            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_enter(move |_| {
+                hovering.set(true);
+                on_drag_over.call(());
+            })
             .on_pointer_leave(move |_| hovering.set(false))
+            .on_pointer_down(move |_| on_drag_start.call(()))
             .on_press(on_press)
             .child(icon(
                 if open { CHEVRON_DOWN } else { CHEVRON_RIGHT },

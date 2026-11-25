@@ -35,6 +35,7 @@ pub struct AppSettings {
     pub auto_sync_seconds: u32,
     pub notifications_enabled: bool,
     disabled_notification_accounts: HashSet<String>,
+    pub sidebar_account_order: Vec<String>,
     pub notification_sound: bool,
     pub mark_read_after_millis: u32,
     pub undo_send_seconds: u32,
@@ -49,6 +50,7 @@ impl Default for AppSettings {
             auto_sync_seconds: 300,
             notifications_enabled: true,
             disabled_notification_accounts: HashSet::new(),
+            sidebar_account_order: Vec::new(),
             notification_sound: true,
             mark_read_after_millis: 0,
             undo_send_seconds: 5,
@@ -57,6 +59,37 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    pub fn ordered_account_ids(&self, account_ids: &[String]) -> Vec<String> {
+        let mut ordered: Vec<String> = self
+            .sidebar_account_order
+            .iter()
+            .filter(|id| account_ids.contains(id))
+            .cloned()
+            .collect();
+        for id in account_ids {
+            if !ordered.contains(id) {
+                ordered.push(id.clone());
+            }
+        }
+        ordered
+    }
+
+    pub fn reorder_sidebar_accounts(&mut self, account_ids: &[String], from_id: &str, to_id: &str) {
+        if from_id == to_id {
+            return;
+        }
+        let mut order = self.ordered_account_ids(account_ids);
+        let Some(from_index) = order.iter().position(|id| id == from_id) else {
+            return;
+        };
+        let Some(target_index) = order.iter().position(|id| id == to_id) else {
+            return;
+        };
+        let account_id = order.remove(from_index);
+        order.insert(target_index, account_id);
+        self.sidebar_account_order = order;
+    }
+
     pub fn auto_sync_interval(&self) -> Option<Duration> {
         match self.auto_sync_seconds {
             0 => None,
@@ -514,6 +547,26 @@ mod tests {
         settings.notifications_enabled = false;
         settings.set_account_notifications_enabled("personal", true);
         assert!(!settings.notifications_for_account("personal"));
+    }
+
+    #[test]
+    fn sidebar_account_order_handles_additions_removals_and_reordering() {
+        let account_ids = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let mut settings = AppSettings {
+            sidebar_account_order: vec!["b".to_string(), "removed".to_string()],
+            ..AppSettings::default()
+        };
+
+        assert_eq!(
+            settings.ordered_account_ids(&account_ids),
+            vec!["b", "a", "c"]
+        );
+
+        settings.reorder_sidebar_accounts(&account_ids, "a", "c");
+        assert_eq!(settings.sidebar_account_order, vec!["b", "c", "a"]);
+
+        settings.reorder_sidebar_accounts(&account_ids, "c", "b");
+        assert_eq!(settings.sidebar_account_order, vec!["c", "b", "a"]);
     }
 
     #[test]

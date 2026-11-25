@@ -11,6 +11,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::theme::Rgb;
+
 const KEYRING_SERVICE: &str = "PhotonMail";
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -19,6 +21,9 @@ pub struct AccountConfig {
     pub id: String,
     /// Display name shown in the sidebar (account label).
     pub name: String,
+    /// Accent color used for this account in the UI.
+    #[serde(default)]
+    pub color: Option<Rgb>,
     /// Sender display name — the name recipients see in the From header.
     pub sender_name: String,
     pub email: String,
@@ -644,6 +649,7 @@ fn load_accounts_from_path(path: &Path) -> Vec<AccountConfig> {
                 .map(|account| AccountConfig {
                     id: account.id,
                     name: account.name.clone(),
+                    color: None,
                     sender_name: account.name,
                     email: account.email,
                     username: account.username,
@@ -667,6 +673,7 @@ fn load_accounts_from_path(path: &Path) -> Vec<AccountConfig> {
                     AccountConfig {
                         id: account.id,
                         name: account.name.clone(),
+                        color: None,
                         sender_name: account.name,
                         email: account.email,
                         username: account.username,
@@ -775,6 +782,23 @@ pub fn load_password(id: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_colors_are_optional_for_existing_configs_and_persist_when_set() {
+        let raw = r#"{
+            "id":"account-1","name":"Personal","sender_name":"Person",
+            "email":"person@example.com","username":"person@example.com",
+            "host":"imap.example.com","port":993,
+            "smtp_host":"smtp.example.com","smtp_port":587
+        }"#;
+        let mut account: AccountConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(account.color, None);
+
+        account.color = Some((10, 20, 30));
+        let serialized = serde_json::to_string(&account).unwrap();
+        let restored: AccountConfig = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(restored.color, Some((10, 20, 30)));
+    }
 
     #[test]
     fn provider_settings_use_submission_ports_and_hosts() {

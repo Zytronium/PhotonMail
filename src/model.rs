@@ -10,18 +10,8 @@ use crate::{
     mail::{
         AccountConfig, AttachmentInfo, BodyData, Event, HeaderRow, SyncStatus, parse::fmt_date,
     },
-    theme::Rgb,
+    theme::{ACCOUNT_COLORS, Rgb},
 };
-
-/// Accent colors handed out to accounts in order.
-const PALETTE: [Rgb; 6] = [
-    (109, 74, 255),
-    (0, 150, 136),
-    (240, 140, 40),
-    (220, 70, 90),
-    (80, 160, 235),
-    (160, 200, 70),
-];
 
 const MAX_CACHED_BODY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_MAIL_RECORDS: usize = 1_200;
@@ -215,7 +205,9 @@ impl Store {
     }
 
     fn push_account(&mut self, cfg: &AccountConfig) {
-        let color = PALETTE[self.accounts.len() % PALETTE.len()];
+        let color = cfg
+            .color
+            .unwrap_or(ACCOUNT_COLORS[self.accounts.len() % ACCOUNT_COLORS.len()]);
         self.accounts.push(Account {
             id: cfg.id.clone(),
             name: cfg.name.clone(),
@@ -558,7 +550,7 @@ mod tests {
             sender_name: String::new(),
             addr: "user@example.test".to_string(),
             host: "mail.example.test".to_string(),
-            color: PALETTE[0],
+            color: ACCOUNT_COLORS[0],
             status: SyncStatus::Idle { at: 0 },
             demo_sync: None,
         });
