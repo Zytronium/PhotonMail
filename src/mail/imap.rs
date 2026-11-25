@@ -48,7 +48,8 @@ use tokio_rustls::{
 };
 
 use super::{
-    ARCHIVE, BodyData, DRAFTS, Event, HeaderRow, INBOX, SENT, SPAM, SyncStatus, TRASH, WorkerCmd,
+    ARCHIVE, BodyData, DRAFTS, Event, HeaderRow, INBOX, NewMailMessage, SENT, SPAM, SyncStatus,
+    TRASH, WorkerCmd,
     config::{self, AccountConfig},
     now, parse,
 };
@@ -61,6 +62,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(20 * 60); // servers may drop IDLE at 30 min
 const REFRESH_AFTER: Duration = Duration::from_secs(20);
+const AUTO_SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Newest messages fetched first, so the list paints quickly.
 const FIRST_PAGE: u32 = 50;
@@ -658,6 +660,11 @@ impl Worker {
 
     pub async fn run(mut self) {
         let mut backoff = Duration::from_secs(2);
+        let mut auto_sync = tokio::time::interval_at(
+            tokio::time::Instant::now() + AUTO_SYNC_INTERVAL,
+            AUTO_SYNC_INTERVAL,
+        );
+        auto_sync.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             // 1. Make sure we have a live session.
             if self.session.is_none() {
@@ -729,6 +736,7 @@ impl Worker {
                         Some(WorkerSignal::SendFinished(send)) => completed_send = Some(send),
                         None => {}
                     },
+                    _ = auto_sync.tick() => self.backlog.push_back(WorkerCmd::SyncAll),
                 }
                 if let Some(send) = completed_send {
                     self.mark_busy();
@@ -1398,11 +1406,27 @@ impl Worker {
             }
             if !rows.is_empty() {
                 new_rows.extend(rows.iter().cloned());
+                let notifications = if f == INBOX {
+                    rows.iter()
+                        .filter(|row| row.unread)
+                        .map(|row| NewMailMessage {
+                            from: row.from.clone(),
+                            subject: row.subject.clone(),
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
                 let _ = events.try_send(Event::Headers {
                     account: index,
                     folder: f,
                     rows,
                 });
+                if !notifications.is_empty() {
+                    let _ = events.try_send(Event::NewMail {
+                        messages: notifications,
+                    });
+                }
             }
         }
 

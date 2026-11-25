@@ -74,6 +74,12 @@ pub struct HeaderRow {
     pub reply_to: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewMailMessage {
+    pub from: String,
+    pub subject: String,
+}
+
 /// Metadata about a single email attachment.
 #[derive(Clone, Debug)]
 pub struct AttachmentInfo {
@@ -113,6 +119,10 @@ pub enum Event {
         account: usize,
         folder: usize,
         rows: Vec<HeaderRow>,
+    },
+    /// Newly received unread messages, emitted only after the initial inbox sync.
+    NewMail {
+        messages: Vec<NewMailMessage>,
     },
     /// Flag changes made elsewhere: (uid, unread).
     Flags {

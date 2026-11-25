@@ -43,6 +43,12 @@ pub fn handle_key(
     state: &mut AppState,
     focus: &mut FocusState,
 ) -> bool {
+    if matches!(&event.key, Key::Named(NamedKey::F5)) {
+        state.sync_all_accounts();
+        event.prevent_default();
+        return true;
+    }
+
     // If the search input is focused, don't handle keyboard navigation
     if focus.search_input_focused {
         return false;

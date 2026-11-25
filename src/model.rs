@@ -387,6 +387,9 @@ impl Store {
             Event::EmailSendFailed { .. } => {
                 // Cleared in state.rs event pump to show an error notice.
             }
+            Event::NewMail { .. } => {
+                // Handled by the event pump in state.rs to show a desktop notification.
+            }
         }
         false
     }

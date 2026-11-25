@@ -1,13 +1,18 @@
 use std::cmp::Reverse;
+use std::io::Cursor;
 
 use freya::prelude::*;
+use notify_rust::Notification as DesktopNotification;
+use rodio::{Decoder, OutputStreamBuilder, Sink};
 
 use crate::{
     keyboard::FocusState,
     link_prefs::LinkPrefs,
-    mail::{ARCHIVE, Engine, INBOX, TRASH, WorkerCmd, config},
+    mail::{ARCHIVE, Engine, INBOX, NewMailMessage, TRASH, WorkerCmd, config},
     model::{BodyState, NoticeSeverity, Store},
 };
+
+const NOTIFICATION_SOUND: &[u8] = include_bytes!("../assets/sounds/notification-classic.mp3");
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
@@ -157,9 +162,22 @@ pub fn use_app_state() -> AppState {
 /// and applies them to the store, which re-renders whatever reads it.
 fn start_event_pump(app: AppState) {
     let rx = app.engine.peek().events.clone();
+    let is_app_focused = Platform::get().current_window().is_app_focused;
     spawn(async move {
         let mut app = app;
         while let Ok(event) = rx.recv().await {
+            if let crate::mail::Event::NewMail { messages } = &event
+                && !*is_app_focused.read()
+            {
+                let (summary, body) = new_mail_notification(messages);
+                std::thread::spawn(play_notification_sound);
+                std::thread::spawn(move || {
+                    let _ = DesktopNotification::new()
+                        .summary(&summary)
+                        .body(&body)
+                        .show();
+                });
+            }
             // Handle DraftSaved before applying to store. The server gives the saved draft a
             // new UID; track it (also for brand-new drafts) and pin the compose pane's key so
             // the pane keeps its contents instead of remounting.
@@ -223,6 +241,18 @@ fn start_event_pump(app: AppState) {
             }
         }
     });
+}
+
+fn play_notification_sound() {
+    let Ok(stream) = OutputStreamBuilder::open_default_stream() else {
+        return;
+    };
+    let sink = Sink::connect_new(stream.mixer());
+    let Ok(decoder) = Decoder::try_from(Cursor::new(NOTIFICATION_SOUND)) else {
+        return;
+    };
+    sink.append(decoder);
+    sink.sleep_until_end();
 }
 
 impl AppState {
@@ -443,6 +473,14 @@ impl AppState {
         self.send(account, WorkerCmd::SyncAll);
     }
 
+    /// Sync every folder for every configured account.
+    pub fn sync_all_accounts(&self) {
+        let accounts = self.store.peek().accounts.len();
+        for account in 0..accounts {
+            self.sync_account(account);
+        }
+    }
+
     /// Save a new draft (no existing UID) to the server.
     pub fn save_new_draft(&self, account: usize, raw: String) {
         self.send(account, WorkerCmd::AppendDraft { raw });
@@ -489,6 +527,66 @@ impl AppState {
         self.engine
             .peek()
             .send(crate::mail::Command::UpdateAccount { index, cfg });
+    }
+}
+
+fn new_mail_notification(messages: &[NewMailMessage]) -> (String, String) {
+    let Some(first) = messages.first() else {
+        return ("New mail".to_string(), "You have new mail.".to_string());
+    };
+
+    let from = if first.from.trim().is_empty() {
+        "Unknown sender"
+    } else {
+        first.from.trim()
+    };
+    let subject = if first.subject.trim().is_empty() {
+        "(no subject)"
+    } else {
+        first.subject.trim()
+    };
+
+    if messages.len() == 1 {
+        (format!("New email from {from}"), subject.to_string())
+    } else {
+        (
+            format!("{} new emails", messages.len()),
+            format!("{from}: {subject}\nand {} more", messages.len() - 1),
+        )
+    }
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+
+    #[test]
+    fn single_message_notification_shows_sender_and_subject() {
+        let (summary, body) = new_mail_notification(&[NewMailMessage {
+            from: "Alice".to_string(),
+            subject: "Project update".to_string(),
+        }]);
+
+        assert_eq!(summary, "New email from Alice");
+        assert_eq!(body, "Project update");
+    }
+
+    #[test]
+    fn grouped_notification_reports_the_number_of_remaining_messages() {
+        let messages = vec![
+            NewMailMessage {
+                from: "Alice".to_string(),
+                subject: "Project update".to_string(),
+            },
+            NewMailMessage {
+                from: "Bob".to_string(),
+                subject: "Schedule".to_string(),
+            },
+        ];
+        let (summary, body) = new_mail_notification(&messages);
+
+        assert_eq!(summary, "2 new emails");
+        assert_eq!(body, "Alice: Project update\nand 1 more");
     }
 }
 

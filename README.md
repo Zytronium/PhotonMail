@@ -8,6 +8,7 @@ email client built with pure Rust.
 - **Amazing lightweight UI** - polished dark theme with resizable panes, keyboard navigation, search, and unread filtering
 - **View and send email with your IMAP account** - real-time sync with IDLE, secure HTML rendering, rich compose editor, auto-discovery for popular providers, and password storage in the OS keyring
 - **Multiple accounts** - manage several email accounts in one window with a unified inbox view
+- **New mail notifications and automatic sync** - desktop alerts for new unread messages, F5 resync, five-minute background refresh, and close-to-tray support on Linux, Windows, and macOS
 - **More coming soon** - Photon Mail is early in development and is getting new features frequently. Stay tuned!
 
 ## Screenshots
@@ -22,7 +23,7 @@ email client built with pure Rust.
 
 ### Build Requirements
 
-- Rust 1.88 or later
+- Rust 1.90 or later
 - A C compiler (for Skia/freya build dependencies)
 - On Linux: `dbus` package (for keyring password storage via Secret Service)
 

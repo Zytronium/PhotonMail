@@ -17,6 +17,10 @@ mod theme;
 mod titlebar;
 mod widgets;
 
+use freya::tray::{
+    TrayEvent, TrayIconBuilder,
+    menu::{Menu, MenuItem, Submenu},
+};
 use freya::{borderless::BorderlessPlugin, prelude::*};
 
 use crate::{
@@ -53,7 +57,46 @@ fn main() {
                     .with_size(1200., 750.)
                     .with_decorations(false)
                     .with_transparency(true)
-                    .with_background(Color::TRANSPARENT),
+                    .with_background(Color::TRANSPARENT)
+                    .with_on_close(|renderer, window_id| {
+                        if let Some(window) = renderer.windows.get_mut(&window_id) {
+                            window.window_mut().set_visible(false);
+                        }
+                        CloseDecision::KeepOpen
+                    }),
+            )
+            .with_exit_on_close(false)
+            .with_tray(
+                || {
+                    let open = MenuItem::with_id("open", "Open Photon Mail", true, None);
+                    let quit = MenuItem::with_id("quit", "Quit Photon Mail", true, None);
+                    let submenu = Submenu::with_items("Photon Mail", true, &[&open, &quit])
+                        .expect("Failed to create tray menu items");
+                    let menu = Menu::with_items(&[&submenu]).expect("Failed to create tray menu");
+
+                    TrayIconBuilder::new()
+                        .with_icon(LaunchConfig::tray_icon(LOGO_PNG))
+                        .with_tooltip(APP_NAME)
+                        .with_menu(Box::new(menu))
+                        .build()
+                        .expect("Failed to create system tray icon")
+                },
+                |event, mut renderer| {
+                    if let TrayEvent::Menu(event) = event {
+                        match event.id.as_ref() {
+                            "open" => {
+                                for window in renderer.windows.values_mut() {
+                                    let window = window.window_mut();
+                                    window.set_visible(true);
+                                    window.request_redraw();
+                                    window.focus_window();
+                                }
+                            }
+                            "quit" => renderer.exit(),
+                            _ => {}
+                        }
+                    }
+                },
             ),
     )
 }

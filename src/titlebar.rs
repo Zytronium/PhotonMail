@@ -97,7 +97,9 @@ impl Component for WinButton {
                     maximized.set(!maximized());
                 }
                 WinAction::Close => {
-                    Platform::get().close_window(Platform::window_id());
+                    Platform::get().with_window(Platform::window_id(), |window| {
+                        window.set_visible(false);
+                    });
                 }
             })
             .child(
