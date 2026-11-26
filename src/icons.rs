@@ -63,6 +63,7 @@ pub const IMAGE: &[u8] = icon!(
 pub const EYE: &[u8] = icon!(
     r#"<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>"#
 );
+pub const INFO: &[u8] = icon!(r#"<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>"#);
 pub const CLOSE: &[u8] =
     icon!(r#"<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>"#);
 pub const MAXIMIZE: &[u8] = icon!(

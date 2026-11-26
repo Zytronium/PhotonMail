@@ -24,9 +24,10 @@ use regex::Regex;
 use url::Url;
 
 use crate::grain;
+use crate::icons::INFO;
 use crate::state::AppState;
 use crate::theme::DARK;
-use crate::widgets::QuoteToggle;
+use crate::widgets::{QuoteToggle, icon};
 
 static RE_BG_DECL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)(?:background(?:-(?:color|image))?\s*:\s*|bgcolor\s*=\s*["']?)([^;}"']+)"#)
@@ -848,6 +849,8 @@ impl Component for SecureHtmlViewer {
         let quote_toggle_idx = self.quote_toggle_idx;
         let remote_content_allowed = use_state(|| false);
         let tracking_pixels_allowed = use_state(|| false);
+        let mut show_privacy_explanation = use_state(|| false);
+        let privacy_tooltip_position = use_state(|| (0.0_f32, 0.0_f32));
 
         // Sanitize the HTML content
         let html_for_analysis = html.clone();
@@ -973,51 +976,92 @@ impl Component for SecureHtmlViewer {
         }
 
         if has_warnings {
-            let warning_text = if allow_remote {
-                let other_blocked =
-                    remote_resources_blocked.saturating_sub(tracking_pixels_blocked);
-                match (tracking_pixels_blocked, other_blocked) {
-                    (0, count) => format!("{} unsafe or local resource(s) kept blocked", count),
-                    (count, 0) => format!("{} likely tracking pixel(s) kept blocked", count),
-                    (trackers, other) => format!(
-                        "{} likely tracking pixel(s) and {} other resource(s) kept blocked",
-                        trackers, other
-                    ),
-                }
-            } else {
-                let tracking_note = if tracking_pixels_blocked > 0 {
-                    format!("; {} likely tracking pixel(s)", tracking_pixels_blocked)
+            let warning_text = format!(
+                "{} remote resource{} blocked; {} likely tracking pixel{} blocked",
+                remote_resources_blocked,
+                if remote_resources_blocked == 1 {
+                    ""
                 } else {
-                    String::new()
-                };
-                format!(
-                    "{} remote resource(s) blocked to protect your privacy{}. Loading them may reveal your IP address and that you opened this message.",
-                    remote_resources_blocked, tracking_note
-                )
-            };
-            let mut warning = rect()
-                .width(Size::fill())
-                .padding((4., 8., 4., 8.))
-                .horizontal()
-                .content(Content::Flex)
-                .spacing(8.)
-                .cross_align(Alignment::Center)
-                .child(
-                    rect().width(Size::flex(1.)).child(
-                        paragraph()
-                            .width(Size::fill())
-                            .span(warning_text)
-                            .color((240, 140, 40))
-                            .font_size(11.),
-                    ),
+                    "s"
+                },
+                tracking_pixels_blocked,
+                if tracking_pixels_blocked == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            );
+            let warning_details = rect().width(Size::flex(1.)).vertical().spacing(4.).child(
+                paragraph()
+                    .width(Size::fill())
+                    .span(warning_text)
+                    .color((240, 140, 40))
+                    .font_size(11.),
+            );
+            let root_size = *Platform::get().current_window().root_size.read();
+            let (pointer_x, pointer_y) = privacy_tooltip_position();
+            let tooltip_width = (root_size.width - 32.).min(260.).max(0.);
+            let max_tooltip_x = (root_size.width - tooltip_width - 24.).max(8.);
+            let tooltip_x = if pointer_x + 14. <= max_tooltip_x {
+                pointer_x + 14.
+            } else {
+                pointer_x - tooltip_width - 30.
+            }
+            .clamp(8., max_tooltip_x);
+            let tooltip_height = 48.;
+            let max_tooltip_y = (root_size.height - tooltip_height - 8.).max(8.);
+            let tooltip_y = if pointer_y + 10. + tooltip_height <= root_size.height - 8. {
+                pointer_y + 10.
+            } else {
+                pointer_y - tooltip_height - 8.
+            }
+            .clamp(8., max_tooltip_y);
+            let mut privacy_info = rect()
+                .width(Size::px(24.))
+                .height(Size::px(24.))
+                .center()
+                .on_pointer_enter(move |_| show_privacy_explanation.set(true))
+                .on_pointer_leave(move |_| show_privacy_explanation.set(false))
+                .on_pointer_move({
+                    let mut position = privacy_tooltip_position.clone();
+                    move |e: Event<PointerEventData>| {
+                        let pointer = e.global_location();
+                        position.set((pointer.x as f32, pointer.y as f32));
+                    }
+                })
+                .child(icon(INFO, 16., (255, 190, 100)));
+            if show_privacy_explanation() {
+                privacy_info = privacy_info.child(
+                    rect()
+                        .layer(Layer::Overlay)
+                        .position(
+                            Position::new_global()
+                                .top(tooltip_y)
+                                .left(tooltip_x),
+                        )
+                        .width(Size::px(tooltip_width))
+                        .padding(8.)
+                        .corner_radius(6.)
+                        .background((35, 35, 48))
+                        .child(
+                            label()
+                                .text("Loading remote content may reveal your IP address and that you opened this message.")
+                                .color(DARK.text)
+                                .font_size(11.),
+                        ),
                 );
+            }
+            let mut warning_actions = rect()
+                .horizontal()
+                .spacing(8.)
+                .cross_align(Alignment::Center);
 
             if !allow_remote {
                 let mut handle = handle;
                 let mut remote_content_allowed = remote_content_allowed.clone();
                 let html_with_remote =
                     sanitize_html_with_policy(&html, true, allow_tracking_pixels).sanitized;
-                warning = warning.child(
+                warning_actions = warning_actions.child(
                     rect()
                         .padding((3., 8., 3., 8.))
                         .corner_radius(4.)
@@ -1040,7 +1084,7 @@ impl Component for SecureHtmlViewer {
                 let mut tracking_pixels_allowed = tracking_pixels_allowed.clone();
                 let html_with_tracking_pixels =
                     sanitize_html_with_policy(&html, allow_remote, true).sanitized;
-                warning = warning.child(
+                warning_actions = warning_actions.child(
                     rect()
                         .padding((3., 8., 3., 8.))
                         .corner_radius(4.)
@@ -1058,6 +1102,18 @@ impl Component for SecureHtmlViewer {
                         ),
                 );
             }
+            let warning = rect()
+                .width(Size::fill())
+                .padding((6., 10., 6., 10.))
+                .corner_radius(6.)
+                .background((50, 40, 28))
+                .horizontal()
+                .content(Content::Flex)
+                .spacing(8.)
+                .cross_align(Alignment::Center)
+                .child(privacy_info)
+                .child(warning_details)
+                .child(warning_actions);
             col = col.child(warning);
         }
 
