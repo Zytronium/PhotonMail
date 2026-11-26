@@ -121,6 +121,12 @@ pub enum Event {
         folder: usize,
         rows: Vec<HeaderRow>,
     },
+    /// Marks the end of a successful folder sync and lists the UIDs retained by the worker.
+    FolderSynced {
+        account: usize,
+        folder: usize,
+        uids: Vec<u32>,
+    },
     /// Newly received unread messages, emitted only after the initial inbox sync.
     NewMail {
         account: usize,

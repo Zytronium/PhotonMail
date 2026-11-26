@@ -3,9 +3,14 @@
 //! components read from it. Removed messages are tombstoned until periodic compaction,
 //! which returns an index map so `AppState::selected` remains valid.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::{
+    cache::{CachedAttachment, CachedBody, CachedEmail, EmailCache},
     data::{DEMO_ACCOUNTS, DEMO_MAILS, MailContentType},
     mail::{
         AccountConfig, AttachmentInfo, BodyData, Event, HeaderRow, SyncStatus, parse::fmt_date,
@@ -15,6 +20,7 @@ use crate::{
 
 const MAX_CACHED_BODY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_MAIL_RECORDS: usize = 1_200;
+const MAX_PERSISTED_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct Account {
@@ -281,6 +287,31 @@ impl Store {
                     self.upsert(account, folder, row);
                 }
             }
+            Event::FolderSynced {
+                account,
+                folder,
+                uids,
+            } => {
+                let present: HashSet<u32> = uids.into_iter().collect();
+                let removed: Vec<usize> = self
+                    .mails
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, mail)| {
+                        mail.account == account
+                            && mail.folder == folder
+                            && mail.uid != 0
+                            && !present.contains(&mail.uid)
+                    })
+                    .map(|(index, _)| index)
+                    .collect();
+                for index in removed {
+                    self.remove_payload(index);
+                }
+                self.index.retain(|&(a, f, uid), _| {
+                    a != account || f != folder || present.contains(&uid)
+                });
+            }
             Event::Flags {
                 account,
                 folder,
@@ -306,15 +337,12 @@ impl Store {
             Event::Reset { account, folder } => {
                 for m in self.mails.iter_mut() {
                     if m.account == account && m.folder == folder {
-                        m.removed = true;
                         m.body = BodyState::NotLoaded;
                         m.attachments.clear();
                         m.references.clear();
                         m.body_cache_stamp = 0;
                     }
                 }
-                self.index
-                    .retain(|&(a, f, _), _| !(a == account && f == folder));
             }
             Event::Restore {
                 account,
@@ -389,9 +417,29 @@ impl Store {
     fn upsert(&mut self, account: usize, folder: usize, row: HeaderRow) {
         let key = (account, folder, row.uid);
         if let Some(&i) = self.index.get(&key) {
+            let to = if matches!(folder, crate::mail::DRAFTS | crate::mail::SENT) {
+                row.from
+                    .strip_prefix("To: ")
+                    .unwrap_or(&row.from)
+                    .to_string()
+            } else {
+                String::new()
+            };
             let m = &mut self.mails[i];
             m.unread = row.unread;
             m.removed = false;
+            m.from = row.from;
+            m.from_email = row.from_email;
+            m.to = to;
+            m.to_email = row.to_emails.join(", ");
+            m.cc_email = row.cc_emails.join(", ");
+            m.bcc_email = row.bcc_emails.join(", ");
+            m.reply_to = row.reply_to;
+            m.subject = row.subject;
+            m.date = fmt_date(row.ts);
+            m.ts = row.ts;
+            m.message_id = row.message_id;
+            m.in_reply_to = row.in_reply_to;
             return;
         }
         let to = if matches!(folder, crate::mail::DRAFTS | crate::mail::SENT) {
@@ -427,6 +475,173 @@ impl Store {
             body_cache_stamp: 0,
         });
         self.index.insert(key, self.mails.len() - 1);
+    }
+
+    pub fn restore_cache(
+        &mut self,
+        cache: EmailCache,
+        synced_folders: &HashSet<(usize, usize)>,
+        reset_folders: &HashSet<(usize, usize)>,
+    ) {
+        let account_indices: HashMap<&str, usize> = self
+            .accounts
+            .iter()
+            .enumerate()
+            .map(|(index, account)| (account.id.as_str(), index))
+            .collect();
+        for cached in cache.emails {
+            let Some(&account) = account_indices.get(cached.account_id.as_str()) else {
+                continue;
+            };
+            let folder_key = (account, cached.folder);
+            if cached.uid == 0
+                || cached.folder >= crate::data::FOLDERS.len()
+                || synced_folders.contains(&folder_key)
+                || reset_folders.contains(&folder_key)
+            {
+                continue;
+            }
+            let key = (account, cached.folder, cached.uid);
+            if self.index.contains_key(&key) {
+                continue;
+            }
+            let (body, attachments) = match cached.body {
+                Some(body) => {
+                    self.body_cache_clock = self.body_cache_clock.wrapping_add(1);
+                    let attachments = body
+                        .attachments
+                        .into_iter()
+                        .map(|attachment| AttachmentInfo {
+                            name: attachment.name,
+                            size: attachment.size,
+                            content_type: attachment.content_type,
+                            data: attachment.data,
+                            content_id: attachment.content_id,
+                        })
+                        .collect();
+                    (
+                        BodyState::Loaded {
+                            content_type: body.content_type,
+                            text: Arc::from(body.text),
+                            source: Arc::from(body.source),
+                        },
+                        attachments,
+                    )
+                }
+                None => (BodyState::NotLoaded, Vec::new()),
+            };
+            self.mails.push(Mail {
+                account,
+                folder: cached.folder,
+                uid: cached.uid,
+                unread: cached.unread,
+                from: cached.from,
+                from_email: cached.from_email,
+                to: cached.to,
+                to_email: cached.to_email,
+                cc_email: cached.cc_email,
+                bcc_email: cached.bcc_email,
+                reply_to: cached.reply_to,
+                subject: cached.subject,
+                preview: cached.preview,
+                body,
+                attachments,
+                date: cached.date,
+                ts: cached.ts,
+                message_id: cached.message_id,
+                in_reply_to: cached.in_reply_to,
+                references: cached.references,
+                removed: false,
+                body_cache_stamp: self.body_cache_clock,
+            });
+            self.index.insert(key, self.mails.len() - 1);
+        }
+        self.enforce_body_cache_budget();
+    }
+
+    pub fn cache_snapshot(&self) -> EmailCache {
+        let mut order: Vec<usize> = self
+            .mails
+            .iter()
+            .enumerate()
+            .filter(|(_, mail)| !mail.removed && mail.uid != 0)
+            .map(|(index, _)| index)
+            .collect();
+        order.sort_by_key(|&index| Reverse(self.mails[index].ts));
+
+        let mut body_bytes_left = MAX_PERSISTED_BODY_BYTES;
+        let emails = order
+            .into_iter()
+            .filter_map(|index| {
+                let mail = &self.mails[index];
+                let account_id = self.accounts.get(mail.account)?.id.clone();
+                let body = match &mail.body {
+                    BodyState::Loaded {
+                        content_type,
+                        text,
+                        source,
+                    } if text.len() <= body_bytes_left => {
+                        body_bytes_left -= text.len();
+                        let source = if source.len() <= body_bytes_left {
+                            body_bytes_left -= source.len();
+                            source.to_vec()
+                        } else {
+                            Vec::new()
+                        };
+                        let attachments = mail
+                            .attachments
+                            .iter()
+                            .map(|attachment| {
+                                let data = attachment.data.as_ref().and_then(|data| {
+                                    if data.len() <= body_bytes_left {
+                                        body_bytes_left -= data.len();
+                                        Some(data.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+                                CachedAttachment {
+                                    name: attachment.name.clone(),
+                                    size: attachment.size,
+                                    content_type: attachment.content_type.clone(),
+                                    data,
+                                    content_id: attachment.content_id.clone(),
+                                }
+                            })
+                            .collect();
+                        Some(CachedBody {
+                            content_type: *content_type,
+                            text: text.to_string(),
+                            source,
+                            attachments,
+                        })
+                    }
+                    _ => None,
+                };
+                Some(CachedEmail {
+                    account_id,
+                    folder: mail.folder,
+                    uid: mail.uid,
+                    unread: mail.unread,
+                    from: mail.from.clone(),
+                    from_email: mail.from_email.clone(),
+                    to: mail.to.clone(),
+                    to_email: mail.to_email.clone(),
+                    cc_email: mail.cc_email.clone(),
+                    bcc_email: mail.bcc_email.clone(),
+                    reply_to: mail.reply_to.clone(),
+                    subject: mail.subject.clone(),
+                    preview: mail.preview.clone(),
+                    body,
+                    date: mail.date.clone(),
+                    ts: mail.ts,
+                    message_id: mail.message_id.clone(),
+                    in_reply_to: mail.in_reply_to.clone(),
+                    references: mail.references.clone(),
+                })
+            })
+            .collect();
+        EmailCache::new(emails)
     }
 
     /// Drop a message from view right away (archive/trash) without losing its index.
@@ -592,6 +807,75 @@ mod tests {
             store.mails[0].to_email,
             "alice@example.test, bob@example.test"
         );
+    }
+
+    #[test]
+    fn cached_mail_restores_headers_and_loaded_body() {
+        let mut source = store_with_idle_account();
+        source.upsert(0, 0, row(5));
+        let mut cached_body = body("cached body");
+        cached_body.source = Arc::from(&b"raw message source"[..]);
+        cached_body.attachments.push(AttachmentInfo {
+            name: "file.txt".to_string(),
+            size: 4,
+            content_type: "text/plain".to_string(),
+            data: Some(b"data".to_vec()),
+            content_id: None,
+        });
+        source.apply(Event::Body {
+            account: 0,
+            folder: 0,
+            uid: 5,
+            result: Ok(cached_body),
+        });
+        let cache = source.cache_snapshot();
+
+        let mut restored = store_with_idle_account();
+        restored.restore_cache(cache, &HashSet::new(), &HashSet::new());
+
+        assert_eq!(restored.mails.len(), 1);
+        assert_eq!(restored.mails[0].subject, "Message 5");
+        assert!(matches!(
+            &restored.mails[0].body,
+            BodyState::Loaded { text, .. } if text.as_ref() == "cached body"
+        ));
+        let BodyState::Loaded { source, .. } = &restored.mails[0].body else {
+            panic!("cached message body was not restored");
+        };
+        assert_eq!(source.as_ref(), b"raw message source");
+        assert_eq!(
+            restored.mails[0].attachments[0].data.as_deref(),
+            Some(&b"data"[..])
+        );
+    }
+
+    #[test]
+    fn completed_folder_sync_removes_only_cached_uids_missing_from_server() {
+        let mut store = store_with_idle_account();
+        store.upsert(0, 0, row(5));
+        store.upsert(0, 0, row(6));
+        store.apply(Event::FolderSynced {
+            account: 0,
+            folder: 0,
+            uids: vec![6],
+        });
+
+        assert!(store.mails[0].removed);
+        assert!(!store.mails[1].removed);
+        assert_eq!(store.cache_snapshot().emails.len(), 1);
+    }
+
+    #[test]
+    fn folder_reset_keeps_cached_rows_visible_until_sync_completes() {
+        let mut store = store_with_idle_account();
+        store.upsert(0, 0, row(5));
+        store.apply(Event::Reset {
+            account: 0,
+            folder: 0,
+        });
+
+        assert!(!store.mails[0].removed);
+        assert!(matches!(store.mails[0].body, BodyState::NotLoaded));
     }
 
     #[test]

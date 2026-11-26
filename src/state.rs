@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Reverse, io::Cursor, time::Duration};
+use std::{borrow::Cow, cmp::Reverse, collections::HashSet, io::Cursor, time::Duration};
 
 use freya::prelude::*;
 #[cfg(not(all(unix, not(target_os = "macos"))))]
@@ -7,6 +7,7 @@ use notify_rust::NotificationResponse;
 use rodio::{Decoder, OutputStreamBuilder, Sink};
 
 use crate::{
+    cache::CacheWriter,
     keyboard::FocusState,
     link_prefs::LinkPrefs,
     mail::{ARCHIVE, Engine, INBOX, NewMailMessage, TRASH, WorkerCmd, config},
@@ -78,6 +79,9 @@ pub struct AppState {
     pub compose_pre_gen: State<u32>,
     /// Set of message indices that have their quoted text expanded.
     pub quoted_expanded: State<std::collections::HashSet<usize>>,
+    cache_ready: State<bool>,
+    synced_folders: State<HashSet<(usize, usize)>>,
+    reset_folders: State<HashSet<(usize, usize)>>,
 }
 
 #[derive(Clone)]
@@ -174,6 +178,7 @@ pub fn use_app_state() -> AppState {
             Engine::start(configs.clone(), auto_sync_interval)
         }
     });
+    let cache_writer = use_hook(move || (!demo).then(CacheWriter::start));
 
     let app = AppState {
         account: use_state(|| None),
@@ -212,17 +217,41 @@ pub fn use_app_state() -> AppState {
         compose_pre: use_state(|| None),
         compose_pre_gen: use_state(|| 0),
         quoted_expanded: use_state(|| std::collections::HashSet::new()),
+        cache_ready: use_state(|| false),
+        synced_folders: use_state(HashSet::new),
+        reset_folders: use_state(HashSet::new),
     };
 
-    // Drain worker events into the store, once, for the life of the app.
-    use_hook(move || start_event_pump(app.clone()));
+    use_hook(move || {
+        if let Some(writer) = cache_writer.clone() {
+            start_cache_load(app, writer.clone());
+        }
+        start_event_pump(app, cache_writer);
+    });
 
     app
 }
 
+fn start_cache_load(app: AppState, writer: CacheWriter) {
+    let cache_rx = crate::cache::load_async();
+    spawn(async move {
+        let mut app = app;
+        let Ok(cache) = cache_rx.recv().await else {
+            return;
+        };
+        let synced_folders = app.synced_folders.peek().clone();
+        let reset_folders = app.reset_folders.peek().clone();
+        app.store
+            .write()
+            .restore_cache(cache, &synced_folders, &reset_folders);
+        app.cache_ready.set(true);
+        writer.save(app.store.read().cache_snapshot());
+    });
+}
+
 /// Runs on the UI thread as a Freya task: waits for events from the IMAP workers
 /// and applies them to the store, which re-renders whatever reads it.
-fn start_event_pump(app: AppState) {
+fn start_event_pump(app: AppState, cache_writer: Option<CacheWriter>) {
     let rx = app.engine.peek().events.clone();
     let is_app_focused = Platform::get().current_window().is_app_focused;
     let notification_channels = GlobalContexts::get().get_context::<NotificationChannels>();
@@ -237,6 +266,39 @@ fn start_event_pump(app: AppState) {
     spawn(async move {
         let mut app = app;
         while let Ok(event) = rx.recv().await {
+            let should_save_cache = matches!(
+                &event,
+                crate::mail::Event::Headers { .. }
+                    | crate::mail::Event::FolderSynced { .. }
+                    | crate::mail::Event::Flags { .. }
+                    | crate::mail::Event::Removed { .. }
+                    | crate::mail::Event::Reset { .. }
+                    | crate::mail::Event::Restore { .. }
+                    | crate::mail::Event::Body { .. }
+                    | crate::mail::Event::AccountAdded { .. }
+            );
+            let selection_removed = if let Some(selected) = *app.selected.read() {
+                let store = app.store.read();
+                store
+                    .mails
+                    .get(selected)
+                    .is_some_and(|mail| event_removes_mail(mail, &event))
+            } else {
+                false
+            };
+            match &event {
+                crate::mail::Event::FolderSynced {
+                    account, folder, ..
+                } => {
+                    app.synced_folders.write().insert((*account, *folder));
+                    app.reset_folders.write().remove(&(*account, *folder));
+                }
+                crate::mail::Event::Reset { account, folder } => {
+                    app.synced_folders.write().remove(&(*account, *folder));
+                    app.reset_folders.write().insert((*account, *folder));
+                }
+                _ => {}
+            }
             if let crate::mail::Event::NewMail { account, messages } = &event {
                 let account_id = app
                     .store
@@ -328,6 +390,12 @@ fn start_event_pump(app: AppState) {
                 let remap = store.compact_removed();
                 (added, remap)
             };
+            if selection_removed {
+                app.selected.set(None);
+                app.cancel_mark_read_timer();
+                app.attachment_preview_mail.set(None);
+                app.attachment_preview_open.set(false);
+            }
             if let Some(remap) = remap {
                 let selected = *app.selected.read();
                 app.selected
@@ -349,6 +417,12 @@ fn start_event_pump(app: AppState) {
                 app.account.set(Some(last));
                 app.folder.set(INBOX);
                 app.set_view(View::Mail);
+            }
+            if should_save_cache
+                && *app.cache_ready.peek()
+                && let Some(writer) = &cache_writer
+            {
+                writer.save(app.store.read().cache_snapshot());
             }
         }
     });
@@ -395,6 +469,30 @@ fn notification_sound_data(sound: NotificationSound) -> Option<Cow<'static, [u8]
                 "../assets/sounds/notification-why-the-photon-would-you-use-this-sound.mp3"
             )[..],
         )),
+    }
+}
+
+fn event_removes_mail(mail: &crate::model::Mail, event: &crate::mail::Event) -> bool {
+    match event {
+        crate::mail::Event::FolderSynced {
+            account,
+            folder,
+            uids,
+        } => {
+            mail.account == *account
+                && mail.folder == *folder
+                && mail.uid != 0
+                && !uids.contains(&mail.uid)
+        }
+        crate::mail::Event::Removed {
+            account,
+            folder,
+            uids,
+        } => mail.account == *account && mail.folder == *folder && uids.contains(&mail.uid),
+        crate::mail::Event::Reset { account, folder } => {
+            mail.account == *account && mail.folder == *folder
+        }
+        _ => false,
     }
 }
 
@@ -1182,6 +1280,25 @@ mod notification_tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn sync_completion_invalidates_a_selected_cached_message_only_when_missing() {
+        let mut mail = Store::demo().mails[0].clone();
+        mail.uid = 42;
+        let event = crate::mail::Event::FolderSynced {
+            account: mail.account,
+            folder: mail.folder,
+            uids: vec![43],
+        };
+        assert!(event_removes_mail(&mail, &event));
+
+        let event = crate::mail::Event::FolderSynced {
+            account: mail.account,
+            folder: mail.folder,
+            uids: vec![42],
+        };
+        assert!(!event_removes_mail(&mail, &event));
     }
 }
 

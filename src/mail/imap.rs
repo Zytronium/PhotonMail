@@ -1271,6 +1271,11 @@ impl Worker {
 
         let Some(path) = self.paths[f].clone() else {
             self.folders[f].synced = true;
+            let _ = self.events.try_send(Event::FolderSynced {
+                account: self.index,
+                folder: f,
+                uids: Vec::new(),
+            });
             return Ok(Vec::new());
         };
         let sent_like = f == SENT || f == DRAFTS;
@@ -1307,6 +1312,11 @@ impl Worker {
             st.last_uid = 0;
             st.synced = true;
             st.last_sync = Some(Instant::now());
+            let _ = events.try_send(Event::FolderSynced {
+                account: index,
+                folder: f,
+                uids: Vec::new(),
+            });
             return Ok(new_rows);
         }
 
@@ -1466,6 +1476,11 @@ impl Worker {
 
         st.synced = true;
         st.last_sync = Some(Instant::now());
+        let _ = events.try_send(Event::FolderSynced {
+            account: index,
+            folder: f,
+            uids: st.known.keys().copied().collect(),
+        });
         Ok(new_rows)
     }
 }

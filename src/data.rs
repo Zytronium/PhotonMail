@@ -8,7 +8,7 @@ pub struct DemoAccount {
 }
 
 /// Content type of the mail body.
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Default, Debug, serde::Deserialize, serde::Serialize)]
 pub enum MailContentType {
     #[default]
     PlainText,

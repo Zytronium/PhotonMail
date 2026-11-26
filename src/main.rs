@@ -1,4 +1,5 @@
 mod account_view;
+mod cache;
 mod compose;
 mod data;
 mod grain;
