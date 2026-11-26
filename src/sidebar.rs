@@ -214,7 +214,6 @@ impl Component for Sidebar {
 
 #[derive(PartialEq, Clone)]
 enum Lead {
-    Dot(Rgb),
     Icon(&'static [u8]),
     Tinted(&'static [u8], Rgb),
 }
@@ -376,7 +375,6 @@ impl Component for Item {
         }
 
         let mut row = match lead {
-            Lead::Dot(color) => row.child(dot(10., color)),
             Lead::Icon(bytes) => row.child(icon(
                 bytes,
                 16.,
