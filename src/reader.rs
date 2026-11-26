@@ -197,16 +197,6 @@ impl Component for MailView {
                             .max_lines(1),
                     );
 
-                // For Sent/Drafts show "You → Recipient", otherwise "Sender → You"
-                let direction_label = if m.folder == 1 || m.folder == 2 {
-                    if m.to.is_empty() {
-                        format!("{} → {}", account.addr, m.from)
-                    } else {
-                        format!("{} → {}", account.addr, m.to)
-                    }
-                } else {
-                    format!("{} → {}", m.from, account.addr)
-                };
                 let (display_from, display_email) = if m.folder == 1 || m.folder == 2 {
                     if m.to.is_empty() {
                         (&m.from, &m.from_email)
@@ -216,6 +206,22 @@ impl Component for MailView {
                 } else {
                     (&m.from, &m.from_email)
                 };
+                let sender_row = rect()
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .spacing(4.)
+                    .child(
+                        label()
+                            .text(display_from.clone())
+                            .color(DARK.text)
+                            .font_size(13.),
+                    )
+                    .child(
+                        label()
+                            .text(display_email.clone())
+                            .color(DARK.muted)
+                            .font_size(11.),
+                    );
                 // Subject on its own line, then the sender row (Proton-style).
                 let header = rect()
                     .width(Size::fill())
@@ -245,12 +251,7 @@ impl Component for MailView {
                                 rect()
                                     .width(Size::flex(1.))
                                     .spacing(2.)
-                                    .child(
-                                        label()
-                                            .text(direction_label)
-                                            .color(DARK.text)
-                                            .font_size(13.),
-                                    )
+                                    .child(sender_row)
                                     .child(
                                         label()
                                             .text(m.date.clone())
