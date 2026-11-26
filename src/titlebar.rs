@@ -1,6 +1,6 @@
 use freya::prelude::*;
 
-use crate::{APP_NAME, theme::DARK};
+use crate::{APP_NAME, state::AppState, theme::DARK};
 
 const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
 const ICON_MIN: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1 5h8" stroke="#ebebf5" stroke-width="1" fill="none"/></svg>"##;
@@ -9,10 +9,13 @@ const ICON_RESTORE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
 const ICON_CLOSE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="#ebebf5" stroke-width="1" fill="none"/></svg>"##;
 
 #[derive(PartialEq)]
-pub struct Titlebar;
+pub struct Titlebar {
+    pub state: AppState,
+}
 
 impl Component for Titlebar {
     fn render(&self) -> impl IntoElement {
+        let minimize_to_tray = self.state.settings.read().minimize_to_tray_on_close;
         rect()
             .horizontal()
             .content(Content::Flex)
@@ -34,9 +37,9 @@ impl Component for Titlebar {
                     .width(Size::flex(1.))
                     .height(Size::fill()),
             )
-            .child(WinButton(WinAction::Minimize))
-            .child(WinButton(WinAction::Maximize))
-            .child(WinButton(WinAction::Close))
+            .child(WinButton(WinAction::Minimize, minimize_to_tray))
+            .child(WinButton(WinAction::Maximize, minimize_to_tray))
+            .child(WinButton(WinAction::Close, minimize_to_tray))
     }
 }
 
@@ -48,13 +51,14 @@ enum WinAction {
 }
 
 #[derive(PartialEq)]
-struct WinButton(WinAction);
+struct WinButton(WinAction, bool);
 
 impl Component for WinButton {
     fn render(&self) -> impl IntoElement {
         let mut hovering = use_state(|| false);
         let mut maximized = use_state(|| false);
         let action = self.0;
+        let minimize_to_tray = self.1;
 
         let bg = match (hovering(), action == WinAction::Close) {
             (true, true) => Some(crate::grain::close_hover()),
@@ -97,10 +101,14 @@ impl Component for WinButton {
                     maximized.set(!maximized());
                 }
                 WinAction::Close => {
-                    Platform::get().with_window(Platform::window_id(), |window| {
-                        window.set_minimized(true);
-                        window.set_visible(false);
-                    });
+                    if minimize_to_tray {
+                        Platform::get().with_window(Platform::window_id(), |window| {
+                            window.set_minimized(true);
+                            window.set_visible(false);
+                        });
+                    } else {
+                        Platform::get().exit();
+                    }
                 }
             })
             .child(

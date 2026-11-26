@@ -161,6 +161,7 @@ pub fn use_app_state() -> AppState {
     let first_run = !demo && configs.is_empty();
     let settings = use_state(AppSettings::load_from_disk);
     let auto_sync_interval = settings.peek().auto_sync_interval();
+    let run_on_startup = settings.peek().run_on_startup;
 
     let store_configs = configs.clone();
     let store = use_state(move || {
@@ -223,6 +224,9 @@ pub fn use_app_state() -> AppState {
     };
 
     use_hook(move || {
+        if run_on_startup && let Err(error) = crate::startup::set_enabled(true) {
+            eprintln!("Could not update startup registration: {error}");
+        }
         if let Some(writer) = cache_writer.clone() {
             start_cache_load(app, writer.clone());
         }
@@ -859,6 +863,13 @@ impl AppState {
             settings.clone()
         };
         if updated == previous {
+            return;
+        }
+        if updated.run_on_startup != previous.run_on_startup
+            && let Err(error) = crate::startup::set_enabled(updated.run_on_startup)
+        {
+            eprintln!("Could not update startup registration: {error}");
+            self.settings.set(previous);
             return;
         }
         updated.save_to_disk();

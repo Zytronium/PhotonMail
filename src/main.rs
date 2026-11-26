@@ -14,6 +14,7 @@ mod pane_divider;
 mod reader;
 mod settings_view;
 mod sidebar;
+mod startup;
 mod state;
 mod theme;
 mod titlebar;
@@ -81,10 +82,14 @@ fn main() {
                     .with_decorations(false)
                     .with_transparency(true)
                     .with_background(Color::TRANSPARENT)
-                    .with_on_close(|renderer, window_id| {
-                        if let Some(window) = renderer.windows.get_mut(&window_id) {
-                            window.window_mut().set_minimized(true);
-                            window.window_mut().set_visible(false);
+                    .with_on_close(|mut renderer, window_id| {
+                        if settings_view::AppSettings::load_from_disk().minimize_to_tray_on_close {
+                            if let Some(window) = renderer.windows.get_mut(&window_id) {
+                                window.window_mut().set_minimized(true);
+                                window.window_mut().set_visible(false);
+                            }
+                        } else {
+                            renderer.exit();
                         }
                         CloseDecision::KeepOpen
                     }),
@@ -149,6 +154,8 @@ fn activate_app_windows_with_token(
 
 fn app() -> impl IntoElement {
     let mut state = use_app_state();
+    let grain_texture_strength = state.settings.read().grain_texture_strength;
+    grain::set_strength(grain_texture_strength);
 
     // Subscribe to search_query so the app re-renders when it changes, allowing MessageList
     // to re-filter messages. Without this, the parent never re-renders on search query changes
@@ -194,7 +201,7 @@ fn app() -> impl IntoElement {
             fs.keyboard_active = false;
             state.focus_state.set(fs);
         })
-        .child(Titlebar)
+        .child(Titlebar { state })
         .maybe_child(send_error.map(|msg| {
             rect()
                 .horizontal()

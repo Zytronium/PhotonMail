@@ -6,6 +6,12 @@
 //! panes themselves. Rows inside a pane have no background of their own while
 //! idle, so the texture shows through them.
 
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    sync::atomic::{AtomicU16, Ordering},
+};
+
 use freya::engine::prelude::{Data, RuntimeEffect};
 use freya::prelude::*;
 
@@ -14,6 +20,7 @@ use crate::theme::{DARK, Rgb};
 /// How strong the grain is, as a fraction of full brightness.
 /// Raise for more texture, lower for less.
 const GRAIN: f32 = 0.011;
+static STRENGTH: AtomicU16 = AtomicU16::new(100);
 
 const SKSL: &str = r#"
 uniform float ox;
@@ -54,7 +61,7 @@ half4 main(float2 xy) {
 }
 "#;
 
-fn build(top: Rgb, bottom: Rgb) -> Fill {
+fn build(top: Rgb, bottom: Rgb, grain: f32) -> Fill {
     let effect =
         RuntimeEffect::make_for_shader(SKSL, None).expect("grain shader failed to compile");
 
@@ -71,7 +78,7 @@ fn build(top: Rgb, bottom: Rgb) -> Fill {
             c(bottom.0),
             c(bottom.1),
             c(bottom.2),
-            GRAIN,
+            grain,
         ];
 
         let mut data: Vec<u8> = Vec::with_capacity(values.len() * 4);
@@ -107,46 +114,81 @@ fn gradient(base: Rgb) -> (Rgb, Rgb) {
 // Cached per thread: `ShaderFill` compares by pointer, so building a new one on
 // every render would make Freya think the background changed every frame.
 thread_local! {
-    static PANEL: Fill = { let (a, b) = gradient(DARK.panel); build(a, b) };
-    static SURFACE: Fill = { let (a, b) = gradient(DARK.bg); build(a, b) };
-    static TITLEBAR: Fill = { let (a, b) = gradient(DARK.titlebar); build(a, b) };
-    static HOVER: Fill = { let (a, b) = gradient(DARK.hover); build(a, b) };
-    static SELECTED: Fill = { let (a, b) = gradient(DARK.selected); build(a, b) };
-    static CLOSE_HOVER: Fill = { let (a, b) = gradient(DARK.close_hover); build(a, b) };
-    static DIALOG: Fill = { let (a, b) = gradient(DARK.panel); build(a, b) };
+    static PANEL: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+    static SURFACE: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+    static TITLEBAR: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+    static HOVER: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+    static SELECTED: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+    static CLOSE_HOVER: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+    static DIALOG: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+}
+
+pub fn set_strength(multiplier: f32) {
+    let hundredths = (multiplier.clamp(0.0, 2.0) * 100.0).round() as u16;
+    STRENGTH.store(hundredths, Ordering::Relaxed);
+}
+
+fn fill(cache: &RefCell<HashMap<u16, Fill>>, base: Rgb) -> Fill {
+    let strength = STRENGTH.load(Ordering::Relaxed);
+    cache
+        .borrow_mut()
+        .entry(strength)
+        .or_insert_with(|| {
+            let (top, bottom) = gradient(base);
+            build(top, bottom, grain_amount(f32::from(strength) / 100.0))
+        })
+        .clone()
+}
+
+fn grain_amount(multiplier: f32) -> f32 {
+    GRAIN * multiplier
 }
 
 /// Sidebar and reader.
 pub fn panel() -> Fill {
-    PANEL.with(|f| f.clone())
+    PANEL.with(|cache| fill(cache, DARK.panel))
 }
 
 /// Message list.
 pub fn surface() -> Fill {
-    SURFACE.with(|f| f.clone())
+    SURFACE.with(|cache| fill(cache, DARK.bg))
 }
 
 /// Window titlebar.
 pub fn titlebar() -> Fill {
-    TITLEBAR.with(|f| f.clone())
+    TITLEBAR.with(|cache| fill(cache, DARK.titlebar))
 }
 
 /// Hovered / secondary-button background.
 pub fn hover() -> Fill {
-    HOVER.with(|f| f.clone())
+    HOVER.with(|cache| fill(cache, DARK.hover))
 }
 
 /// Selected row background.
 pub fn selected() -> Fill {
-    SELECTED.with(|f| f.clone())
+    SELECTED.with(|cache| fill(cache, DARK.selected))
 }
 
 /// Window close button while hovered.
 pub fn close_hover() -> Fill {
-    CLOSE_HOVER.with(|f| f.clone())
+    CLOSE_HOVER.with(|cache| fill(cache, DARK.close_hover))
 }
 
 /// Popup dialog card.
 pub fn dialog() -> Fill {
-    DIALOG.with(|f| f.clone())
+    DIALOG.with(|cache| fill(cache, DARK.panel))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GRAIN, grain_amount};
+
+    #[test]
+    fn grain_multiplier_scales_shader_noise_amplitude_continuously() {
+        assert_eq!(grain_amount(0.0), 0.);
+        assert_eq!(grain_amount(0.5), GRAIN * 0.5);
+        assert_eq!(grain_amount(1.0), GRAIN);
+        assert_eq!(grain_amount(1.23), GRAIN * 1.23);
+        assert_eq!(grain_amount(2.0), GRAIN * 2.);
+    }
 }

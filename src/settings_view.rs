@@ -115,6 +115,9 @@ pub struct AppSettings {
     pub block_tracking_pixels: bool,
     pub block_remote_images: bool,
     pub show_gravatar: bool,
+    pub minimize_to_tray_on_close: bool,
+    pub run_on_startup: bool,
+    pub grain_texture_strength: f32,
     pub auto_sync_seconds: u32,
     pub notifications_enabled: bool,
     disabled_notification_accounts: HashSet<String>,
@@ -130,6 +133,9 @@ impl Default for AppSettings {
             block_tracking_pixels: true,
             block_remote_images: true,
             show_gravatar: false,
+            minimize_to_tray_on_close: true,
+            run_on_startup: false,
+            grain_texture_strength: 1.0,
             auto_sync_seconds: 300,
             notifications_enabled: true,
             disabled_notification_accounts: HashSet::new(),
@@ -277,6 +283,11 @@ impl AppSettings {
         if ![0, 5, 10, 15].contains(&settings.undo_send_seconds) {
             settings.undo_send_seconds = 5;
         }
+        if !settings.grain_texture_strength.is_finite()
+            || !(0.0..=2.0).contains(&settings.grain_texture_strength)
+        {
+            settings.grain_texture_strength = 1.0;
+        }
         Ok(settings)
     }
 
@@ -368,6 +379,39 @@ impl Component for PreferencesView {
                     }
                 }),
             ),
+            section_title("General"),
+            toggle_row(
+                "Minimize to system tray on close",
+                "Keep Photon Mail running in the system tray when the window is closed.",
+                settings.minimize_to_tray_on_close,
+                EventHandler::new({
+                    let mut state = state;
+                    move |_| {
+                        state.update_settings(|settings| {
+                            settings.minimize_to_tray_on_close =
+                                !settings.minimize_to_tray_on_close;
+                        });
+                    }
+                }),
+            ),
+            toggle_row(
+                "Run on startup",
+                "Start Photon Mail automatically when you sign in.",
+                settings.run_on_startup,
+                EventHandler::new({
+                    let mut state = state;
+                    move |_| {
+                        state.update_settings(|settings| {
+                            settings.run_on_startup = !settings.run_on_startup;
+                        });
+                    }
+                }),
+            ),
+            setting_label(
+                "Grain UI texture strength",
+                "Adjust the interface grain intensity multiplier from 0× to 2×.",
+            ),
+            grain_strength_slider(state, settings.grain_texture_strength),
             section_title("Sync"),
             setting_label(
                 "Automatically sync",
@@ -505,6 +549,48 @@ fn set_mark_read_after(settings: &mut AppSettings, value: u32) {
 
 fn set_undo_send(settings: &mut AppSettings, value: u32) {
     settings.undo_send_seconds = value;
+}
+
+fn grain_strength_slider(state: AppState, strength: f32) -> Rect {
+    let mut state = state;
+    let strength = strength.clamp(0.0, 2.0);
+    let percentage = f64::from(strength * 50.0);
+
+    rect()
+        .width(Size::fill())
+        .vertical()
+        .spacing(4.)
+        .child(
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .main_align(Alignment::End)
+                .child(
+                    label()
+                        .text(format!("{strength:.2}×"))
+                        .color(DARK.text)
+                        .font_size(12.),
+                ),
+        )
+        .child(
+            Slider::new(EventHandler::new(move |value: f64| {
+                state.update_settings(|settings| {
+                    settings.grain_texture_strength =
+                        ((value.clamp(0.0, 100.0) / 50.0) * 100.0).round() as f32 / 100.0;
+                });
+            }))
+            .value(percentage)
+            .step(0.5)
+            .scroll_enabled(false)
+            .theme(
+                SliderThemePartial::new()
+                    .background(Color::from(DARK.divider))
+                    .thumb_background(Color::from(DARK.accent))
+                    .thumb_inner_background(Color::from(DARK.accent))
+                    .border_fill(Color::TRANSPARENT),
+            )
+            .size(Size::fill()),
+        )
 }
 
 fn section_title(title: &'static str) -> Rect {
@@ -823,6 +909,35 @@ fn option_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_preferences_use_multiplier_defaults_and_validate_grain_strength() {
+        let legacy = AppSettings::parse(b"{}");
+        assert!(legacy.minimize_to_tray_on_close);
+        assert!(!legacy.run_on_startup);
+        assert_eq!(legacy.grain_texture_strength, 1.0);
+
+        assert_eq!(
+            AppSettings::parse(br#"{"grain_texture_strength":99}"#).grain_texture_strength,
+            1.0
+        );
+        assert_eq!(
+            AppSettings::parse(br#"{"grain_texture_strength":1}"#).grain_texture_strength,
+            1.0
+        );
+        assert_eq!(
+            AppSettings::parse(br#"{"grain_texture_strength":2}"#).grain_texture_strength,
+            2.0
+        );
+        assert_eq!(
+            AppSettings::parse(br#"{"grain_texture_strength":3}"#).grain_texture_strength,
+            1.0
+        );
+        assert_eq!(
+            AppSettings::parse(br#"{"grain_texture_strength":1.25}"#).grain_texture_strength,
+            1.25
+        );
+    }
 
     #[test]
     fn account_notification_overrides_respect_global_switch() {
