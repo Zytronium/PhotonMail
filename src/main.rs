@@ -31,7 +31,7 @@ use crate::{
     pane_divider::{DividerTarget, PaneDivider},
     reader::{AttachmentPreview, Reader},
     sidebar::Sidebar,
-    state::use_app_state,
+    state::{NotificationChannels, use_app_state},
     theme::DARK,
     titlebar::Titlebar,
 };
@@ -48,9 +48,30 @@ pub fn is_demo() -> bool {
 const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
 
 fn main() {
+    let (notification_open_tx, notification_open_rx) = async_channel::unbounded::<Option<String>>();
+    let (notification_target_tx, notification_target_rx) = async_channel::unbounded();
+    let notification_channels = NotificationChannels {
+        open_rx: notification_open_rx,
+        open_tx: notification_open_tx,
+        target_rx: notification_target_rx,
+        target_tx: notification_target_tx,
+    };
     launch(
         LaunchConfig::new()
             .with_plugin(BorderlessPlugin::new().with_corner_radius(12.))
+            .with_global_context(notification_channels.clone())
+            .with_task({
+                let notification_open_rx = notification_channels.open_rx.clone();
+                move |proxy| async move {
+                    while let Ok(activation_token) = notification_open_rx.recv().await {
+                        let _ = proxy
+                            .post_callback(move |renderer| {
+                                activate_app_windows_with_token(renderer, activation_token)
+                            })
+                            .await;
+                    }
+                }
+            })
             .with_window(
                 WindowConfig::new(app)
                     .with_title(APP_NAME)
@@ -87,13 +108,7 @@ fn main() {
                     if let TrayEvent::Menu(event) = event {
                         match event.id.as_ref() {
                             "open" => {
-                                for window in renderer.windows.values_mut() {
-                                    let window = window.window_mut();
-                                    window.set_minimized(false);
-                                    window.set_visible(true);
-                                    window.request_redraw();
-                                    window.focus_window();
-                                }
+                                activate_app_windows(&mut renderer);
                             }
                             "quit" => renderer.exit(),
                             _ => {}
@@ -102,6 +117,33 @@ fn main() {
                 },
             ),
     )
+}
+
+fn activate_app_windows(renderer: &mut RendererContext<'_>) {
+    activate_app_windows_with_token(renderer, None);
+}
+
+fn activate_app_windows_with_token(
+    renderer: &mut RendererContext<'_>,
+    activation_token: Option<String>,
+) {
+    for window in renderer.windows.values_mut() {
+        let window = window.window_mut();
+        window.set_minimized(false);
+        window.set_visible(true);
+        window.request_redraw();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Some(token) = activation_token.as_ref() {
+            use freya::winit::platform::startup_notify::WindowExtStartupNotify;
+            let token = freya::winit::window::ActivationToken::from_raw(token.clone());
+            let _ = window.activate_with_token(token);
+        } else {
+            window.focus_window();
+        }
+
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        window.focus_window();
+    }
 }
 
 fn app() -> impl IntoElement {
@@ -179,7 +221,7 @@ fn app() -> impl IntoElement {
                 .spacing(4.)
                 .children(pending_sends.iter().map(|pending| {
                     let id = pending.id;
-                    let delay_seconds = pending.delay_seconds;
+                    let remaining_seconds = pending.remaining_seconds;
                     let mut state = state;
                     rect()
                         .horizontal()
@@ -189,10 +231,7 @@ fn app() -> impl IntoElement {
                         .background(DARK.accent)
                         .child(
                             label()
-                                .text(format!(
-                                    "Message queued — {}-second undo window",
-                                    delay_seconds
-                                ))
+                                .text(format!("Message queued — {}s to undo", remaining_seconds))
                                 .color((255, 255, 255))
                                 .font_size(13.),
                         )

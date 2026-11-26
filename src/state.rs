@@ -1,9 +1,9 @@
-use std::cmp::Reverse;
-use std::io::Cursor;
-use std::time::Duration;
+use std::{borrow::Cow, cmp::Reverse, io::Cursor, time::Duration};
 
 use freya::prelude::*;
+#[cfg(not(all(unix, not(target_os = "macos"))))]
 use notify_rust::Notification as DesktopNotification;
+use notify_rust::NotificationResponse;
 use rodio::{Decoder, OutputStreamBuilder, Sink};
 
 use crate::{
@@ -11,10 +11,8 @@ use crate::{
     link_prefs::LinkPrefs,
     mail::{ARCHIVE, Engine, INBOX, NewMailMessage, TRASH, WorkerCmd, config},
     model::{BodyState, NoticeSeverity, Store},
-    settings_view::AppSettings,
+    settings_view::{AppSettings, NotificationSound},
 };
-
-const NOTIFICATION_SOUND: &[u8] = include_bytes!("../assets/sounds/notification-classic.mp3");
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
@@ -24,6 +22,20 @@ pub enum View {
     Preferences,
     Settings(usize),
     EditAccount(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NotificationTarget {
+    account: usize,
+    uid: u32,
+}
+
+#[derive(Clone)]
+pub(crate) struct NotificationChannels {
+    pub open_rx: async_channel::Receiver<Option<String>>,
+    pub open_tx: async_channel::Sender<Option<String>>,
+    pub target_rx: async_channel::Receiver<NotificationTarget>,
+    pub target_tx: async_channel::Sender<NotificationTarget>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -71,10 +83,38 @@ pub struct AppState {
 #[derive(Clone)]
 pub struct PendingSend {
     pub id: u64,
-    pub delay_seconds: u32,
+    pub remaining_seconds: u32,
     account: usize,
     raw: String,
     draft_origin: Option<(usize, u32)>,
+}
+
+impl PendingSend {
+    fn tick(&mut self) -> bool {
+        self.remaining_seconds = self.remaining_seconds.saturating_sub(1);
+        self.remaining_seconds == 0
+    }
+}
+
+#[cfg(test)]
+mod pending_send_tests {
+    use super::PendingSend;
+
+    #[test]
+    fn pending_send_countdown_expires_at_zero() {
+        let mut pending = PendingSend {
+            id: 1,
+            remaining_seconds: 5,
+            account: 0,
+            raw: String::new(),
+            draft_origin: None,
+        };
+
+        for expected in (0..5).rev() {
+            assert_eq!(pending.tick(), expected == 0);
+            assert_eq!(pending.remaining_seconds, expected);
+        }
+    }
 }
 
 /// Pre-filled compose data for reply and forward actions.
@@ -185,6 +225,15 @@ pub fn use_app_state() -> AppState {
 fn start_event_pump(app: AppState) {
     let rx = app.engine.peek().events.clone();
     let is_app_focused = Platform::get().current_window().is_app_focused;
+    let notification_channels = GlobalContexts::get().get_context::<NotificationChannels>();
+    let notification_target_rx = notification_channels.target_rx.clone();
+    let mut navigation_app = app;
+    spawn(async move {
+        while let Ok(target) = notification_target_rx.recv().await {
+            open_notification_mail(&mut navigation_app, target);
+        }
+    });
+
     spawn(async move {
         let mut app = app;
         while let Ok(event) = rx.recv().await {
@@ -202,14 +251,41 @@ fn start_event_pump(app: AppState) {
                         .is_some_and(|id| settings.notifications_for_account(id))
                 {
                     let (summary, body) = new_mail_notification(messages);
-                    if settings.notification_sound {
-                        std::thread::spawn(play_notification_sound);
+                    let sound = settings.notification_sound;
+                    let target = messages.first().map(|message| NotificationTarget {
+                        account: *account,
+                        uid: message.uid,
+                    });
+                    let notification_channels = notification_channels.clone();
+                    if sound != NotificationSound::Muted {
+                        std::thread::spawn(move || {
+                            if let Some(sound) = notification_sound_data(sound) {
+                                play_notification_sound(sound);
+                            }
+                        });
                     }
                     std::thread::spawn(move || {
-                        let _ = DesktopNotification::new()
-                            .summary(&summary)
-                            .body(&body)
-                            .show();
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        show_notification_and_wait(&summary, &body, notification_channels, target);
+
+                        #[cfg(not(all(unix, not(target_os = "macos"))))]
+                        {
+                            let mut notification = DesktopNotification::new();
+                            notification.summary(&summary).body(&body);
+                            if let Ok(handle) = notification.show() {
+                                let _ =
+                                    handle.wait_for_response(|response: &NotificationResponse| {
+                                        if is_notification_open_response(response) {
+                                            let _ = notification_channels.open_tx.try_send(None);
+                                            if let Some(target) = target {
+                                                let _ = notification_channels
+                                                    .target_tx
+                                                    .try_send(target);
+                                            }
+                                        }
+                                    });
+                            }
+                        }
                     });
                 }
             }
@@ -278,16 +354,66 @@ fn start_event_pump(app: AppState) {
     });
 }
 
-fn play_notification_sound() {
+fn notification_sound_data(sound: NotificationSound) -> Option<Cow<'static, [u8]>> {
+    match sound {
+        NotificationSound::Muted => None,
+        NotificationSound::Classic => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-classic.mp3")[..],
+        )),
+        NotificationSound::Center => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-center.mp3")[..],
+        )),
+        NotificationSound::Document => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-document.mp3")[..],
+        )),
+        NotificationSound::GameBonus => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-game-bonus.mp3")[..],
+        )),
+        NotificationSound::Good => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-good.mp3")[..],
+        )),
+        NotificationSound::Mars => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-mars.mp3")[..],
+        )),
+        NotificationSound::Mercury => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-mercury.mp3")[..],
+        )),
+        NotificationSound::Message => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-message.mp3")[..],
+        )),
+        NotificationSound::Simple => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-simple.mp3")[..],
+        )),
+        NotificationSound::Space => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-space.mp3")[..],
+        )),
+        NotificationSound::Ufo => Some(Cow::Borrowed(
+            &include_bytes!("../assets/sounds/notification-ufo.mp3")[..],
+        )),
+        NotificationSound::WhyThePhotonWouldYouUseThisSound => Some(Cow::Borrowed(
+            &include_bytes!(
+                "../assets/sounds/notification-why-the-photon-would-you-use-this-sound.mp3"
+            )[..],
+        )),
+    }
+}
+
+fn play_notification_sound(sound: Cow<'static, [u8]>) {
     let Ok(stream) = OutputStreamBuilder::open_default_stream() else {
         return;
     };
     let sink = Sink::connect_new(stream.mixer());
-    let Ok(decoder) = Decoder::try_from(Cursor::new(NOTIFICATION_SOUND)) else {
+    let Ok(decoder) = Decoder::try_from(Cursor::new(sound)) else {
         return;
     };
     sink.append(decoder);
     sink.sleep_until_end();
+}
+
+pub fn preview_notification_sound(sound: NotificationSound) {
+    if let Some(sound) = notification_sound_data(sound) {
+        std::thread::spawn(move || play_notification_sound(sound));
+    }
 }
 
 impl AppState {
@@ -692,7 +818,7 @@ impl AppState {
         };
         let pending = PendingSend {
             id,
-            delay_seconds,
+            remaining_seconds: delay_seconds,
             account,
             raw,
             draft_origin: same_account_draft
@@ -705,9 +831,26 @@ impl AppState {
         } else {
             self.pending_sends.write().push(pending);
             let mut state = *self;
-            spawn(async move {
-                futures_timer::Delay::new(Duration::from_secs(u64::from(delay_seconds))).await;
-                state.commit_pending_send(id);
+            spawn_in_window(async move {
+                for _ in 0..delay_seconds {
+                    futures_timer::Delay::new(Duration::from_secs(1)).await;
+                    let expired = {
+                        let mut pending_sends = state.pending_sends.write();
+                        pending_sends
+                            .iter_mut()
+                            .find(|pending| pending.id == id)
+                            .map(PendingSend::tick)
+                    };
+
+                    match expired {
+                        Some(true) => {
+                            state.commit_pending_send(id);
+                            return;
+                        }
+                        Some(false) => {}
+                        None => return,
+                    }
+                }
             });
         }
     }
@@ -768,6 +911,160 @@ impl AppState {
     }
 }
 
+fn is_notification_open_response(response: &NotificationResponse) -> bool {
+    match response {
+        NotificationResponse::Default => true,
+        NotificationResponse::Action(action) => action == "default",
+        NotificationResponse::Reply(_) | NotificationResponse::Closed(_) => false,
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn show_notification_and_wait(
+    summary: &str,
+    body: &str,
+    notification_channels: NotificationChannels,
+    target: Option<NotificationTarget>,
+) {
+    use dbus::{
+        Message,
+        arg::messageitem::{MessageItem, MessageItemArray},
+        ffidisp::{BusType, Connection, ConnectionItem},
+    };
+
+    const NOTIFICATIONS_INTERFACE: &str = "org.freedesktop.Notifications";
+    const NOTIFICATIONS_PATH: &str = "/org/freedesktop/Notifications";
+
+    let Ok(connection) = Connection::get_private(BusType::Session) else {
+        return;
+    };
+    for member in ["ActivationToken", "ActionInvoked", "NotificationClosed"] {
+        let rule = format!(
+            "path='{NOTIFICATIONS_PATH}',interface='{NOTIFICATIONS_INTERFACE}',member='{member}'"
+        );
+        if connection.add_match(&rule).is_err() {
+            return;
+        }
+    }
+
+    let Ok(mut notification) = Message::new_method_call(
+        NOTIFICATIONS_INTERFACE,
+        NOTIFICATIONS_PATH,
+        NOTIFICATIONS_INTERFACE,
+        "Notify",
+    ) else {
+        return;
+    };
+    let actions = MessageItem::new_array(vec![
+        "default".to_owned().into(),
+        "Open Photon Mail".to_owned().into(),
+    ])
+    .expect("notification action list must have string values");
+    let hints = MessageItem::Array(
+        MessageItemArray::new(Vec::new(), "a{sv}".into())
+            .expect("empty notification hints must be a dictionary"),
+    );
+    notification.append_items(&[
+        "Photon Mail".to_owned().into(),
+        0u32.into(),
+        String::new().into(),
+        summary.to_owned().into(),
+        body.to_owned().into(),
+        actions,
+        hints,
+        (-1i32).into(),
+    ]);
+
+    let Ok(reply) = connection.send_with_reply_and_block(notification, 2000) else {
+        return;
+    };
+    let reply_items = reply.get_items();
+    let Some(MessageItem::UInt32(notification_id)) = reply_items.first() else {
+        return;
+    };
+    let notification_id = *notification_id;
+    let mut activation_token = None;
+
+    for item in connection.iter(1000) {
+        let ConnectionItem::Signal(message) = item else {
+            continue;
+        };
+        let member = message.member().map_or_else(String::new, |member| {
+            member.into_cstring().to_string_lossy().into_owned()
+        });
+        let items = message.get_items();
+
+        match member.as_str() {
+            "ActivationToken" => {
+                if let (Some(MessageItem::UInt32(signal_id)), Some(MessageItem::Str(token))) =
+                    (items.first(), items.get(1))
+                {
+                    if let Some(token) = activation_token_for_notification(
+                        notification_id,
+                        *signal_id,
+                        token.clone(),
+                    ) {
+                        activation_token = Some(token);
+                    }
+                }
+            }
+            "ActionInvoked" => {
+                if let (Some(MessageItem::UInt32(signal_id)), Some(MessageItem::Str(action))) =
+                    (items.first(), items.get(1))
+                {
+                    if *signal_id == notification_id
+                        && is_notification_open_response(&NotificationResponse::Action(
+                            action.clone(),
+                        ))
+                    {
+                        let _ = notification_channels.open_tx.try_send(activation_token);
+                        if let Some(target) = target {
+                            let _ = notification_channels.target_tx.try_send(target);
+                        }
+                        return;
+                    }
+                }
+            }
+            "NotificationClosed" => {
+                if let Some(MessageItem::UInt32(signal_id)) = items.first() {
+                    if *signal_id == notification_id {
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn activation_token_for_notification(
+    notification_id: u32,
+    signal_id: u32,
+    token: String,
+) -> Option<String> {
+    (notification_id == signal_id && !token.is_empty()).then_some(token)
+}
+
+fn open_notification_mail(app: &mut AppState, target: NotificationTarget) {
+    let index = find_notification_mail_index(&app.store.read(), target);
+    app.search_query.set(String::new());
+    app.unread_only.set(false);
+    app.go(Some(target.account), crate::mail::INBOX);
+    if let Some(index) = index {
+        app.select(index);
+    }
+}
+
+fn find_notification_mail_index(store: &Store, target: NotificationTarget) -> Option<usize> {
+    store.mails.iter().position(|mail| {
+        !mail.removed
+            && mail.account == target.account
+            && mail.folder == crate::mail::INBOX
+            && mail.uid == target.uid
+    })
+}
+
 fn new_mail_notification(messages: &[NewMailMessage]) -> (String, String) {
     let Some(first) = messages.first() else {
         return ("New mail".to_string(), "You have new mail.".to_string());
@@ -801,6 +1098,7 @@ mod notification_tests {
     #[test]
     fn single_message_notification_shows_sender_and_subject() {
         let (summary, body) = new_mail_notification(&[NewMailMessage {
+            uid: 1,
             from: "Alice".to_string(),
             subject: "Project update".to_string(),
         }]);
@@ -813,10 +1111,12 @@ mod notification_tests {
     fn grouped_notification_reports_the_number_of_remaining_messages() {
         let messages = vec![
             NewMailMessage {
+                uid: 1,
                 from: "Alice".to_string(),
                 subject: "Project update".to_string(),
             },
             NewMailMessage {
+                uid: 2,
                 from: "Bob".to_string(),
                 subject: "Schedule".to_string(),
             },
@@ -825,6 +1125,63 @@ mod notification_tests {
 
         assert_eq!(summary, "2 new emails");
         assert_eq!(body, "Alice: Project update\nand 1 more");
+    }
+
+    #[test]
+    fn default_notification_response_opens_the_app() {
+        assert!(is_notification_open_response(
+            &NotificationResponse::Default
+        ));
+        assert!(is_notification_open_response(
+            &NotificationResponse::Action("default".to_string())
+        ));
+        assert!(!is_notification_open_response(
+            &NotificationResponse::Action("archive".to_string())
+        ));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn activation_token_is_matched_to_its_notification() {
+        assert_eq!(
+            activation_token_for_notification(7, 7, "plasma-token".to_string()),
+            Some("plasma-token".to_string())
+        );
+        assert_eq!(
+            activation_token_for_notification(7, 8, "other-token".to_string()),
+            None
+        );
+        assert_eq!(activation_token_for_notification(7, 7, String::new()), None);
+    }
+
+    #[test]
+    fn notification_target_resolves_the_matching_inbox_message() {
+        let mut store = Store::demo();
+        for (index, mail) in store.mails.iter_mut().enumerate() {
+            mail.uid = index as u32 + 1;
+        }
+        let index = store
+            .mails
+            .iter()
+            .position(|mail| mail.folder == crate::mail::INBOX)
+            .unwrap();
+        let mail = &store.mails[index];
+        let target = NotificationTarget {
+            account: mail.account,
+            uid: mail.uid,
+        };
+
+        assert_eq!(find_notification_mail_index(&store, target), Some(index));
+        assert_eq!(
+            find_notification_mail_index(
+                &store,
+                NotificationTarget {
+                    account: usize::MAX,
+                    uid: target.uid,
+                }
+            ),
+            None
+        );
     }
 }
 

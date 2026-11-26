@@ -26,6 +26,89 @@ const MARK_READ_OPTIONS: &[(u32, &str)] = &[
     (3000, "3 sec"),
 ];
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub enum NotificationSound {
+    #[serde(rename = "muted")]
+    Muted,
+    #[default]
+    #[serde(rename = "notification-classic")]
+    Classic,
+    #[serde(rename = "notification-center")]
+    Center,
+    #[serde(rename = "notification-document")]
+    Document,
+    #[serde(rename = "notification-game-bonus")]
+    GameBonus,
+    #[serde(rename = "notification-good")]
+    Good,
+    #[serde(rename = "notification-mars")]
+    Mars,
+    #[serde(rename = "notification-mercury")]
+    Mercury,
+    #[serde(rename = "notification-message")]
+    Message,
+    #[serde(rename = "notification-simple")]
+    Simple,
+    #[serde(rename = "notification-space")]
+    Space,
+    #[serde(rename = "notification-ufo")]
+    Ufo,
+    #[serde(rename = "notification-why-the-photon-would-you-use-this-sound")]
+    WhyThePhotonWouldYouUseThisSound,
+}
+
+impl NotificationSound {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Muted => "muted",
+            Self::Classic => "notification-classic",
+            Self::Center => "notification-center",
+            Self::Document => "notification-document",
+            Self::GameBonus => "notification-game-bonus",
+            Self::Good => "notification-good",
+            Self::Mars => "notification-mars",
+            Self::Mercury => "notification-mercury",
+            Self::Message => "notification-message",
+            Self::Simple => "notification-simple",
+            Self::Space => "notification-space",
+            Self::Ufo => "notification-ufo",
+            Self::WhyThePhotonWouldYouUseThisSound => {
+                "notification-why-the-photon-would-you-use-this-sound"
+            }
+        }
+    }
+}
+
+pub const NOTIFICATION_SOUND_OPTIONS: &[(NotificationSound, &str)] = &[
+    (NotificationSound::Muted, "Muted"),
+    (NotificationSound::Classic, "Classic"),
+    (NotificationSound::Center, "Center"),
+    (NotificationSound::Document, "Document"),
+    (NotificationSound::GameBonus, "Game Bonus"),
+    (NotificationSound::Good, "Good"),
+    (NotificationSound::Mars, "Mars"),
+    (NotificationSound::Mercury, "Mercury"),
+    (NotificationSound::Message, "Message"),
+    (NotificationSound::Simple, "Simple"),
+    (NotificationSound::Space, "Space"),
+    (NotificationSound::Ufo, "UFO"),
+    (
+        NotificationSound::WhyThePhotonWouldYouUseThisSound,
+        "Why the photon would you use this sound",
+    ),
+];
+
+const NOTIFICATION_SOUND_OPTION_HEIGHT: f32 = 34.;
+const LONG_NOTIFICATION_SOUND_OPTION_HEIGHT: f32 = 48.;
+
+fn notification_sound_option_height(sound: NotificationSound) -> f32 {
+    if sound == NotificationSound::WhyThePhotonWouldYouUseThisSound {
+        LONG_NOTIFICATION_SOUND_OPTION_HEIGHT
+    } else {
+        NOTIFICATION_SOUND_OPTION_HEIGHT
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -36,7 +119,7 @@ pub struct AppSettings {
     pub notifications_enabled: bool,
     disabled_notification_accounts: HashSet<String>,
     pub sidebar_account_order: Vec<String>,
-    pub notification_sound: bool,
+    pub notification_sound: NotificationSound,
     pub mark_read_after_millis: u32,
     pub undo_send_seconds: u32,
 }
@@ -51,7 +134,7 @@ impl Default for AppSettings {
             notifications_enabled: true,
             disabled_notification_accounts: HashSet::new(),
             sidebar_account_order: Vec::new(),
-            notification_sound: true,
+            notification_sound: NotificationSound::default(),
             mark_read_after_millis: 0,
             undo_send_seconds: 5,
         }
@@ -136,9 +219,13 @@ impl AppSettings {
     }
 
     fn parse(bytes: &[u8]) -> Self {
-        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
             return Self::default();
         };
+        Self::parse_value(value).unwrap_or_default()
+    }
+
+    fn parse_value(mut value: serde_json::Value) -> Result<Self, serde_json::Error> {
         if let Some(object) = value.as_object_mut() {
             if !object.contains_key("auto_sync_seconds") {
                 if let Some(minutes) = object
@@ -163,9 +250,24 @@ impl AppSettings {
                     object.insert("mark_read_after_millis".to_string(), millis.into());
                 }
             }
+            if let Some(value) = object.get("notification_sound").cloned() {
+                let sound = match value {
+                    serde_json::Value::Bool(true) => "notification-classic".to_string(),
+                    serde_json::Value::Bool(false) => "muted".to_string(),
+                    serde_json::Value::String(value)
+                        if NOTIFICATION_SOUND_OPTIONS
+                            .iter()
+                            .any(|(sound, _)| sound.id() == value) =>
+                    {
+                        value
+                    }
+                    _ => "notification-classic".to_string(),
+                };
+                object.insert("notification_sound".to_string(), sound.into());
+            }
         }
 
-        let mut settings: Self = serde_json::from_value(value).unwrap_or_default();
+        let mut settings: Self = serde_json::from_value(value)?;
         if ![0, 5, 15, 30, 60, 300].contains(&settings.auto_sync_seconds) {
             settings.auto_sync_seconds = 300;
         }
@@ -175,13 +277,17 @@ impl AppSettings {
         if ![0, 5, 10, 15].contains(&settings.undo_send_seconds) {
             settings.undo_send_seconds = 5;
         }
-        settings
+        Ok(settings)
     }
 
     fn save_to_path(&self, path: &Path) -> io::Result<()> {
         if path.exists() {
             let existing = fs::read(path)?;
-            if serde_json::from_slice::<Self>(&existing).is_err() {
+            let is_valid = serde_json::from_slice::<Self>(&existing).is_ok()
+                || serde_json::from_slice::<serde_json::Value>(&existing)
+                    .ok()
+                    .is_some_and(|value| Self::parse_value(value).is_ok());
+            if !is_valid {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "existing settings are invalid; refusing to overwrite them",
@@ -219,6 +325,7 @@ impl Component for PreferencesView {
         let state = self.state;
         let settings = state.settings.read().clone();
         let accounts = state.store.read().accounts.clone();
+        let show_notification_sound_menu = use_state(|| false);
 
         let mut rows = vec![
             section_title("Privacy"),
@@ -316,18 +423,10 @@ impl Component for PreferencesView {
         }
 
         rows.extend([
-            toggle_row(
-                "Notification sound",
-                "Play the bundled classic sound with desktop notifications.",
+            notification_sound_row(
+                state,
                 settings.notification_sound,
-                EventHandler::new({
-                    let mut state = state;
-                    move |_| {
-                        state.update_settings(|settings| {
-                            settings.notification_sound = !settings.notification_sound;
-                        });
-                    }
-                }),
+                show_notification_sound_menu,
             ),
             section_title("Reading and sending"),
             setting_label(
@@ -374,14 +473,24 @@ impl Component for PreferencesView {
             )
             .child(divider())
             .child(
-                ScrollView::new().height(Size::fill()).children([rect()
-                    .vertical()
-                    .spacing(14.)
-                    .children(
-                        rows.into_iter()
-                            .enumerate()
-                            .map(|(index, row)| row.key(index)),
-                    )]),
+                rect()
+                    .margin((0., -36., 0., 0.))
+                    .width(Size::fill())
+                    .height(Size::fill())
+                    .child(
+                        ScrollView::new().height(Size::fill()).child(
+                            rect()
+                                .width(Size::fill())
+                                .padding((0., 36., 0., 0.))
+                                .vertical()
+                                .spacing(14.)
+                                .children(
+                                    rows.into_iter()
+                                        .enumerate()
+                                        .map(|(index, row)| row.key(index)),
+                                ),
+                        ),
+                    ),
             )
     }
 }
@@ -413,6 +522,184 @@ fn setting_label(title: &'static str, description: &'static str) -> Rect {
         .spacing(3.)
         .child(label().text(title).color(DARK.text).font_size(14.))
         .child(label().text(description).color(DARK.muted).font_size(12.))
+}
+
+fn notification_sound_row(
+    state: AppState,
+    current: NotificationSound,
+    show_menu: State<bool>,
+) -> Rect {
+    let current_label = NOTIFICATION_SOUND_OPTIONS
+        .iter()
+        .find(|(sound, _)| *sound == current)
+        .map(|(_, label)| *label)
+        .unwrap_or("Classic");
+    let mut toggle_show_menu = show_menu.clone();
+    let toggle_menu = EventHandler::new(move |_| toggle_show_menu.set(!toggle_show_menu()));
+    let mut selector = rect()
+        .width(Size::flex(0.5))
+        .height(Size::px(36.))
+        .padding((0., 8., 0., 10.))
+        .corner_radius(6.)
+        .background(Fill::from((20, 20, 31)))
+        .border(Border::new().fill((58, 58, 78)).width(1.))
+        .horizontal()
+        .spacing(8.)
+        .content(Content::Flex)
+        .cross_align(Alignment::Center)
+        .cursor(freya::winit::window::CursorIcon::Pointer)
+        .on_press(toggle_menu)
+        .child(
+            rect()
+                .width(Size::flex(1.))
+                .horizontal()
+                .main_align(Alignment::End)
+                .child(
+                    label()
+                        .text(current_label)
+                        .color(DARK.text)
+                        .font_size(13.)
+                        .max_lines(1),
+                ),
+        )
+        .child(label().text("▾").color(DARK.muted).font_size(13.));
+
+    if *show_menu.read() {
+        let mut menu = rect().vertical().padding((6., 0., 0., 0.));
+        for &(sound, title) in NOTIFICATION_SOUND_OPTIONS {
+            let selected = sound == current;
+            menu = menu.child(NotificationSoundOption {
+                state,
+                sound,
+                title,
+                selected,
+                show_menu: show_menu.clone(),
+            });
+        }
+        let list_height = NOTIFICATION_SOUND_OPTIONS
+            .iter()
+            .map(|(sound, _)| notification_sound_option_height(*sound))
+            .sum::<f32>()
+            .min(204.);
+        selector = selector.child(
+            rect()
+                .layer(Layer::Overlay)
+                .position(Position::new_absolute().top(36.).left(0.))
+                .width(Size::percent(100.))
+                .corner_radius(8.)
+                .background(Fill::from((30, 30, 46)))
+                .border(Border::new().fill((58, 58, 78)).width(1.))
+                .child(
+                    ScrollView::new()
+                        .width(Size::percent(100.))
+                        .height(Size::px(list_height))
+                        .child(menu.width(Size::percent(100.))),
+                ),
+        );
+    }
+
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::Flex)
+        .cross_align(Alignment::Center)
+        .spacing(12.)
+        .child(
+            rect()
+                .width(Size::flex(1.))
+                .spacing(3.)
+                .child(
+                    label()
+                        .text("Notification sound")
+                        .color(DARK.text)
+                        .font_size(14.),
+                )
+                .child(
+                    label()
+                        .text("Choose a sound for desktop notifications, or mute them.")
+                        .color(DARK.muted)
+                        .font_size(12.),
+                ),
+        )
+        .child(selector)
+}
+
+#[derive(PartialEq)]
+struct NotificationSoundOption {
+    state: AppState,
+    sound: NotificationSound,
+    title: &'static str,
+    selected: bool,
+    show_menu: State<bool>,
+}
+
+impl Component for NotificationSoundOption {
+    fn render(&self) -> impl IntoElement {
+        let mut hovering = use_state(|| false);
+        let mut select_state = self.state;
+        let mut show_menu = self.show_menu.clone();
+        let sound = self.sound;
+        let selected = self.selected;
+        let background = if selected {
+            crate::grain::selected()
+        } else if hovering() {
+            crate::grain::hover()
+        } else {
+            Fill::from((30, 30, 46))
+        };
+
+        let mut option = rect()
+            .width(Size::percent(100.))
+            .height(Size::px(notification_sound_option_height(self.sound)))
+            .padding((0., 12., 0., 0.))
+            .corner_radius(4.)
+            .background(background)
+            .horizontal()
+            .content(Content::Flex)
+            .cross_align(Alignment::Center)
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
+            .cursor(freya::winit::window::CursorIcon::Pointer)
+            .on_press(EventHandler::new(move |_| {
+                select_state.update_settings(|settings| settings.notification_sound = sound);
+                show_menu.set(false);
+            }));
+
+        if self.sound != NotificationSound::Muted {
+            option = option.child(
+                rect()
+                    .width(Size::px(26.))
+                    .height(Size::px(26.))
+                    .margin((0., 6., 0., 0.))
+                    .corner_radius(5.)
+                    .center()
+                    .cursor(freya::winit::window::CursorIcon::Pointer)
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        crate::state::preview_notification_sound(sound);
+                    })
+                    .child(
+                        label()
+                            .text("▶")
+                            .color(if selected { DARK.accent } else { DARK.muted })
+                            .font_size(11.),
+                    ),
+            );
+        }
+
+        option.child(
+            rect()
+                .width(Size::flex(1.))
+                .horizontal()
+                .main_align(Alignment::End)
+                .child(
+                    label()
+                        .text(self.title)
+                        .color(if selected { DARK.accent } else { DARK.text })
+                        .font_size(13.),
+                ),
+        )
+    }
 }
 
 fn toggle_row(
@@ -628,6 +915,46 @@ mod tests {
             AppSettings::parse(br#"{"auto_sync_minutes":1,"mark_read_after_seconds":5}"#);
         assert_eq!(settings.auto_sync_seconds, 60);
         assert_eq!(settings.mark_read_after_millis, 3000);
+    }
+
+    #[test]
+    fn legacy_notification_sound_boolean_and_unknown_choices_are_normalized() {
+        assert_eq!(
+            AppSettings::parse(br#"{"notification_sound":true}"#).notification_sound,
+            NotificationSound::Classic
+        );
+        assert_eq!(
+            AppSettings::parse(br#"{"notification_sound":false}"#).notification_sound,
+            NotificationSound::Muted
+        );
+        assert_eq!(
+            AppSettings::parse(br#"{"notification_sound":"missing"}"#).notification_sound,
+            NotificationSound::Classic
+        );
+    }
+
+    #[test]
+    fn notification_sound_choices_round_trip_and_legacy_settings_remain_writable() {
+        for &(sound, _) in NOTIFICATION_SOUND_OPTIONS {
+            let json = serde_json::to_string(&sound).unwrap();
+            assert_eq!(
+                serde_json::from_str::<NotificationSound>(&json).unwrap(),
+                sound
+            );
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "photon-mail-settings-legacy-sound-{}.json",
+            std::process::id()
+        ));
+        fs::write(&path, br#"{"notification_sound":true}"#).unwrap();
+        let settings = AppSettings {
+            notification_sound: NotificationSound::Space,
+            ..AppSettings::default()
+        };
+        settings.save_to_path(&path).unwrap();
+        assert_eq!(AppSettings::load_from_path(&path), settings);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

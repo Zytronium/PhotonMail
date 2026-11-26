@@ -51,8 +51,13 @@ hickory-resolver = { version = "0.26", default-features = false, features = ["sy
 # HTTP client for fetching autoconfig XML from provider servers
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+dbus = "0.9"
+
 [patch.crates-io]
 freya-html = { path = "freya-html-patch" }
+# Winit's Wayland activation-token support is needed for notification clicks to focus existing windows.
+winit = { git = "https://github.com/bigwolfeman/winit", rev = "9092b3175cebbe03ecbfde2e367dee01f40e7b4e" }
 
 [package.metadata.deb]
 maintainer = "Zytronium <zytronium@zytronium.dev>"

@@ -1428,6 +1428,7 @@ impl Worker {
                     rows.iter()
                         .filter(|row| row.unread)
                         .map(|row| NewMailMessage {
+                            uid: row.uid,
                             from: row.from.clone(),
                             subject: row.subject.clone(),
                         })

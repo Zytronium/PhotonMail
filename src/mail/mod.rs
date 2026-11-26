@@ -76,6 +76,7 @@ pub struct HeaderRow {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewMailMessage {
+    pub uid: u32,
     pub from: String,
     pub subject: String,
 }
