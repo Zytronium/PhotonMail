@@ -24,6 +24,8 @@ pub(crate) struct CachedEmail {
     pub folder: usize,
     pub uid: u32,
     pub unread: bool,
+    #[serde(default)]
+    pub starred: bool,
     pub from: String,
     pub from_email: String,
     pub to: String,

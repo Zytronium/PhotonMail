@@ -28,6 +28,7 @@ impl Component for MessageList {
     fn render(&self) -> impl IntoElement {
         let mut state = self.state;
         let unread_only = *state.unread_only.read();
+        let starred_only = *state.starred_only.read();
         let mut s_filter = state;
         let mut s_all = state;
         let search_query = state.search_query.clone();
@@ -85,7 +86,9 @@ impl Component for MessageList {
 
         let acc = *state.account.read();
         let fol = *state.folder.read();
-        let title = if acc.is_none() {
+        let title = if starred_only {
+            "Starred".to_string()
+        } else if acc.is_none() {
             "All inboxes".to_string()
         } else {
             FOLDERS.get(fol).copied().unwrap_or("Inbox").to_string()
@@ -225,15 +228,39 @@ impl Component for MessageRow {
         let mut s_archive = state;
         let mut s_trash = state;
         let mut s_read = state;
+        let mut s_star = state;
 
         // Date, or quick actions while hovering. Same fixed height in both states.
         // Use inline buttons without pointer handlers to avoid flicker — IconButton's
         // on_pointer_enter/leave conflicts with the row's hover detection.
+        let date = rect().height(Size::px(28.)).center().child(
+            label()
+                .text(m.date.clone())
+                .color(if unread { DARK.text } else { DARK.muted })
+                .font_size(12.),
+        );
         let trailing = if hovering() {
             rect()
                 .horizontal()
                 .content(Content::Flex)
                 .spacing(4.)
+                .child(
+                    rect()
+                        .width(Size::px(28.))
+                        .height(Size::px(28.))
+                        .corner_radius(6.)
+                        .center()
+                        .cursor(freya::winit::window::CursorIcon::Pointer)
+                        .on_press(move |e: Event<PressEventData>| {
+                            e.stop_propagation();
+                            s_star.toggle_star(i);
+                        })
+                        .child(icon(
+                            STAR,
+                            16.,
+                            if m.starred { DARK.accent } else { DARK.muted },
+                        )),
+                )
                 .child(
                     rect()
                         .width(Size::px(28.))
@@ -274,12 +301,16 @@ impl Component for MessageRow {
                         .child(icon(MAIL, 16., DARK.muted)),
                 )
         } else {
-            rect().height(Size::px(28.)).center().child(
-                label()
-                    .text(m.date.clone())
-                    .color(if unread { DARK.text } else { DARK.muted })
-                    .font_size(12.),
-            )
+            if m.starred {
+                rect()
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .spacing(4.)
+                    .child(icon(STAR, 14., DARK.accent))
+                    .child(date)
+            } else {
+                date
+            }
         };
 
         // For Sent (folder 2) and Drafts (folder 1), show the recipient instead of the sender

@@ -84,6 +84,7 @@ pub struct Mail {
     /// IMAP UID within (account, folder). 0 for demo mail.
     pub uid: u32,
     pub unread: bool,
+    pub starred: bool,
     pub from: String,
     pub from_email: String,
     /// Recipient (populated for Sent/Drafts; empty for Inbox).
@@ -178,6 +179,7 @@ impl Store {
                 folder: m.folder,
                 uid: 0,
                 unread: m.unread,
+                starred: false,
                 from: m.from.to_string(),
                 from_email: m.from_email.to_string(),
                 to: m.to.to_string(),
@@ -317,9 +319,10 @@ impl Store {
                 folder,
                 updates,
             } => {
-                for (uid, unread) in updates {
+                for (uid, unread, starred) in updates {
                     if let Some(&i) = self.index.get(&(account, folder, uid)) {
                         self.mails[i].unread = unread;
+                        self.mails[i].starred = starred;
                     }
                 }
             }
@@ -427,6 +430,7 @@ impl Store {
             };
             let m = &mut self.mails[i];
             m.unread = row.unread;
+            m.starred = row.starred;
             m.removed = false;
             m.from = row.from;
             m.from_email = row.from_email;
@@ -455,6 +459,7 @@ impl Store {
             folder,
             uid: row.uid,
             unread: row.unread,
+            starred: row.starred,
             from: row.from,
             from_email: row.from_email,
             to,
@@ -535,6 +540,7 @@ impl Store {
                 folder: cached.folder,
                 uid: cached.uid,
                 unread: cached.unread,
+                starred: cached.starred,
                 from: cached.from,
                 from_email: cached.from_email,
                 to: cached.to,
@@ -623,6 +629,7 @@ impl Store {
                     folder: mail.folder,
                     uid: mail.uid,
                     unread: mail.unread,
+                    starred: mail.starred,
                     from: mail.from.clone(),
                     from_email: mail.from_email.clone(),
                     to: mail.to.clone(),
@@ -732,6 +739,7 @@ mod tests {
         HeaderRow {
             uid,
             unread: false,
+            starred: false,
             from: "Sender".to_string(),
             from_email: "sender@example.com".to_string(),
             subject: format!("Message {uid}"),
@@ -812,7 +820,9 @@ mod tests {
     #[test]
     fn cached_mail_restores_headers_and_loaded_body() {
         let mut source = store_with_idle_account();
-        source.upsert(0, 0, row(5));
+        let mut header = row(5);
+        header.starred = true;
+        source.upsert(0, 0, header);
         let mut cached_body = body("cached body");
         cached_body.source = Arc::from(&b"raw message source"[..]);
         cached_body.attachments.push(AttachmentInfo {
@@ -835,6 +845,7 @@ mod tests {
 
         assert_eq!(restored.mails.len(), 1);
         assert_eq!(restored.mails[0].subject, "Message 5");
+        assert!(restored.mails[0].starred);
         assert!(matches!(
             &restored.mails[0].body,
             BodyState::Loaded { text, .. } if text.as_ref() == "cached body"
@@ -847,6 +858,21 @@ mod tests {
             restored.mails[0].attachments[0].data.as_deref(),
             Some(&b"data"[..])
         );
+    }
+
+    #[test]
+    fn flag_updates_apply_read_and_starred_state_independently() {
+        let mut store = store_with_idle_account();
+        store.upsert(0, 0, row(5));
+
+        store.apply(Event::Flags {
+            account: 0,
+            folder: 0,
+            updates: vec![(5, true, true)],
+        });
+
+        assert!(store.mails[0].unread);
+        assert!(store.mails[0].starred);
     }
 
     #[test]

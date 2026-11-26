@@ -11,7 +11,7 @@ use crate::{
     keyboard::FocusState,
     link_prefs::LinkPrefs,
     mail::{ARCHIVE, Engine, INBOX, NewMailMessage, TRASH, WorkerCmd, config},
-    model::{BodyState, NoticeSeverity, Store},
+    model::{BodyState, Mail, NoticeSeverity, Store},
     settings_view::{AppSettings, NotificationSound},
 };
 
@@ -53,6 +53,7 @@ pub struct AppState {
     pub pending_sends: State<Vec<PendingSend>>,
     pub next_pending_send_id: State<u64>,
     pub unread_only: State<bool>,
+    pub starred_only: State<bool>,
     pub sidebar_width: State<f32>,
     pub message_list_width: State<f32>,
     pub focus_state: State<FocusState>,    // keyboard focus state
@@ -201,6 +202,7 @@ pub fn use_app_state() -> AppState {
         pending_sends: use_state(Vec::new),
         next_pending_send_id: use_state(|| 0),
         unread_only: use_state(|| false),
+        starred_only: use_state(|| false),
         sidebar_width: use_state(|| 260.),
         message_list_width: use_state(|| 380.),
         focus_state: use_state(|| FocusState::default()),
@@ -527,27 +529,38 @@ pub fn preview_notification_sound(sound: NotificationSound) {
     }
 }
 
+fn visible_mail_indices(
+    mails: &[Mail],
+    account: Option<usize>,
+    folder: usize,
+    unread_only: bool,
+    starred_only: bool,
+) -> Vec<usize> {
+    let mut visible: Vec<usize> = mails
+        .iter()
+        .enumerate()
+        .filter(|(_, mail)| {
+            !mail.removed
+                && (!starred_only || mail.starred)
+                && (starred_only || mail.folder == folder)
+                && account.map_or(true, |a| mail.account == a)
+                && (!unread_only || mail.unread)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    visible.sort_by_key(|&index| Reverse((mails[index].ts, mails[index].uid)));
+    visible
+}
+
 impl AppState {
-    /// Mails in the current account + folder, after the unread filter, newest first.
+    /// Mails in the current account + folder, or starred mail for the selected account scope.
     pub fn visible(&self) -> Vec<usize> {
         let folder = *self.folder.read();
         let unread_only = *self.unread_only.read();
+        let starred_only = *self.starred_only.read();
         let account = *self.account.read();
         let store = self.store.read();
-        let mut v: Vec<usize> = store
-            .mails
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| {
-                !m.removed
-                    && m.folder == folder
-                    && account.map_or(true, |a| m.account == a)
-                    && (!unread_only || m.unread)
-            })
-            .map(|(i, _)| i)
-            .collect();
-        v.sort_by_key(|&i| Reverse((store.mails[i].ts, store.mails[i].uid)));
-        v
+        visible_mail_indices(&store.mails, account, folder, unread_only, starred_only)
     }
 
     /// Filter visible mails by a search query, checking subject, sender, recipient,
@@ -617,6 +630,26 @@ impl AppState {
             .count()
     }
 
+    /// Unread starred mails across all folders of one account.
+    pub fn account_starred_unread(&self, account: usize) -> usize {
+        self.store
+            .read()
+            .mails
+            .iter()
+            .filter(|m| !m.removed && m.account == account && m.starred && m.unread)
+            .count()
+    }
+
+    /// Unread starred mails across all accounts and folders.
+    pub fn starred_unread(&self) -> usize {
+        self.store
+            .read()
+            .mails
+            .iter()
+            .filter(|m| !m.removed && m.starred && m.unread)
+            .count()
+    }
+
     pub fn sidebar_account_indices(&self) -> Vec<usize> {
         let account_ids: Vec<String> = self
             .store
@@ -677,6 +710,7 @@ impl AppState {
         self.cancel_mark_read_timer();
         self.account.set(account);
         self.folder.set(folder);
+        self.starred_only.set(false);
         self.set_view(View::Mail);
 
         // Make sure what's on screen is fresh. Workers skip folders synced in the last
@@ -686,6 +720,22 @@ impl AppState {
             Some(a) => self.send(a, WorkerCmd::SyncFolder { folder }),
             None => (0..accounts).for_each(|a| self.send(a, WorkerCmd::SyncFolder { folder })),
         }
+    }
+
+    pub fn go_starred(&mut self, account: usize) {
+        self.cancel_mark_read_timer();
+        self.account.set(Some(account));
+        self.folder.set(INBOX);
+        self.starred_only.set(true);
+        self.set_view(View::Mail);
+    }
+
+    pub fn go_global_starred(&mut self) {
+        self.cancel_mark_read_timer();
+        self.account.set(None);
+        self.folder.set(INBOX);
+        self.starred_only.set(true);
+        self.set_view(View::Mail);
     }
 
     pub fn set_view(&self, view: View) {
@@ -837,6 +887,27 @@ impl AppState {
                     folder,
                     uid,
                     seen: !now_unread,
+                },
+            );
+        }
+    }
+
+    pub fn toggle_star(&mut self, i: usize) {
+        let (account, folder, uid, starred) = {
+            let mut store = self.store.write();
+            let Some(mail) = store.mails.get_mut(i) else {
+                return;
+            };
+            mail.starred = !mail.starred;
+            (mail.account, mail.folder, mail.uid, mail.starred)
+        };
+        if uid != 0 {
+            self.send(
+                account,
+                WorkerCmd::SetFlagged {
+                    folder,
+                    uid,
+                    flagged: starred,
                 },
             );
         }
@@ -1328,7 +1399,74 @@ fn visible_selection(selected: Option<usize>, visible: &[usize]) -> Option<usize
 
 #[cfg(test)]
 mod tests {
-    use super::visible_selection;
+    use super::{visible_mail_indices, visible_selection};
+    use crate::{
+        mail::{ARCHIVE, INBOX, TRASH},
+        model::Store,
+    };
+
+    #[test]
+    fn account_starred_view_includes_other_folders_but_excludes_other_accounts_and_removed_mail() {
+        let base = Store::demo().mails[0].clone();
+
+        let mut inbox = base.clone();
+        inbox.account = 0;
+        inbox.folder = INBOX;
+        inbox.uid = 1;
+        inbox.ts = 10;
+        inbox.starred = false;
+
+        let mut archived_star = base.clone();
+        archived_star.account = 1;
+        archived_star.folder = ARCHIVE;
+        archived_star.uid = 2;
+        archived_star.ts = 20;
+        archived_star.starred = true;
+        archived_star.unread = false;
+
+        let mut unread_star = base.clone();
+        unread_star.account = 0;
+        unread_star.folder = TRASH;
+        unread_star.uid = 3;
+        unread_star.ts = 30;
+        unread_star.starred = true;
+        unread_star.unread = true;
+
+        let mut removed_star = base;
+        removed_star.account = 0;
+        removed_star.folder = INBOX;
+        removed_star.uid = 4;
+        removed_star.ts = 40;
+        removed_star.starred = true;
+        removed_star.removed = true;
+
+        let mails = vec![inbox, archived_star, unread_star, removed_star];
+
+        assert_eq!(
+            visible_mail_indices(&mails, None, INBOX, false, true),
+            vec![2, 1]
+        );
+        assert_eq!(
+            visible_mail_indices(&mails, None, INBOX, true, true),
+            vec![2]
+        );
+        assert_eq!(
+            visible_mail_indices(&mails, Some(0), INBOX, false, true),
+            vec![2]
+        );
+        assert_eq!(
+            visible_mail_indices(&mails, Some(0), INBOX, true, true),
+            vec![2]
+        );
+        assert_eq!(
+            visible_mail_indices(&mails, Some(1), INBOX, false, true),
+            vec![1]
+        );
+        assert_eq!(
+            visible_mail_indices(&mails, Some(0), INBOX, false, false),
+            vec![0]
+        );
+    }
 
     #[test]
     fn no_selection_does_not_open_first_visible_message() {

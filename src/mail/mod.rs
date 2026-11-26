@@ -54,6 +54,7 @@ pub enum SyncStatus {
 pub struct HeaderRow {
     pub uid: u32,
     pub unread: bool,
+    pub starred: bool,
     /// Sender name (or "To: …" for Sent/Drafts).
     pub from: String,
     pub from_email: String,
@@ -132,11 +133,11 @@ pub enum Event {
         account: usize,
         messages: Vec<NewMailMessage>,
     },
-    /// Flag changes made elsewhere: (uid, unread).
+    /// Flag changes made elsewhere: (uid, unread, starred).
     Flags {
         account: usize,
         folder: usize,
-        updates: Vec<(u32, bool)>,
+        updates: Vec<(u32, bool, bool)>,
     },
     /// Messages that no longer exist on the server.
     Removed {
@@ -208,6 +209,11 @@ pub enum WorkerCmd {
         folder: usize,
         uid: u32,
         seen: bool,
+    },
+    SetFlagged {
+        folder: usize,
+        uid: u32,
+        flagged: bool,
     },
     MoveTo {
         folder: usize,

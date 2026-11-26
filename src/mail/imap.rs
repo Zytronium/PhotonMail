@@ -9,7 +9,7 @@
 //! * **Bodies on demand** (`BODY.PEEK[]`, so reading never sets `\Seen` by accident),
 //!   plus a small background prefetch of the newest INBOX messages so they open instantly.
 //! * **Incremental sync.** After the first pass we only ask for `UID last+1:*`, plus a
-//!   cheap `(UID FLAGS)` sweep over the window we already know to detect read/unread
+//!   cheap `(UID FLAGS)` sweep over the window we already know to detect read/unread/starred
 //!   changes and deletions made by other clients. UIDVALIDITY is checked on every SELECT.
 //! * **Push, not poll.** IDLE on its own connection wakes the worker the moment the
 //!   server reports a change.
@@ -441,6 +441,10 @@ fn is_unread(f: &Fetch) -> bool {
     !f.flags().any(|flag| matches!(flag, Flag::Seen))
 }
 
+fn is_starred(f: &Fetch) -> bool {
+    f.flags().any(|flag| matches!(flag, Flag::Flagged))
+}
+
 fn lossy(bytes: &Option<Cow<'_, [u8]>>) -> String {
     bytes
         .as_deref()
@@ -541,6 +545,7 @@ fn header_row(f: &Fetch, sent_like: bool) -> Option<HeaderRow> {
     Some(HeaderRow {
         uid,
         unread: is_unread(f),
+        starred: is_starred(f),
         from,
         from_email: email,
         subject,
@@ -577,13 +582,13 @@ fn make_auto_sync_timer(interval: Option<Duration>) -> Option<tokio::time::Inter
 struct FolderState {
     uid_validity: Option<u32>,
     last_uid: u32,
-    /// uid → unread, for the window we hold. Used to diff flags and detect deletions.
-    known: BTreeMap<u32, bool>,
+    /// uid → (unread, starred), for the window we hold. Used to diff flags and detect deletions.
+    known: BTreeMap<u32, (bool, bool)>,
     synced: bool,
     last_sync: Option<Instant>,
 }
 
-fn prune_known(known: &mut BTreeMap<u32, bool>, keep_limit: usize) -> Vec<u32> {
+fn prune_known(known: &mut BTreeMap<u32, (bool, bool)>, keep_limit: usize) -> Vec<u32> {
     let remove_count = known.len().saturating_sub(keep_limit);
     let removed: Vec<u32> = known.keys().take(remove_count).copied().collect();
     for uid in &removed {
@@ -898,7 +903,35 @@ impl Worker {
                 })
                 .await?;
                 if let Some(unread) = self.folders[folder].known.get_mut(&uid) {
-                    *unread = !seen;
+                    unread.0 = !seen;
+                }
+                Ok(())
+            }
+            WorkerCmd::SetFlagged {
+                folder,
+                uid,
+                flagged,
+            } => {
+                if !self.ensure_selected(folder).await? {
+                    return Ok(());
+                }
+                let query = if flagged {
+                    "+FLAGS.SILENT (\\Flagged)"
+                } else {
+                    "-FLAGS.SILENT (\\Flagged)"
+                };
+                let set = uid.to_string();
+                let session = self.session.as_mut().ok_or_else(not_connected)?;
+                io("STORE", async {
+                    session
+                        .uid_store(&set, query)
+                        .await?
+                        .try_collect::<Vec<Fetch>>()
+                        .await
+                })
+                .await?;
+                if let Some(flags) = self.folders[folder].known.get_mut(&uid) {
+                    flags.1 = flagged;
                 }
                 Ok(())
             }
@@ -1338,7 +1371,7 @@ impl Worker {
                     .filter_map(|x| header_row(x, sent_like))
                     .collect();
                 for r in &rows {
-                    st.known.insert(r.uid, r.unread);
+                    st.known.insert(r.uid, (r.unread, r.starred));
                     st.last_uid = st.last_uid.max(r.uid);
                 }
                 if !rows.is_empty() {
@@ -1352,8 +1385,8 @@ impl Worker {
             }
         } else {
             // Incremental pass.
-            // (a) Cheap flag sweep over the window we know: catches read/unread changes
-            //     and deletions made by other clients.
+            // (a) Cheap flag sweep over the window we know: catches read/unread/starred
+            //     changes and deletions made by other clients.
             if let (Some(&lo), Some(&hi)) = (st.known.keys().next(), st.known.keys().next_back()) {
                 let flags = fetch_uid(session, &format!("{lo}:{hi}"), "(UID FLAGS)").await?;
                 let mut present = std::collections::HashSet::new();
@@ -1362,9 +1395,14 @@ impl Worker {
                     if let Some(uid) = fe.uid {
                         present.insert(uid);
                         let unread = is_unread(fe);
-                        if st.known.get(&uid).is_some_and(|&old| old != unread) {
-                            st.known.insert(uid, unread);
-                            updates.push((uid, unread));
+                        let starred = is_starred(fe);
+                        if st
+                            .known
+                            .get(&uid)
+                            .is_some_and(|&old| old != (unread, starred))
+                        {
+                            st.known.insert(uid, (unread, starred));
+                            updates.push((uid, unread, starred));
                         }
                     }
                 }
@@ -1429,7 +1467,7 @@ impl Worker {
                 .collect();
             st.last_uid = st.last_uid.max(high_water);
             for r in &rows {
-                st.known.insert(r.uid, r.unread);
+                st.known.insert(r.uid, (r.unread, r.starred));
                 st.last_uid = st.last_uid.max(r.uid);
             }
             if !rows.is_empty() {
@@ -1621,10 +1659,18 @@ mod tests {
 
     #[test]
     fn recent_uid_window_prunes_only_oldest_uids() {
-        let mut known = BTreeMap::from([(1, true), (2, false), (3, true), (4, false)]);
+        let mut known = BTreeMap::from([
+            (1, (true, false)),
+            (2, (false, true)),
+            (3, (true, false)),
+            (4, (false, false)),
+        ]);
         let removed = prune_known(&mut known, 2);
         assert_eq!(removed, vec![1, 2]);
-        assert_eq!(known, BTreeMap::from([(3, true), (4, false)]));
+        assert_eq!(
+            known,
+            BTreeMap::from([(3, (true, false)), (4, (false, false))])
+        );
     }
 
     #[test]

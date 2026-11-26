@@ -48,6 +48,8 @@ pub const TAG: &[u8] = icon!(
     r#"<path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.41 0l8.59-8.59a1 1 0 0 0 0-1.41z"/><path d="M7 7h.01"/>"#
 );
 pub const SEARCH: &[u8] = icon!(r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>"#);
+pub const STAR: &[u8] =
+    icon!(r#"<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>"#);
 pub const SEND: &[u8] = icon!(r#"<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>"#);
 pub const PAPERCLIP: &[u8] = icon!(
     r#"<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.19 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>"#

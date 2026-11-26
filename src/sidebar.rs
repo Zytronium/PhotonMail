@@ -20,6 +20,7 @@ impl Component for Sidebar {
         let acc = *state.account.read();
         let fol = *state.folder.read();
         let view = *state.view.read();
+        let starred_only = *state.starred_only.read();
         let in_mail = view == View::Mail;
         let accounts = state.store.read().accounts.clone();
         let account_indices = state.sidebar_account_indices();
@@ -33,10 +34,20 @@ impl Component for Sidebar {
         rows.push(rect().child(Item {
             lead: Lead::Icon(INBOX),
             text: "All inboxes".to_string(),
-            active: in_mail && acc.is_none() && fol == 0,
+            active: in_mail && !starred_only && acc.is_none() && fol == 0,
             count: state.inbox_unread(None),
             indent: 0.,
             on_press: (move |_| s.go(None, 0)).into(),
+        }));
+
+        let mut s_starred = state;
+        rows.push(rect().child(Item {
+            lead: Lead::Icon(STAR),
+            text: "Starred".to_string(),
+            active: in_mail && starred_only && acc.is_none(),
+            count: state.starred_unread(),
+            indent: 0.,
+            on_press: (move |_| s_starred.go_global_starred()).into(),
         }));
 
         // Accounts section header
@@ -86,11 +97,23 @@ impl Component for Sidebar {
             }));
             if open {
                 for (f, name) in FOLDERS.iter().enumerate() {
+                    if f == 3 {
+                        let mut s_starred = state;
+                        rows.push(rect().child(Item {
+                            lead: Lead::Icon(STAR),
+                            text: "Starred".to_string(),
+                            active: in_mail && starred_only && acc == Some(i),
+                            count: state.account_starred_unread(i),
+                            indent: 20.,
+                            on_press: (move |_| s_starred.go_starred(i)).into(),
+                        }));
+                    }
+
                     let mut s_go = state;
                     rows.push(rect().child(Item {
                         lead: Lead::Icon(FOLDER_ICONS[f]),
                         text: name.to_string(),
-                        active: in_mail && acc == Some(i) && fol == f,
+                        active: in_mail && !starred_only && acc == Some(i) && fol == f,
                         count: state.account_folder_unread(i, f),
                         indent: 20.,
                         on_press: (move |_| s_go.go(Some(i), f)).into(),
