@@ -22,9 +22,10 @@ mod widgets;
 
 use freya::tray::{
     TrayEvent, TrayIconBuilder,
-    menu::{Menu, MenuItem, Submenu},
+    menu::{Menu, MenuItem},
 };
 use freya::{borderless::BorderlessPlugin, prelude::*};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     html_viewer::LinkConfirmDialog,
@@ -47,7 +48,9 @@ pub fn is_demo() -> bool {
     *DEMO.get_or_init(|| std::env::args().skip(1).any(|a| a == "--demo"))
 }
 
-const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+const APP_ICON: &[u8] = include_bytes!("../assets/icon-bg.png");
+const TRAY_ICON: &[u8] = include_bytes!("../assets/icon-256.png");
+static IS_WAYLAND_BACKEND: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let (notification_open_tx, notification_open_rx) = async_channel::unbounded::<Option<String>>();
@@ -74,37 +77,17 @@ fn main() {
                     }
                 }
             })
-            .with_window(
-                WindowConfig::new(app)
-                    .with_title(APP_NAME)
-                    .with_icon(LaunchConfig::window_icon(LOGO_PNG))
-                    .with_size(1200., 750.)
-                    .with_decorations(false)
-                    .with_transparency(true)
-                    .with_background(Color::TRANSPARENT)
-                    .with_on_close(|mut renderer, window_id| {
-                        if settings_view::AppSettings::load_from_disk().minimize_to_tray_on_close {
-                            if let Some(window) = renderer.windows.get_mut(&window_id) {
-                                window.window_mut().set_minimized(true);
-                                window.window_mut().set_visible(false);
-                            }
-                        } else {
-                            renderer.exit();
-                        }
-                        CloseDecision::KeepOpen
-                    }),
-            )
+            .with_window(window_config())
             .with_exit_on_close(false)
             .with_tray(
                 || {
                     let open = MenuItem::with_id("open", "Open Photon Mail", true, None);
-                    let quit = MenuItem::with_id("quit", "Quit Photon Mail", true, None);
-                    let submenu = Submenu::with_items("Photon Mail", true, &[&open, &quit])
-                        .expect("Failed to create tray menu items");
-                    let menu = Menu::with_items(&[&submenu]).expect("Failed to create tray menu");
+                    let quit = MenuItem::with_id("quit", "Quit", true, None);
+                    let menu =
+                        Menu::with_items(&[&open, &quit]).expect("Failed to create tray menu");
 
                     TrayIconBuilder::new()
-                        .with_icon(LaunchConfig::tray_icon(LOGO_PNG))
+                        .with_icon(LaunchConfig::tray_icon(TRAY_ICON))
                         .with_tooltip(APP_NAME)
                         .with_menu(Box::new(menu))
                         .build()
@@ -125,6 +108,48 @@ fn main() {
     )
 }
 
+fn window_config() -> WindowConfig {
+    WindowConfig::new(app)
+        .with_title(APP_NAME)
+        .with_icon(LaunchConfig::window_icon(APP_ICON))
+        .with_size(1200., 750.)
+        .with_decorations(false)
+        .with_transparency(true)
+        .with_background(Color::TRANSPARENT)
+        .with_window_handle(|window| {
+            IS_WAYLAND_BACKEND.store(is_wayland_window(window), Ordering::Relaxed);
+        })
+        .with_on_close(|mut renderer, window_id| {
+            if settings_view::AppSettings::load_from_disk().minimize_to_tray_on_close {
+                if let Some(window) = renderer.windows.get_mut(&window_id) {
+                    if is_wayland_window(window.window()) {
+                        return CloseDecision::Close;
+                    }
+                    window.window_mut().set_visible(false);
+                }
+            } else {
+                renderer.exit();
+            }
+            CloseDecision::KeepOpen
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn is_wayland_window(window: &freya::winit::window::Window) -> bool {
+    use freya::winit::platform::wayland::WindowExtWayland;
+
+    window.xdg_toplevel().is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_wayland_window(_: &freya::winit::window::Window) -> bool {
+    false
+}
+
+pub(crate) fn is_wayland_backend() -> bool {
+    IS_WAYLAND_BACKEND.load(Ordering::Relaxed)
+}
+
 fn activate_app_windows(renderer: &mut RendererContext<'_>) {
     activate_app_windows_with_token(renderer, None);
 }
@@ -133,6 +158,10 @@ fn activate_app_windows_with_token(
     renderer: &mut RendererContext<'_>,
     activation_token: Option<String>,
 ) {
+    if renderer.windows.is_empty() {
+        renderer.launch_window(window_config());
+    }
+
     for window in renderer.windows.values_mut() {
         let window = window.window_mut();
         window.set_minimized(false);

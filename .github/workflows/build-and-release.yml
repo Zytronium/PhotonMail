@@ -80,8 +80,8 @@ jobs:
           EOF
 
           # Copy app icon
-          if [ -f assets/logo.png ]; then
-            cp assets/logo.png PhotonMail.AppDir/PhotonMail.png
+          if [ -f assets/icon-bg.png ]; then
+            cp assets/icon-bg.png PhotonMail.AppDir/PhotonMail.png
           fi
 
           # Build the AppImage
@@ -193,14 +193,14 @@ jobs:
           mkdir -p "PhotonMail.app/Contents/MacOS"
           mkdir -p "PhotonMail.app/Contents/Resources"
           cp "target/${{ matrix.target }}/release/PhotonMail" "PhotonMail.app/Contents/MacOS/"
-          if [ -f assets/logo.png ]; then
+          if [ -f assets/icon-bg.png ]; then
             mkdir -p PhotonMail.app/Contents/Resources/AppIcon.iconset
-            sips -z 16 16 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-16.png
-            sips -z 32 32 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-32.png
-            sips -z 64 64 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-64.png
-            sips -z 128 128 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-128.png
-            sips -z 256 256 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-256.png
-            sips -z 512 512 assets/logo.png --out PhotonMail.app/Contents/Resources/AppIcon-512.png
+            sips -z 16 16 assets/icon-bg.png --out PhotonMail.app/Contents/Resources/AppIcon-16.png
+            sips -z 32 32 assets/icon-bg.png --out PhotonMail.app/Contents/Resources/AppIcon-32.png
+            sips -z 64 64 assets/icon-bg.png --out PhotonMail.app/Contents/Resources/AppIcon-64.png
+            sips -z 128 128 assets/icon-bg.png --out PhotonMail.app/Contents/Resources/AppIcon-128.png
+            sips -z 256 256 assets/icon-bg.png --out PhotonMail.app/Contents/Resources/AppIcon-256.png
+            sips -z 512 512 assets/icon-bg.png --out PhotonMail.app/Contents/Resources/AppIcon-512.png
             cat > PhotonMail.app/Contents/Resources/AppIcon.iconset/Contents.json << 'ICONEOF'
             {
               "images": [

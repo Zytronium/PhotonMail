@@ -2,7 +2,7 @@ use freya::prelude::*;
 
 use crate::{APP_NAME, state::AppState, theme::DARK};
 
-const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
+const TITLEBAR_ICON: &[u8] = include_bytes!("../assets/icon.png");
 const ICON_MIN: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1 5h8" stroke="#ebebf5" stroke-width="1" fill="none"/></svg>"##;
 const ICON_MAX: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" stroke="#ebebf5" stroke-width="1" fill="none"/></svg>"##;
 const ICON_RESTORE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M3 3V1.5h5.5V7H7" stroke="#ebebf5" stroke-width="1" fill="none"/><rect x="1.5" y="3" width="5.5" height="5.5" stroke="#ebebf5" stroke-width="1" fill="none"/></svg>"##;
@@ -26,7 +26,7 @@ impl Component for Titlebar {
             .padding((0., 0., 0., 12.))
             .spacing(8.)
             .child(
-                SvgViewer::new(LOGO)
+                ImageViewer::new(("titlebar-icon", TITLEBAR_ICON))
                     .width(Size::px(18.))
                     .height(Size::px(18.)),
             )
@@ -102,10 +102,14 @@ impl Component for WinButton {
                 }
                 WinAction::Close => {
                     if minimize_to_tray {
-                        Platform::get().with_window(Platform::window_id(), |window| {
-                            window.set_minimized(true);
-                            window.set_visible(false);
-                        });
+                        let window_id = Platform::window_id();
+                        if crate::is_wayland_backend() {
+                            Platform::get().close_window(window_id);
+                        } else {
+                            Platform::get().with_window(window_id, |window| {
+                                window.set_visible(false);
+                            });
+                        }
                     } else {
                         Platform::get().exit();
                     }

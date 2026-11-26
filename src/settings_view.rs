@@ -381,7 +381,7 @@ impl Component for PreferencesView {
             ),
             section_title("General"),
             toggle_row(
-                "Minimize to system tray on close",
+                "Hide to system tray on close",
                 "Keep Photon Mail running in the system tray when the window is closed.",
                 settings.minimize_to_tray_on_close,
                 EventHandler::new({
