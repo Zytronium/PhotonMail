@@ -60,6 +60,42 @@ pub const DOWNLOAD: &[u8] = icon!(
 pub const IMAGE: &[u8] = icon!(
     r#"<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>"#
 );
+pub const BOLD: &[u8] =
+    icon!(r#"<path d="M6 12h8a4 4 0 0 1 0 8H6z"/><path d="M6 4h7a4 4 0 0 1 0 8H6z"/>"#);
+pub const ITALIC: &[u8] = icon!(
+    r#"<line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/>"#
+);
+pub const UNDERLINE: &[u8] =
+    icon!(r#"<path d="M6 4v6a6 6 0 0 0 12 0V4"/><line x1="4" y1="20" x2="20" y2="20"/>"#);
+pub const STRIKETHROUGH: &[u8] = icon!(
+    r#"<path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" y1="12" x2="20" y2="12"/>"#
+);
+pub const CODE: &[u8] =
+    icon!(r#"<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>"#);
+pub const HEADING_1: &[u8] = icon!(r#"<path d="M3 5v14M3 12h7M10 5v14M16 8l2-2v12"/>"#);
+pub const HEADING_2: &[u8] =
+    icon!(r#"<path d="M3 5v14M3 12h7M10 5v14M15 8a2.5 2.5 0 1 1 5 0c0 2-5 4-5 8h5"/>"#);
+pub const HEADING_3: &[u8] =
+    icon!(r#"<path d="M3 5v14M3 12h7M10 5v14M15 7h3a2 2 0 0 1 0 4h-2m0 0h2a2 2 0 0 1 0 4h-3"/>"#);
+pub const HEADING_4: &[u8] = icon!(r#"<path d="M3 5v14M3 12h7M10 5v14M19 15V6l-5 6h6"/>"#);
+pub const HEADING_5: &[u8] =
+    icon!(r#"<path d="M3 5v14M3 12h7M10 5v14M20 6h-5v4h2a2.5 2.5 0 1 1-2.5 3"/>"#);
+pub const HEADING_6: &[u8] = icon!(
+    r#"<path d="M3 5v14M3 12h7M10 5v14M19 7h-2a3 3 0 0 0-3 3v4a2.5 2.5 0 1 0 5 0v-.5a2 2 0 1 0-4 0"/>"#
+);
+pub const LIST: &[u8] = icon!(
+    r#"<line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>"#
+);
+pub const LIST_ORDERED: &[u8] = icon!(
+    r#"<line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/><path d="M4 6h1v3M4 12h2l-2 2h2M5 18v3"/>"#
+);
+pub const QUOTE: &[u8] = icon!(
+    r#"<path d="M3 21c3 0 7-1 7-8V5H3v8h4c0 3-1 4-4 4"/><path d="M14 21c3 0 7-1 7-8V5h-7v8h4c0 3-1 4-4 4"/>"#
+);
+pub const LINK: &[u8] = icon!(
+    r#"<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>"#
+);
+pub const CHECK: &[u8] = icon!(r#"<polyline points="20 6 9 17 4 12"/>"#);
 pub const EYE: &[u8] = icon!(
     r#"<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>"#
 );

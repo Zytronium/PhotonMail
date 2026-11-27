@@ -8,7 +8,11 @@ use freya_components::input::InputColorsThemePartial;
 
 use crate::{
     html_viewer::SecureHtmlViewer,
-    icons::{CHEVRON_DOWN, CHEVRON_LEFT, DISK, SEND},
+    icons::{
+        BOLD, CHECK, CHEVRON_DOWN, CHEVRON_LEFT, CLOSE, CODE, DISK, HEADING_1, HEADING_2,
+        HEADING_3, HEADING_4, HEADING_5, HEADING_6, IMAGE, ITALIC, LINK, LIST, LIST_ORDERED, QUOTE,
+        SEND, STRIKETHROUGH, UNDERLINE,
+    },
     mail::formatting::{
         append_header, clean_header_value, encode_mime_parameter, encode_unstructured_header,
         format_address_list, format_mailbox_header, generate_mime_boundary, image_content_type,
@@ -273,6 +277,8 @@ struct FormatFlags {
     bold: bool,
     italic: bool,
     underline: bool,
+    strikethrough: bool,
+    code: bool,
     link: Option<usize>,
 }
 
@@ -281,6 +287,21 @@ enum Style {
     Bold,
     Italic,
     Underline,
+    Strikethrough,
+    Code,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ListKind {
+    Unordered,
+    Ordered,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum BlockKind {
+    List(ListKind),
+    Quote,
+    Heading(u8),
 }
 
 impl Style {
@@ -289,6 +310,8 @@ impl Style {
             Style::Bold => f.bold,
             Style::Italic => f.italic,
             Style::Underline => f.underline,
+            Style::Strikethrough => f.strikethrough,
+            Style::Code => f.code,
         }
     }
     fn set(self, f: &mut FormatFlags, v: bool) {
@@ -296,6 +319,8 @@ impl Style {
             Style::Bold => f.bold = v,
             Style::Italic => f.italic = v,
             Style::Underline => f.underline = v,
+            Style::Strikethrough => f.strikethrough = v,
+            Style::Code => f.code = v,
         }
     }
 }
@@ -584,6 +609,10 @@ impl Component for ComposePane {
         // One editor for the whole message. Images are placeholder characters in its text.
         let mut editable = use_editable(|| draft_body.text.clone(), EditableConfig::new);
         let a11y_id = use_a11y();
+        let editor_focus = use_focus(a11y_id);
+        let editor_is_focused = editor_focus.read().is_focused();
+        let (cursor_blink_timeout, cursor_color) =
+            use_cursor_blink(editor_is_focused, DARK.accent.into());
         // One entry per character of the text.
         let formats: State<Vec<FormatFlags>> = use_state(|| {
             let mut f = draft_body.formats.clone();
@@ -879,6 +908,21 @@ impl Component for ComposePane {
         let toggle_underline: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
             toggle_format(editable, formats, cursor_format, Style::Underline)
         });
+        let toggle_strikethrough: EventHandler<Event<PressEventData>> =
+            EventHandler::new(move |_| {
+                toggle_format(editable, formats, cursor_format, Style::Strikethrough)
+            });
+        let toggle_code: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
+            toggle_format(editable, formats, cursor_format, Style::Code)
+        });
+        let toggle_bullets: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
+            toggle_block_format(editable, formats, BlockKind::List(ListKind::Unordered))
+        });
+        let toggle_numbering: EventHandler<Event<PressEventData>> = EventHandler::new(move |_| {
+            toggle_block_format(editable, formats, BlockKind::List(ListKind::Ordered))
+        });
+        let toggle_quote: EventHandler<Event<PressEventData>> =
+            EventHandler::new(move |_| toggle_block_format(editable, formats, BlockKind::Quote));
 
         // --- Link handlers ---
         let toggle_link_bar: EventHandler<Event<PressEventData>> = {
@@ -923,17 +967,33 @@ impl Component for ComposePane {
         });
 
         // --- Mouse handlers shared by all line paragraphs ---
+        let mut line_down_blink_timeout = cursor_blink_timeout;
         let on_line_down: EventHandler<LineMouse> =
             EventHandler::new(move |(row, holder, e): LineMouse| {
+                line_down_blink_timeout.reset();
                 a11y_id.request_focus();
                 editable.process_event(EditableEvent::Down {
                     location: e.element_location,
                     editor_line: EditorLine::Paragraph(row),
                     holder: &holder,
                 });
+                if editable
+                    .editor()
+                    .read()
+                    .line(row)
+                    .is_some_and(|line| line.utf16_len() == 0)
+                {
+                    let position = {
+                        let editor = editable.editor().read();
+                        editor.char_to_utf16_cu(editor.line_to_char(row))
+                    };
+                    move_cursor_to(editable, position);
+                }
             });
+        let mut line_move_blink_timeout = cursor_blink_timeout;
         let on_line_move: EventHandler<LineMouse> =
             EventHandler::new(move |(row, holder, e): LineMouse| {
+                line_move_blink_timeout.reset();
                 editable.process_event(EditableEvent::Move {
                     location: e.element_location,
                     editor_line: EditorLine::Paragraph(row),
@@ -1239,6 +1299,8 @@ impl Component for ComposePane {
                         bold: slice.iter().all(|x| x.bold),
                         italic: slice.iter().all(|x| x.italic),
                         underline: slice.iter().all(|x| x.underline),
+                        strikethrough: slice.iter().all(|x| x.strikethrough),
+                        code: slice.iter().all(|x| x.code),
                         ..Default::default()
                     },
                     slice.iter().all(|x| x.link.is_some()),
@@ -1250,40 +1312,69 @@ impl Component for ComposePane {
         let toolbar = rect()
             .width(Size::fill())
             .horizontal()
-            .content(Content::Flex)
+            .content(Content::wrap_spacing(4.))
             .cross_align(Alignment::Center)
             .spacing(4.)
+            .child(format_button(BOLD, toolbar_fmt.bold, toggle_bold))
+            .child(format_button(ITALIC, toolbar_fmt.italic, toggle_italic))
             .child(format_button(
-                "B".to_string(),
-                FontWeight::BOLD,
-                toolbar_fmt.bold,
-                toggle_bold,
-            ))
-            .child(format_button(
-                "I".to_string(),
-                FontWeight::NORMAL,
-                toolbar_fmt.italic,
-                toggle_italic,
-            ))
-            .child(format_button(
-                "U".to_string(),
-                FontWeight::NORMAL,
+                UNDERLINE,
                 toolbar_fmt.underline,
                 toggle_underline,
             ))
             .child(format_button(
-                "Link".to_string(),
-                FontWeight::NORMAL,
-                link_active,
-                toggle_link_bar,
+                STRIKETHROUGH,
+                toolbar_fmt.strikethrough,
+                toggle_strikethrough,
+            ))
+            .child(format_button(CODE, toolbar_fmt.code, toggle_code))
+            .child(format_button(
+                HEADING_1,
+                false,
+                EventHandler::new(move |_| {
+                    toggle_block_format(editable, formats, BlockKind::Heading(1))
+                }),
             ))
             .child(format_button(
-                "Image".to_string(),
-                FontWeight::NORMAL,
+                HEADING_2,
                 false,
-                pick_images_press,
+                EventHandler::new(move |_| {
+                    toggle_block_format(editable, formats, BlockKind::Heading(2))
+                }),
             ))
-            .child(rect().width(Size::flex(1.)));
+            .child(format_button(
+                HEADING_3,
+                false,
+                EventHandler::new(move |_| {
+                    toggle_block_format(editable, formats, BlockKind::Heading(3))
+                }),
+            ))
+            .child(format_button(
+                HEADING_4,
+                false,
+                EventHandler::new(move |_| {
+                    toggle_block_format(editable, formats, BlockKind::Heading(4))
+                }),
+            ))
+            .child(format_button(
+                HEADING_5,
+                false,
+                EventHandler::new(move |_| {
+                    toggle_block_format(editable, formats, BlockKind::Heading(5))
+                }),
+            ))
+            .child(format_button(
+                HEADING_6,
+                false,
+                EventHandler::new(move |_| {
+                    toggle_block_format(editable, formats, BlockKind::Heading(6))
+                }),
+            ))
+            .child(format_button(LIST, false, toggle_bullets))
+            .child(format_button(LIST_ORDERED, false, toggle_numbering))
+            .child(format_button(QUOTE, false, toggle_quote))
+            .child(format_button(LINK, link_active, toggle_link_bar))
+            .child(format_button(IMAGE, false, pick_images_press));
 
         // --- Link URL bar (shown when the Link button / Ctrl+K is used) ---
         let link_bar = if *show_link_bar.read() {
@@ -1301,24 +1392,14 @@ impl Component for ComposePane {
                         .width(Size::fill())
                         .theme_colors(dark_input.clone()),
                 ))
-                .child(format_button(
-                    "Apply".to_string(),
-                    FontWeight::NORMAL,
-                    false,
-                    apply_link_press,
-                ))
-                .child(format_button(
-                    "Remove".to_string(),
-                    FontWeight::NORMAL,
-                    false,
-                    remove_link_press,
-                ))
+                .child(format_button(CHECK, false, apply_link_press))
+                .child(format_button(CLOSE, false, remove_link_press))
         } else {
             rect()
         };
 
         // --- Placeholder text (only while the message is empty) ---
-        let placeholder = if text.is_empty() {
+        let placeholder = if text.is_empty() && !editor_is_focused {
             rect()
                 .position(Position::new_absolute().top(0.).left(0.))
                 .child(
@@ -1333,10 +1414,17 @@ impl Component for ComposePane {
         };
 
         // --- The editor: one paragraph per line, images under the line that holds them ---
+        let measured_lines_height = use_state(|| 0.);
+        let editor_height = 180f32.max(*measured_lines_height.read() + 12.);
+        let mut set_measured_lines_height = measured_lines_height;
+        let mut key_blink_timeout = cursor_blink_timeout;
         let mut lines_column = rect()
             .width(Size::fill())
             .vertical()
             .spacing(2.)
+            .on_sized(move |e: Event<SizedEventData>| {
+                set_measured_lines_height.set(e.area.size.height);
+            })
             .a11y_id(a11y_id)
             .a11y_focusable(true)
             .a11y_auto_focus(true)
@@ -1344,6 +1432,7 @@ impl Component for ComposePane {
                 editable.process_event(EditableEvent::Release);
             })
             .on_key_down(move |e: Event<KeyboardEventData>| {
+                key_blink_timeout.reset();
                 let ctrl_or_meta = e.modifiers.ctrl() || e.modifiers.meta();
 
                 if ctrl_or_meta {
@@ -1364,6 +1453,8 @@ impl Component for ComposePane {
                             "b" => Some(Style::Bold),
                             "i" => Some(Style::Italic),
                             "u" => Some(Style::Underline),
+                            "x" if e.modifiers.shift() => Some(Style::Strikethrough),
+                            "`" if e.modifiers.shift() => Some(Style::Code),
                             _ => None,
                         };
                         if let Some(style) = style {
@@ -1388,8 +1479,9 @@ impl Component for ComposePane {
 
                 // No holder: movement works on newline-separated lines of the whole text.
                 let before = editable.editor().read().to_string();
+                let editor_key = normalize_shortcut_key(&e.key, ctrl_or_meta && !e.modifiers.alt());
                 editable.process_event(EditableEvent::KeyDown {
-                    key: &e.key,
+                    key: &editor_key,
                     modifiers: e.modifiers,
                     editor_line: Some(EditorLine::SingleParagraph),
                     holder: None,
@@ -1429,7 +1521,7 @@ impl Component for ComposePane {
             offset = line_end + 1; // +1 for the '\n'
 
             let cursor_col = if cursor >= line_start && cursor <= line_end {
-                Some(cursor - line_start)
+                editor_is_focused.then_some(cursor - line_start)
             } else {
                 None
             };
@@ -1446,10 +1538,14 @@ impl Component for ComposePane {
                 .map(|i| all_formats.get(i).copied().unwrap_or_default())
                 .collect();
             // Show placeholders as a blank space of the same width (keeps indices aligned).
-            let display: String = chars
-                .iter()
-                .map(|c| if is_placeholder(*c) { '\u{00A0}' } else { *c })
-                .collect();
+            let display: String = if chars.is_empty() {
+                " ".to_string()
+            } else {
+                chars
+                    .iter()
+                    .map(|c| if is_placeholder(*c) { '\u{00A0}' } else { *c })
+                    .collect()
+            };
 
             let mut row_rect =
                 rect()
@@ -1461,6 +1557,7 @@ impl Component for ComposePane {
                         text: display,
                         flags,
                         cursor_col,
+                        cursor_color,
                         highlight,
                         on_down: on_line_down.clone(),
                         on_move: on_line_move.clone(),
@@ -1496,9 +1593,11 @@ impl Component for ComposePane {
                                 ),
                         );
                     } else {
+                        let mut image_blink_timeout = cursor_blink_timeout;
                         row_rect = row_rect.child(
                             image_thumb(path.clone(), remove, 360., 240.).on_mouse_down(
                                 move |e: Event<MouseEventData>| {
+                                    image_blink_timeout.reset();
                                     a11y_id.request_focus();
                                     e.stop_propagation();
                                 },
@@ -1511,24 +1610,22 @@ impl Component for ComposePane {
             lines_column = lines_column.child(row_rect);
         }
 
+        let mut container_blink_timeout = cursor_blink_timeout;
         let editor_container = rect()
             .width(Size::fill())
-            .height(Size::px(if forwarded_html_body.read().is_some() {
-                110.
-            } else {
-                80.
-            }))
+            .height(Size::px(editor_height))
             .padding(6.)
             .corner_radius(8.)
             .background(crate::grain::surface())
             // Clicking empty space (e.g. below the last line) focuses the editor and
             // moves the cursor to the end. Line paragraphs stop their clicks first.
             .on_mouse_down(move |_: Event<MouseEventData>| {
+                container_blink_timeout.reset();
                 a11y_id.request_focus();
                 let len = editable.editor().read().to_string().chars().count();
                 move_cursor_to(editable, len);
             })
-            .child(ScrollView::new().height(Size::fill()).child(lines_column));
+            .child(lines_column);
 
         // --- Forwarded message (shown inline under the editor, like a traditional client) ---
         let forwarded_html_val = forwarded_html_body.read().clone();
@@ -1648,6 +1745,7 @@ struct EditorLineView {
     text: String,
     flags: Vec<FormatFlags>,
     cursor_col: Option<usize>,
+    cursor_color: Color,
     highlight: Option<(usize, usize)>,
     on_down: EventHandler<LineMouse>,
     on_move: EventHandler<LineMouse>,
@@ -1660,19 +1758,12 @@ impl Component for EditorLineView {
         let on_down = self.on_down.clone();
         let on_move = self.on_move.clone();
 
-        // Only the line holding the cursor shows it.
-        let cursor_color: Color = if self.cursor_col.is_some() {
-            DARK.accent.into()
-        } else {
-            Color::TRANSPARENT
-        };
-
         paragraph()
             .padding((1., 4., 1., 4.))
             .width(Size::fill())
-            .cursor_color(cursor_color)
+            .cursor_color(self.cursor_color)
             .highlight_color(Color::from_rgb(99, 79, 189).with_a(80))
-            .cursor_index(self.cursor_col.unwrap_or(0))
+            .cursor_index(self.cursor_col)
             .highlights(self.highlight.map(|h| vec![h]).unwrap_or_default())
             .on_mouse_down(move |e: Event<MouseEventData>| {
                 // Stop here so the container's "click below the text" handler doesn't also run.
@@ -1809,13 +1900,21 @@ fn toggle_format(
     match sel {
         Some((s, e)) if s != e => {
             let (s, e) = (s.min(e), s.max(e));
+            let chars: Vec<char> = editable.editor().read().to_string().chars().collect();
+            let prefix_ranges = block_prefix_ranges(&chars);
             let mut f = formats.write();
             if f.len() < e {
                 f.resize(e, FormatFlags::default());
             }
-            let all_on = f[s..e].iter().all(|x| style.get(x));
-            for x in &mut f[s..e] {
-                style.set(x, !all_on);
+            let selected: Vec<usize> = (s..e)
+                .filter(|index| !is_block_prefix_index(&prefix_ranges, *index))
+                .collect();
+            if selected.is_empty() {
+                return;
+            }
+            let all_on = selected.iter().all(|index| style.get(&f[*index]));
+            for index in selected {
+                style.set(&mut f[index], !all_on);
             }
         }
         _ => {
@@ -1825,6 +1924,114 @@ fn toggle_format(
             cursor_format.set(cf);
         }
     }
+}
+
+fn toggle_block_format(editable: UseEditable, formats: State<Vec<FormatFlags>>, kind: BlockKind) {
+    let text = editable.editor().read().to_string();
+    let chars: Vec<char> = text.chars().collect();
+    let cursor = editable.editor().read().cursor_pos().min(chars.len());
+    let selection = editable.editor().read().get_selection();
+    let (start, end) = selection
+        .filter(|(start, end)| start != end)
+        .map(|(start, end)| (start.min(end), start.max(end)))
+        .unwrap_or((cursor, cursor));
+
+    let mut line_starts = vec![0];
+    for (index, ch) in chars.iter().enumerate() {
+        if *ch == '\n' {
+            line_starts.push(index + 1);
+        }
+    }
+    let line_at = |index: usize| {
+        line_starts
+            .iter()
+            .rposition(|line_start| *line_start <= index)
+            .unwrap_or(0)
+    };
+    let first_line = line_at(start);
+    let last_index = if end > start { end - 1 } else { cursor };
+    let last_line = line_at(last_index.min(chars.len()));
+    let selected_lines = &line_starts[first_line..=last_line];
+    let remove_existing = selected_lines.iter().all(|line_start| {
+        let line_end = chars[*line_start..]
+            .iter()
+            .position(|ch| *ch == '\n')
+            .map_or(chars.len(), |offset| *line_start + offset);
+        block_prefix(&chars[*line_start..line_end]).is_some_and(|(existing, _)| existing == kind)
+    });
+
+    for (line_number, line_start) in selected_lines.iter().enumerate().rev() {
+        let line_end = chars[*line_start..]
+            .iter()
+            .position(|ch| *ch == '\n')
+            .map_or(chars.len(), |offset| *line_start + offset);
+        let existing_prefix = block_prefix(&chars[*line_start..line_end]);
+        move_cursor_to(editable, *line_start);
+        if let Some((_, prefix_len)) = existing_prefix {
+            for _ in 0..prefix_len {
+                send_key(
+                    editable,
+                    formats,
+                    FormatFlags::default(),
+                    Key::Named(NamedKey::Delete),
+                );
+            }
+        }
+        if !remove_existing {
+            let prefix = match kind {
+                BlockKind::Quote => "> ".to_string(),
+                BlockKind::List(ListKind::Unordered) => "• ".to_string(),
+                BlockKind::List(ListKind::Ordered) => format!("{}. ", line_number + 1),
+                BlockKind::Heading(level) => format!("{} ", "#".repeat(level.into())),
+            };
+            for ch in prefix.chars() {
+                send_key(
+                    editable,
+                    formats,
+                    FormatFlags::default(),
+                    Key::Character(ch.to_string().into()),
+                );
+            }
+        }
+    }
+}
+
+fn block_prefix(line: &[char]) -> Option<(BlockKind, usize)> {
+    let heading_level = line.iter().take_while(|ch| **ch == '#').count();
+    if (1..=6).contains(&heading_level) && line.get(heading_level) == Some(&' ') {
+        return Some((BlockKind::Heading(heading_level as u8), heading_level + 1));
+    }
+    if line.starts_with(&['>', ' ']) {
+        return Some((BlockKind::Quote, 2));
+    }
+    if line.starts_with(&['•', ' ']) {
+        return Some((BlockKind::List(ListKind::Unordered), 2));
+    }
+    let dot = line.iter().position(|ch| *ch == '.')?;
+    if dot > 0 && line.get(dot + 1) == Some(&' ') && line[..dot].iter().all(char::is_ascii_digit) {
+        return Some((BlockKind::List(ListKind::Ordered), dot + 2));
+    }
+    None
+}
+
+fn block_prefix_ranges(chars: &[char]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut line_start = 0;
+    for line_end in
+        (0..=chars.len()).filter(|index| *index == chars.len() || chars.get(*index) == Some(&'\n'))
+    {
+        if let Some((_, prefix_len)) = block_prefix(&chars[line_start..line_end]) {
+            ranges.push((line_start, line_start + prefix_len));
+        }
+        line_start = line_end + 1;
+    }
+    ranges
+}
+
+fn is_block_prefix_index(ranges: &[(usize, usize)], index: usize) -> bool {
+    ranges
+        .iter()
+        .any(|(start, end)| index >= *start && index < *end)
 }
 
 /// Set (Some(url)) or clear (None) the link on the current selection.
@@ -1850,8 +2057,12 @@ fn apply_link(
         if f.len() < e {
             f.resize(e, FormatFlags::default());
         }
-        for x in &mut f[s..e] {
-            x.link = link_id;
+        let text: Vec<char> = editable.editor().read().to_string().chars().collect();
+        let prefix_ranges = block_prefix_ranges(&text);
+        for index in s..e {
+            if !is_block_prefix_index(&prefix_ranges, index) {
+                f[index].link = link_id;
+            }
         }
     }
 }
@@ -1918,20 +2129,27 @@ fn build_spans(text: String, formats: Vec<FormatFlags>) -> impl Iterator<Item = 
 }
 
 fn make_span(text: String, flags: FormatFlags) -> Span<'static> {
-    let mut span = Span::new(text).font_size(14.).color(DARK.text);
+    let mut span = Span::new(text).font_size(14.).color(if flags.code {
+        Color::from_rgb(240, 161, 122)
+    } else {
+        DARK.text.into()
+    });
     if flags.bold {
         span = span.font_weight(FontWeight::BOLD);
     }
     if flags.italic {
         span = span.font_slant(FontSlant::Italic);
     }
-    if flags.underline {
+    if flags.strikethrough {
+        span = span.text_decoration(TextDecoration::LineThrough);
+    } else if flags.underline {
         span = span.text_decoration(TextDecoration::Underline);
     }
     if flags.link.is_some() {
-        span = span
-            .color(Color::from_rgb(88, 166, 255))
-            .text_decoration(TextDecoration::Underline);
+        span = span.color(Color::from_rgb(88, 166, 255));
+        if !flags.strikethrough {
+            span = span.text_decoration(TextDecoration::Underline);
+        }
     }
     span
 }
@@ -1965,11 +2183,10 @@ fn image_thumb(
         )
 }
 
-/// A formatting toolbar button (B, I, U, Link, ...).
+/// A formatting toolbar button.
 #[derive(PartialEq, Clone)]
 struct FormatButton {
-    label_text: String,
-    font_weight: FontWeight,
+    icon_bytes: &'static [u8],
     active: bool,
     on_press: EventHandler<Event<PressEventData>>,
 }
@@ -1977,8 +2194,7 @@ struct FormatButton {
 impl Component for FormatButton {
     fn render(&self) -> impl IntoElement {
         let mut hovering = use_state(|| false);
-        let label_text = self.label_text.clone();
-        let font_weight = self.font_weight;
+        let icon_bytes = self.icon_bytes;
         let active = self.active;
         let on_press = self.on_press.clone();
 
@@ -1990,40 +2206,26 @@ impl Component for FormatButton {
             Fill::from((30, 30, 46))
         };
 
-        let mut style = label()
-            .text(label_text)
-            .color(DARK.text)
-            .font_size(13.)
-            .font_weight(font_weight);
-
-        if self.label_text == "U" && active {
-            style = style.text_decoration(TextDecoration::Underline);
-        }
-        if self.label_text == "I" && active {
-            style = style.font_slant(FontSlant::Italic);
-        }
-
         rect()
-            .padding((6., 8., 6., 8.))
+            .padding(7.)
             .corner_radius(4.)
             .background(bg)
+            .center()
             .cursor(freya::winit::window::CursorIcon::Pointer)
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press)
-            .child(style)
+            .child(icon(icon_bytes, 18., DARK.text))
     }
 }
 
 fn format_button(
-    text: String,
-    weight: FontWeight,
+    icon_bytes: &'static [u8],
     active: bool,
     on_press: EventHandler<Event<PressEventData>>,
 ) -> Rect {
     rect().child(FormatButton {
-        label_text: text,
-        font_weight: weight,
+        icon_bytes,
         active,
         on_press,
     })
@@ -2096,31 +2298,42 @@ fn build_html_body_with_images(
     for (i, ch) in text.chars().enumerate() {
         let flags = formats.get(i).copied().unwrap_or_default();
 
-        // Close tags that are no longer active
-        if current_flags.bold && !flags.bold {
-            html.push_str("</strong>");
-        }
-        if current_flags.italic && !flags.italic {
-            html.push_str("</em>");
-        }
-        if current_flags.underline && !flags.underline {
-            html.push_str("</u>");
-        }
-        if current_flags.link.is_some() && current_flags.link != flags.link {
-            html.push_str("</a>");
-        }
+        // Re-open the active tags as a group when any style changes, keeping nested HTML valid.
+        if current_flags != flags {
+            if current_flags.link.is_some() {
+                html.push_str("</a>");
+            }
+            if current_flags.code {
+                html.push_str("</code>");
+            }
+            if current_flags.strikethrough {
+                html.push_str("</s>");
+            }
+            if current_flags.underline {
+                html.push_str("</u>");
+            }
+            if current_flags.italic {
+                html.push_str("</em>");
+            }
+            if current_flags.bold {
+                html.push_str("</strong>");
+            }
 
-        // Open tags that are now active
-        if !current_flags.bold && flags.bold {
-            html.push_str("<strong>");
-        }
-        if !current_flags.italic && flags.italic {
-            html.push_str("<em>");
-        }
-        if !current_flags.underline && flags.underline {
-            html.push_str("<u>");
-        }
-        if current_flags.link != flags.link {
+            if flags.bold {
+                html.push_str("<strong>");
+            }
+            if flags.italic {
+                html.push_str("<em>");
+            }
+            if flags.underline {
+                html.push_str("<u>");
+            }
+            if flags.strikethrough {
+                html.push_str("<s>");
+            }
+            if flags.code {
+                html.push_str("<code>");
+            }
             if let Some(link_idx) = flags.link {
                 if let Some(url) = links.get(link_idx) {
                     html.push_str("<a href=\"");
@@ -2153,27 +2366,49 @@ fn build_html_body_with_images(
     }
 
     // Close any remaining open tags
-    if current_flags.bold {
-        html.push_str("</strong>");
+    if current_flags.link.is_some() {
+        html.push_str("</a>");
     }
-    if current_flags.italic {
-        html.push_str("</em>");
+    if current_flags.code {
+        html.push_str("</code>");
+    }
+    if current_flags.strikethrough {
+        html.push_str("</s>");
     }
     if current_flags.underline {
         html.push_str("</u>");
     }
-    if current_flags.link.is_some() {
-        html.push_str("</a>");
+    if current_flags.italic {
+        html.push_str("</em>");
+    }
+    if current_flags.bold {
+        html.push_str("</strong>");
     }
 
-    // Wrap lines in <p> tags for proper HTML structure.
-    // Lines starting with ">" are quoted text and wrapped in <blockquote>.
+    // Wrap lines in HTML blocks, preserving inline list and quote markers.
     let mut final_html = String::with_capacity(html.len() + 128);
     let mut in_paragraph = false;
     let mut in_blockquote = false;
+    let mut list_kind = None;
     for line in html.split('\n') {
-        let is_quoted = line.trim_start().starts_with('&') && line.trim_start().starts_with("&gt;");
+        let list_item = list_item_content(line);
+        let heading = heading_content(line);
         if line.is_empty() {
+            if in_paragraph {
+                final_html.push_str("</p>");
+                in_paragraph = false;
+            }
+            if let Some(kind) = list_kind.take() {
+                final_html.push_str(match kind {
+                    ListKind::Unordered => "</ul>",
+                    ListKind::Ordered => "</ol>",
+                });
+            }
+            if in_blockquote {
+                final_html.push_str("</blockquote>");
+                in_blockquote = false;
+            }
+        } else if let Some((kind, content)) = list_item {
             if in_paragraph {
                 final_html.push_str("</p>");
                 in_paragraph = false;
@@ -2182,9 +2417,58 @@ fn build_html_body_with_images(
                 final_html.push_str("</blockquote>");
                 in_blockquote = false;
             }
+            if list_kind != Some(kind) {
+                if let Some(previous) = list_kind.take() {
+                    final_html.push_str(match previous {
+                        ListKind::Unordered => "</ul>",
+                        ListKind::Ordered => "</ol>",
+                    });
+                }
+                final_html.push_str(match kind {
+                    ListKind::Unordered => "<ul>",
+                    ListKind::Ordered => "<ol>",
+                });
+                list_kind = Some(kind);
+            }
+            final_html.push_str("<li>");
+            final_html.push_str(content);
+            final_html.push_str("</li>");
+        } else if let Some((level, content)) = heading {
+            if in_paragraph {
+                final_html.push_str("</p>");
+                in_paragraph = false;
+            }
+            if let Some(kind) = list_kind.take() {
+                final_html.push_str(match kind {
+                    ListKind::Unordered => "</ul>",
+                    ListKind::Ordered => "</ol>",
+                });
+            }
+            if in_blockquote {
+                final_html.push_str("</blockquote>");
+                in_blockquote = false;
+            }
+            final_html.push_str("<h");
+            final_html.push(char::from_digit(level.into(), 10).unwrap_or('1'));
+            final_html.push('>');
+            final_html.push_str(content);
+            final_html.push_str("</h");
+            final_html.push(char::from_digit(level.into(), 10).unwrap_or('1'));
+            final_html.push('>');
         } else {
+            if let Some(kind) = list_kind.take() {
+                final_html.push_str(match kind {
+                    ListKind::Unordered => "</ul>",
+                    ListKind::Ordered => "</ol>",
+                });
+            }
+            let is_quoted = line.trim_start().starts_with("&gt;");
             // Close blockquote if this line is not quoted
             if in_blockquote && !is_quoted {
+                if in_paragraph {
+                    final_html.push_str("</p>");
+                    in_paragraph = false;
+                }
                 final_html.push_str("</blockquote>");
                 in_blockquote = false;
             }
@@ -2216,6 +2500,12 @@ fn build_html_body_with_images(
     if in_paragraph {
         final_html.push_str("</p>");
     }
+    if let Some(kind) = list_kind {
+        final_html.push_str(match kind {
+            ListKind::Unordered => "</ul>",
+            ListKind::Ordered => "</ol>",
+        });
+    }
     if in_blockquote {
         final_html.push_str("</blockquote>");
     }
@@ -2231,6 +2521,33 @@ fn html_escape_char(ch: char, out: &mut String) {
         '>' => out.push_str("&gt;"),
         '"' => out.push_str("&quot;"),
         c => out.push(c),
+    }
+}
+
+fn list_item_content(line: &str) -> Option<(ListKind, &str)> {
+    if let Some(content) = line.strip_prefix("• ") {
+        return Some((ListKind::Unordered, content));
+    }
+    let dot = line.find(". ")?;
+    line[..dot]
+        .chars()
+        .all(|ch| ch.is_ascii_digit())
+        .then_some((ListKind::Ordered, &line[dot + 2..]))
+}
+
+fn heading_content(line: &str) -> Option<(u8, &str)> {
+    let level = line.chars().take_while(|ch| *ch == '#').count();
+    if (1..=6).contains(&level) && line.as_bytes().get(level) == Some(&b' ') {
+        Some((level as u8, &line[level + 1..]))
+    } else {
+        None
+    }
+}
+
+fn normalize_shortcut_key(key: &Key, ctrl_or_meta: bool) -> Key {
+    match (key, ctrl_or_meta) {
+        (Key::Character(character), true) => Key::Character(character.to_lowercase().into()),
+        _ => key.clone(),
     }
 }
 
@@ -2298,7 +2615,11 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
     let mut bold = 0usize;
     let mut italic = 0usize;
     let mut underline = 0usize;
+    let mut strikethrough = 0usize;
+    let mut code = 0usize;
     let mut link_stack: Vec<Option<usize>> = Vec::new();
+    let mut blockquote_depth = 0usize;
+    let mut list_stack: Vec<(ListKind, usize)> = Vec::new();
     let mut pending_nl = 0usize;
     let mut skip_until: Option<&'static str> = None;
     let mut next_img: u32 = 0;
@@ -2396,6 +2717,26 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
                         underline += 1
                     }
                 }
+                "s" | "strike" | "del" => {
+                    if closing {
+                        strikethrough = strikethrough.saturating_sub(1)
+                    } else {
+                        strikethrough += 1
+                    }
+                }
+                "code" | "pre" => {
+                    if closing {
+                        code = code.saturating_sub(1);
+                        if name == "pre" {
+                            pending_nl = pending_nl.max(2);
+                        }
+                    } else {
+                        code += 1;
+                        if name == "pre" {
+                            pending_nl = pending_nl.max(2);
+                        }
+                    }
+                }
                 "a" => {
                     if closing {
                         link_stack.pop();
@@ -2418,11 +2759,60 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
                         formats.push(FormatFlags::default());
                     }
                 }
-                "p" | "div" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul"
-                | "ol" | "table" => {
+                "blockquote" => {
+                    pending_nl = pending_nl.max(2);
+                    if closing {
+                        blockquote_depth = blockquote_depth.saturating_sub(1);
+                    } else {
+                        blockquote_depth += 1;
+                    }
+                }
+                "ul" | "ol" => {
+                    pending_nl = pending_nl.max(2);
+                    if closing {
+                        list_stack.pop();
+                    } else {
+                        list_stack.push((
+                            if name == "ul" {
+                                ListKind::Unordered
+                            } else {
+                                ListKind::Ordered
+                            },
+                            1,
+                        ));
+                    }
+                }
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                    if closing {
+                        pending_nl = pending_nl.max(2);
+                    } else {
+                        flush(&mut text, &mut formats, &mut pending_nl);
+                        let level = name[1..].parse::<usize>().unwrap_or(1);
+                        let prefix = format!("{} ", "#".repeat(level));
+                        text.push_str(&prefix);
+                        formats.extend(prefix.chars().map(|_| FormatFlags::default()));
+                    }
+                }
+                "p" | "div" | "table" => {
                     pending_nl = pending_nl.max(2);
                 }
-                "li" | "tr" => {
+                "li" => {
+                    if closing {
+                        pending_nl = pending_nl.max(1);
+                    } else {
+                        flush(&mut text, &mut formats, &mut pending_nl);
+                        if let Some((kind, next_number)) = list_stack.last_mut() {
+                            let prefix = match kind {
+                                ListKind::Unordered => "• ".to_string(),
+                                ListKind::Ordered => format!("{next_number}. "),
+                            };
+                            *next_number += 1;
+                            text.push_str(&prefix);
+                            formats.extend(prefix.chars().map(|_| FormatFlags::default()));
+                        }
+                    }
+                }
+                "tr" => {
                     pending_nl = pending_nl.max(1);
                 }
                 "img" if !closing => {
@@ -2503,7 +2893,7 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
         if is_placeholder(c) || c == '\r' {
             continue;
         }
-        if c.is_whitespace() && c != '\u{a0}' {
+        if c.is_whitespace() && c != '\u{a0}' && code == 0 {
             let prev_ws = text
                 .chars()
                 .next_back()
@@ -2516,11 +2906,19 @@ fn html_to_editor(html: &str, attachments: &[crate::mail::AttachmentInfo]) -> Dr
 
         after_img = false;
         flush(&mut text, &mut formats, &mut pending_nl);
+        if blockquote_depth > 0 && text.chars().next_back().is_none_or(|last| last == '\n') {
+            for _ in 0..blockquote_depth {
+                text.push_str("> ");
+                formats.extend([FormatFlags::default(), FormatFlags::default()]);
+            }
+        }
         text.push(c);
         formats.push(FormatFlags {
             bold: bold > 0,
             italic: italic > 0,
             underline: underline > 0,
+            strikethrough: strikethrough > 0,
+            code: code > 0,
             link: link_stack.iter().rev().find_map(|l| *l),
         });
     }
@@ -2623,6 +3021,70 @@ fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use freya::text_edit::{EditorHistory, RopeEditor, TextSelection};
+
+    #[test]
+    fn ctrl_a_with_caps_lock_selects_all_without_inserting_text() {
+        let mut editor = RopeEditor::new(
+            "select me".to_string(),
+            TextSelection::new_cursor(0),
+            0,
+            EditorHistory::new(std::time::Duration::from_millis(10)),
+        );
+        let key = Key::Character("A".into());
+        let modifiers = Modifiers::CONTROL | Modifiers::CAPS_LOCK;
+        let editor_key = normalize_shortcut_key(&key, true);
+        editor.process_key(
+            &editor_key,
+            &modifiers,
+            Some(EditorLine::SingleParagraph),
+            None,
+            true,
+            true,
+            true,
+            true,
+        );
+
+        assert_eq!(editor.to_string(), "select me");
+        assert_eq!(editor.get_selection(), Some((0, 9)));
+    }
+
+    #[test]
+    fn uppercase_control_letters_are_normalized_for_editor_shortcuts() {
+        for letter in ["A", "C", "X", "V", "Z", "Y"] {
+            let key = normalize_shortcut_key(&Key::Character(letter.into()), true);
+            assert_eq!(key, Key::Character(letter.to_lowercase().into()));
+        }
+        assert_eq!(
+            normalize_shortcut_key(&Key::Character("A".into()), false),
+            Key::Character("A".into())
+        );
+    }
+
+    #[test]
+    fn code_and_headings_survive_draft_round_trip() {
+        let code_draft = html_to_editor("<p>Text <code>x &amp; y</code></p>", &[]);
+        let code_html = build_html_body_with_images(
+            &code_draft.text,
+            &code_draft.formats,
+            &code_draft.links,
+            &[],
+        );
+        assert!(code_html.contains("<code>x &amp; y</code>"));
+
+        for level in 1..=6 {
+            let heading = format!("<h{level}>Section</h{level}>");
+            let heading_draft = html_to_editor(&heading, &[]);
+            let heading_html = build_html_body_with_images(
+                &heading_draft.text,
+                &heading_draft.formats,
+                &heading_draft.links,
+                &[],
+            );
+            assert_eq!(heading_draft.text, format!("{} Section", "#".repeat(level)));
+            assert!(heading_html.contains(&heading));
+        }
+    }
 
     #[test]
     fn forwarded_draft_split_keeps_user_authored_blockquotes() {
@@ -2691,6 +3153,47 @@ mod tests {
             assert!(raw.contains("Content-Type: multipart/alternative;"));
             assert!(raw.contains("boundary=\""));
         }
+    }
+
+    #[test]
+    fn strikethrough_survives_draft_round_trip() {
+        let draft = html_to_editor("<p><s>obsolete</s></p>", &[]);
+        let html = build_html_body_with_images(&draft.text, &draft.formats, &draft.links, &[]);
+
+        assert!(html.contains("<s>obsolete</s>"));
+    }
+
+    #[test]
+    fn lists_survive_draft_round_trip() {
+        let mut draft = html_to_editor("<ul><li>One</li><li>Two</li></ul>", &[]);
+        assert_eq!(draft.text, "• One\n• Two");
+        let html = build_html_body_with_images(&draft.text, &draft.formats, &draft.links, &[]);
+        assert!(html.contains("<ul><li>One</li><li>Two</li></ul>"));
+
+        for format in &mut draft.formats[2..5] {
+            format.bold = true;
+        }
+        let html = build_html_body_with_images(&draft.text, &draft.formats, &draft.links, &[]);
+        assert!(html.contains("<ul><li><strong>One</strong></li><li>Two</li></ul>"));
+    }
+
+    #[test]
+    fn ordered_lists_keep_their_item_numbers_in_editor_text() {
+        let draft = html_to_editor("<ol><li>First</li><li>Second</li></ol>", &[]);
+        let html = build_html_body_with_images(&draft.text, &draft.formats, &draft.links, &[]);
+
+        assert_eq!(draft.text, "1. First\n2. Second");
+        assert!(html.contains("<ol><li>First</li><li>Second</li></ol>"));
+    }
+
+    #[test]
+    fn blockquotes_survive_draft_round_trip() {
+        let draft = html_to_editor("<blockquote><p>Quoted text</p></blockquote>", &[]);
+        let html = build_html_body_with_images(&draft.text, &draft.formats, &draft.links, &[]);
+
+        assert_eq!(draft.text, "> Quoted text");
+        assert!(html.contains("<blockquote"));
+        assert!(html.contains("<p>Quoted text</p></blockquote>"));
     }
 }
 
