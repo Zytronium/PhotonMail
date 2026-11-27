@@ -1089,8 +1089,8 @@ impl Component for ComposePane {
                         .width(Size::flex(1.))
                         .padding((6., 10., 6., 10.))
                         .corner_radius(6.)
-                        .background(Fill::from((20, 20, 31)))
-                        .border(Border::new().fill((58, 58, 78)).width(1.))
+                        .background(Fill::from(DARK.panel))
+                        .border(Border::new().fill(DARK.divider).width(1.))
                         .horizontal()
                         .content(Content::Flex)
                         .cross_align(Alignment::Center)
@@ -1113,9 +1113,9 @@ impl Component for ComposePane {
                 for (idx, acc) in store_accounts.iter().enumerate() {
                     let is_selected = idx == selected_idx;
                     let bg = if is_selected {
-                        Fill::from((46, 42, 82))
+                        Fill::from(DARK.selected)
                     } else {
-                        Fill::from((30, 30, 46))
+                        Fill::from(DARK.panel)
                     };
                     let text_color = if is_selected { DARK.accent } else { DARK.text };
                     let account_idx = idx;
@@ -1171,8 +1171,8 @@ impl Component for ComposePane {
                         rect()
                             .width(Size::flex(1.))
                             .corner_radius(8.)
-                            .background(Fill::from((30, 30, 46)))
-                            .border(Border::new().fill((58, 58, 78)).width(1.))
+                            .background(Fill::from(DARK.panel))
+                            .border(Border::new().fill(DARK.divider).width(1.))
                             .child(
                                 ScrollView::new()
                                     .width(Size::fill())
@@ -1206,8 +1206,8 @@ impl Component for ComposePane {
                         .width(Size::flex(1.))
                         .padding((6., 10., 6., 10.))
                         .corner_radius(6.)
-                        .background(Fill::from((20, 20, 31)))
-                        .border(Border::new().fill((58, 58, 78)).width(1.))
+                        .background(Fill::from(DARK.panel))
+                        .border(Border::new().fill(DARK.divider).width(1.))
                         .child(label().text(account_name).color(DARK.muted).font_size(13.)),
                 );
             (row, None)
@@ -1582,8 +1582,8 @@ impl Component for ComposePane {
                                 .width(Size::px(360.))
                                 .height(Size::px(120.))
                                 .corner_radius(6.)
-                                .background(Fill::from((20, 20, 31)))
-                                .border(Border::new().fill((58, 58, 78)).width(1.))
+                                .background(Fill::from(DARK.panel))
+                                .border(Border::new().fill(DARK.divider).width(1.))
                                 .center()
                                 .child(
                                     label()
@@ -1643,7 +1643,7 @@ impl Component for ComposePane {
                 rect()
                     .width(Size::flex(1.))
                     .height(Size::px(1.))
-                    .background(Fill::from((58, 58, 78)))
+                    .background(Fill::from(DARK.divider))
             };
             // "---- Forwarded message ----" divider
             let divider_row = rect()
@@ -1673,7 +1673,7 @@ impl Component for ComposePane {
                         rect()
                             .width(Size::fill())
                             .height(Size::fill())
-                            .background(Fill::from((28, 28, 38)))
+                            .background(Fill::from(DARK.bg))
                             .key(&html)
                             .child(SecureHtmlViewer {
                                 html,
@@ -2165,7 +2165,7 @@ fn image_thumb(
         .width(Size::px(width))
         .height(Size::px(height))
         .corner_radius(6.)
-        .background(Fill::from((20, 20, 31)))
+        .background(Fill::from(DARK.panel))
         .child(
             ImageViewer::new(PathBuf::from(path))
                 .width(Size::px(width))
@@ -2176,7 +2176,7 @@ fn image_thumb(
                 .position(Position::new_absolute().top(4.).right(4.))
                 .padding((0., 6., 0., 6.))
                 .corner_radius(10.)
-                .background(Fill::from((0, 0, 0)))
+                .background(Fill::from(DARK.danger))
                 .cursor(freya::winit::window::CursorIcon::Pointer)
                 .on_press(on_remove)
                 .child(label().text("×").color(DARK.text).font_size(14.)),
@@ -2201,9 +2201,9 @@ impl Component for FormatButton {
         let bg = if active {
             Fill::from(DARK.accent)
         } else if hovering() {
-            Fill::from((45, 45, 62))
+            Fill::from(DARK.hover_strong)
         } else {
-            Fill::from((30, 30, 46))
+            Fill::from(DARK.panel)
         };
 
         rect()
@@ -2215,7 +2215,11 @@ impl Component for FormatButton {
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press)
-            .child(icon(icon_bytes, 18., DARK.text))
+            .child(icon(
+                icon_bytes,
+                18.,
+                if active { DARK.accent_text } else { DARK.text },
+            ))
     }
 }
 
@@ -2237,8 +2241,8 @@ fn field_box(input: Input) -> Rect {
         .width(Size::flex(1.))
         .padding((2., 8., 2., 8.))
         .corner_radius(6.)
-        .background(Fill::from((20, 20, 31)))
-        .border(Border::new().fill((58, 58, 78)).width(1.))
+        .background(Fill::from(DARK.panel))
+        .border(Border::new().fill(DARK.divider).width(1.))
         .child(input)
 }
 

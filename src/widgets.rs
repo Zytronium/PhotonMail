@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     state::AppState,
-    theme::{BADGE, DARK, HOVER_STRONG, Rgb},
+    theme::{DARK, Rgb},
 };
 
 pub fn icon(bytes: &'static [u8], size: f32, color: Rgb) -> SvgViewer {
@@ -165,7 +165,7 @@ impl Component for Chip {
         let bg = if active {
             Fill::from(DARK.accent)
         } else if hovering() {
-            Fill::from((45, 45, 62))
+            Fill::from(DARK.hover_strong)
         } else {
             crate::grain::hover()
         };
@@ -185,7 +185,7 @@ impl Component for Chip {
             .child(
                 label()
                     .text(text)
-                    .color(DARK.text)
+                    .color(if active { DARK.accent_text } else { DARK.text })
                     .font_size(12.)
                     .font_weight(if active {
                         FontWeight::BOLD
@@ -231,7 +231,7 @@ impl Component for Action {
             .on_pointer_leave(move |_| hovering.set(false))
             .on_press(on_press);
         if hovering() {
-            r = r.background(Fill::from(HOVER_STRONG));
+            r = r.background(Fill::from(DARK.hover_strong));
         } else {
             r = r.background(crate::grain::hover());
         }
@@ -254,7 +254,7 @@ impl Component for QuoteToggle {
         let mut state = self.state;
         let mail_idx = self.mail_idx;
         let bg = if hovering() {
-            Fill::from(HOVER_STRONG)
+            Fill::from(DARK.hover_strong)
         } else {
             crate::grain::hover()
         };
@@ -289,7 +289,7 @@ pub fn dot(size: f32, color: Rgb) -> Rect {
 
 /// Rounded count pill used in the sidebar. `on_accent` is for the selected row.
 pub fn badge(count: usize, on_accent: bool) -> Rect {
-    let fill = if on_accent { DARK.accent } else { BADGE };
+    let fill = if on_accent { DARK.accent } else { DARK.badge };
     let text = if count > 999 {
         "999+".to_string()
     } else {

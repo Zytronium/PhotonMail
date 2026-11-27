@@ -26,7 +26,7 @@ use url::Url;
 use crate::grain;
 use crate::icons::INFO;
 use crate::state::AppState;
-use crate::theme::DARK;
+use crate::theme::{DARK, ThemeMode};
 use crate::widgets::{QuoteToggle, icon};
 
 static RE_BG_DECL: LazyLock<Regex> = LazyLock::new(|| {
@@ -109,7 +109,7 @@ fn luminance((r, g, b): (u8, u8, u8)) -> f32 {
     (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
 }
 
-/// Only apply dark-mode text adjustments when the message has no visible authored background.
+/// Apply theme-aware text adjustments only when the message has no authored background.
 fn has_authored_background(html: &str) -> bool {
     RE_BG_DECL.captures_iter(html).any(|background| {
         let value = background[1]
@@ -125,7 +125,7 @@ fn has_authored_background(html: &str) -> bool {
     })
 }
 
-fn lighten_dark_text_colors(css: &str) -> String {
+fn adjust_css_text_colors(css: &str, lighten: bool) -> String {
     RE_CSS_TEXT_COLOR
         .replace_all(css, |captures: &regex::Captures<'_>| {
             let value = &captures[3];
@@ -137,20 +137,33 @@ fn lighten_dark_text_colors(css: &str) -> String {
                 .find_map(|color| parse_color(color.as_str()))
                 .and_then(|color| {
                     let current_luminance = luminance(color);
-                    let target_luminance = 0.72;
-                    (current_luminance < 0.55).then(|| {
-                        let mix = ((target_luminance - current_luminance)
-                            / (1.0 - current_luminance))
-                            .clamp(0.0, 1.0);
-                        let lighten = |channel: u8| {
-                            (channel as f32 + (255.0 - channel as f32) * mix).round() as u8
+                    let target_luminance = if lighten { 0.72 } else { 0.18 };
+                    let needs_adjustment = if lighten {
+                        current_luminance < 0.55
+                    } else {
+                        current_luminance > 0.45
+                    };
+                    needs_adjustment.then(|| {
+                        let mix = if lighten {
+                            ((target_luminance - current_luminance) / (1.0 - current_luminance))
+                                .clamp(0.0, 1.0)
+                        } else {
+                            ((current_luminance - target_luminance) / current_luminance)
+                                .clamp(0.0, 1.0)
+                        };
+                        let adjust = |channel: u8| {
+                            if lighten {
+                                (channel as f32 + (255.0 - channel as f32) * mix).round() as u8
+                            } else {
+                                (channel as f32 * (1.0 - mix)).round() as u8
+                            }
                         };
                         let (red, green, blue) = color;
                         format!(
                             "#{:02x}{:02x}{:02x}",
-                            lighten(red),
-                            lighten(green),
-                            lighten(blue)
+                            adjust(red),
+                            adjust(green),
+                            adjust(blue)
                         )
                     })
                 });
@@ -167,13 +180,19 @@ fn lighten_dark_text_colors(css: &str) -> String {
         .into_owned()
 }
 
-fn adjust_dark_text_colors(html: &str) -> String {
+fn adjust_email_text_colors(html: &str, lighten: bool) -> String {
     let styled_blocks = RE_STYLE_BLOCK.replace_all(html, |captures: &regex::Captures<'_>| {
-        format!("<style>{}</style>", lighten_dark_text_colors(&captures[1]))
+        format!(
+            "<style>{}</style>",
+            adjust_css_text_colors(&captures[1], lighten)
+        )
     });
     RE_STYLE_ATTRIBUTE
         .replace_all(&styled_blocks, |captures: &regex::Captures<'_>| {
-            format!("style=\"{}\"", lighten_dark_text_colors(&captures[1]))
+            format!(
+                "style=\"{}\"",
+                adjust_css_text_colors(&captures[1], lighten)
+            )
         })
         .into_owned()
 }
@@ -192,7 +211,11 @@ pub struct HtmlAnalysis {
 /// Sanitize HTML content for safe rendering in an email client, blocking
 /// external resources unless the user explicitly chooses to load them.
 pub fn sanitize_html(html: &str) -> HtmlAnalysis {
-    sanitize_html_with_policy(html, false, false)
+    sanitize_html_for_theme(html, ThemeMode::Dark)
+}
+
+fn sanitize_html_for_theme(html: &str, theme: ThemeMode) -> HtmlAnalysis {
+    sanitize_html_with_policy_and_theme(html, false, false, theme)
 }
 
 fn sanitize_html_with_policy(
@@ -200,16 +223,33 @@ fn sanitize_html_with_policy(
     allow_remote: bool,
     allow_tracking_pixels: bool,
 ) -> HtmlAnalysis {
+    sanitize_html_with_policy_and_theme(html, allow_remote, allow_tracking_pixels, ThemeMode::Dark)
+}
+
+fn sanitize_html_with_policy_and_theme(
+    html: &str,
+    allow_remote: bool,
+    allow_tracking_pixels: bool,
+    theme: ThemeMode,
+) -> HtmlAnalysis {
     let (mut result, remote_resources_blocked, tracking_pixels_blocked) =
         sanitize_fragment(html, allow_remote, allow_tracking_pixels);
 
     // Ammonia parses a fragment using the HTML5 parsing algorithm, so document
     // wrapper casing and doctype placement no longer affect style insertion.
     let has_background = has_authored_background(html);
-    let adjust_dark_text = !has_background && !RE_COLOR_SCHEME_DARK.is_match(html);
-    let style = if adjust_dark_text {
-        result = adjust_dark_text_colors(&result);
-        "<style>html,body{color:#e5e7eb!important}a{cursor:pointer!important}</style>".to_string()
+    let has_dark_color_scheme = RE_COLOR_SCHEME_DARK.is_match(html);
+    let adjust_text =
+        !has_background && (!has_dark_color_scheme || matches!(theme, ThemeMode::Light));
+    let style = if adjust_text {
+        let (default_color, lighten) = match theme {
+            ThemeMode::Light => ("#20222b", false),
+            ThemeMode::Dark | ThemeMode::Black => ("#e5e7eb", true),
+        };
+        result = adjust_email_text_colors(&result, lighten);
+        format!(
+            "<style>html,body{{color:{default_color}!important}}a{{cursor:pointer!important}}</style>"
+        )
     } else {
         "<style>a{cursor:pointer!important}</style>".to_string()
     };
@@ -862,10 +902,16 @@ impl Component for SecureHtmlViewer {
             let allow_remote = !settings.block_remote_images || *remote_allowed_for_analysis.read();
             let allow_tracking_pixels =
                 !settings.block_tracking_pixels || *tracking_allowed_for_analysis.read();
+            let theme = settings.theme;
             if allow_remote || allow_tracking_pixels {
-                sanitize_html_with_policy(&html_for_analysis, allow_remote, allow_tracking_pixels)
+                sanitize_html_with_policy_and_theme(
+                    &html_for_analysis,
+                    allow_remote,
+                    allow_tracking_pixels,
+                    theme,
+                )
             } else {
-                sanitize_html(&html_for_analysis)
+                sanitize_html_for_theme(&html_for_analysis, theme)
             }
         });
         let settings = state.settings.read();
@@ -995,7 +1041,7 @@ impl Component for SecureHtmlViewer {
                 paragraph()
                     .width(Size::fill())
                     .span(warning_text)
-                    .color((240, 140, 40))
+                    .color(DARK.warning)
                     .font_size(11.),
             );
             let root_size = *Platform::get().current_window().root_size.read();
@@ -1029,7 +1075,7 @@ impl Component for SecureHtmlViewer {
                         position.set((pointer.x as f32, pointer.y as f32));
                     }
                 })
-                .child(icon(INFO, 16., (255, 190, 100)));
+                .child(icon(INFO, 16., DARK.warning));
             if show_privacy_explanation() {
                 privacy_info = privacy_info.child(
                     rect()
@@ -1042,7 +1088,7 @@ impl Component for SecureHtmlViewer {
                         .width(Size::px(tooltip_width))
                         .padding(8.)
                         .corner_radius(6.)
-                        .background((35, 35, 48))
+                        .background(DARK.panel)
                         .child(
                             label()
                                 .text("Loading remote content may reveal your IP address and that you opened this message.")
@@ -1065,7 +1111,7 @@ impl Component for SecureHtmlViewer {
                     rect()
                         .padding((3., 8., 3., 8.))
                         .corner_radius(4.)
-                        .background((50, 50, 66))
+                        .background(DARK.hover_strong)
                         .cursor(CursorIcon::Pointer)
                         .on_press(move |_| {
                             handle.replace_html(html_with_remote.clone());
@@ -1088,7 +1134,7 @@ impl Component for SecureHtmlViewer {
                     rect()
                         .padding((3., 8., 3., 8.))
                         .corner_radius(4.)
-                        .background((50, 50, 66))
+                        .background(DARK.hover_strong)
                         .cursor(CursorIcon::Pointer)
                         .on_press(move |_| {
                             handle.replace_html(html_with_tracking_pixels.clone());
@@ -1106,7 +1152,7 @@ impl Component for SecureHtmlViewer {
                 .width(Size::fill())
                 .padding((6., 10., 6., 10.))
                 .corner_radius(6.)
-                .background((50, 40, 28))
+                .background(DARK.warning_bg)
                 .horizontal()
                 .content(Content::Flex)
                 .spacing(8.)
@@ -1218,13 +1264,8 @@ impl Component for LinkConfirmDialog {
                     .width(Size::fill())
                     .padding(10.)
                     .corner_radius(6.)
-                    .background((40, 40, 54))
-                    .child(
-                        label()
-                            .text(url.clone())
-                            .font_size(12.)
-                            .color((109, 74, 255)),
-                    ),
+                    .background(DARK.hover)
+                    .child(label().text(url.clone()).font_size(12.).color(DARK.accent)),
             )
             .maybe_child((!sender.trim().is_empty()).then(|| {
                 link_preference_option("Do not show again for this sender", sender_open.clone())
@@ -1251,7 +1292,7 @@ impl Component for LinkConfirmDialog {
                         rect()
                             .padding((8., 18., 8., 18.))
                             .corner_radius(6.)
-                            .background((40, 40, 54))
+                            .background(DARK.hover)
                             .cursor(CursorIcon::Pointer)
                             .on_press(close_dialog.clone())
                             .child(label().text("Cancel").font_size(13.).color(DARK.text)),
@@ -1455,6 +1496,35 @@ mod tests {
             "{sanitized}"
         );
         assert!(!sanitized.contains("filter:invert"), "{sanitized}");
+    }
+
+    #[test]
+    fn light_mode_keeps_backgroundless_email_text_dark_and_readable() {
+        let sanitized =
+            sanitize_html_for_theme("<p style=\"color:#fff\">Message text</p>", ThemeMode::Light)
+                .sanitized;
+
+        assert!(
+            sanitized.contains("html,body{color:#20222b!important}"),
+            "{sanitized}"
+        );
+        assert!(sanitized.contains("color:#2e2e2e"), "{sanitized}");
+        assert!(!sanitized.contains("color:#e5e7eb"), "{sanitized}");
+    }
+
+    #[test]
+    fn light_mode_adjusts_dark_scheme_text_without_an_authored_background() {
+        let sanitized = sanitize_html_for_theme(
+            "<style>html{color-scheme:dark}.copy{color:#fff}</style><p class=\"copy\">Text</p>",
+            ThemeMode::Light,
+        )
+        .sanitized;
+
+        assert!(
+            sanitized.contains("html,body{color:#20222b!important}"),
+            "{sanitized}"
+        );
+        assert!(sanitized.contains("color:#2e2e2e"), "{sanitized}");
     }
 
     #[test]

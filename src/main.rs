@@ -183,8 +183,23 @@ fn activate_app_windows_with_token(
 
 fn app() -> impl IntoElement {
     let mut state = use_app_state();
-    let grain_texture_strength = state.settings.read().grain_texture_strength;
+    let (grain_texture_strength, theme_mode, accent_color, background_hue, background_intensity) = {
+        let settings = state.settings.read();
+        (
+            settings.grain_texture_strength,
+            settings.theme,
+            settings.accent_color,
+            settings.background_hue,
+            settings.background_intensity,
+        )
+    };
     grain::set_strength(grain_texture_strength);
+    crate::theme::set_current(
+        theme_mode,
+        accent_color,
+        background_hue,
+        background_intensity,
+    );
 
     // Subscribe to search_query so the app re-renders when it changes, allowing MessageList
     // to re-filter messages. Without this, the parent never re-renders on search query changes

@@ -27,6 +27,7 @@ const MIN_READER_WIDTH: f32 = 450.;
 impl Component for PaneDivider {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
+        let _settings = state.settings.read();
         let target = self.target;
         let mut is_dragging = use_state(|| false);
         let mut start_x = use_state(|| 0.);

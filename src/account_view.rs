@@ -300,7 +300,7 @@ impl Component for AddAccountView {
                         rect()
                             .padding(10.)
                             .corner_radius(8.)
-                            .background(Fill::from((30, 30, 46)))
+                            .background(DARK.panel)
                             .child(
                                 rect()
                                     .horizontal()
@@ -336,7 +336,7 @@ impl Component for AddAccountView {
                         rect()
                             .padding(14.)
                             .corner_radius(8.)
-                            .background(Fill::from((30, 30, 46)))
+                            .background(DARK.panel)
                             .spacing(10.)
                             .child(VerifyRow { label: "Account", value: addr.clone() })
                             .child(VerifyRow { label: "Account name", value: acct_display })
@@ -365,7 +365,7 @@ impl Component for AddAccountView {
                 rect()
                     .padding(10.)
                     .corner_radius(8.)
-                    .background(Fill::from((60, 20, 30)))
+                    .background(Fill::from(DARK.danger_bg))
                     .child(label().text(e).color(DARK.danger).font_size(13.)),
             );
         }
@@ -454,7 +454,7 @@ impl Component for AddAccountView {
                         } else {
                             "Connect"
                         })
-                        .color(DARK.text)
+                        .color(DARK.accent_text)
                         .font_size(13.)
                         .font_weight(FontWeight::BOLD),
                 )
@@ -467,7 +467,7 @@ impl Component for AddAccountView {
                 .background(if can_next {
                     Fill::from(DARK.accent)
                 } else {
-                    Fill::from((50, 50, 68))
+                    Fill::from(DARK.hover_strong)
                 })
                 .opacity(if can_next { 1. } else { 0.5 })
                 .cursor(freya::winit::window::CursorIcon::Pointer)
@@ -486,11 +486,23 @@ impl Component for AddAccountView {
                 .child(
                     label()
                         .text("Next")
-                        .color(DARK.text)
+                        .color(if can_next {
+                            DARK.accent_text
+                        } else {
+                            DARK.text
+                        })
                         .font_size(13.)
                         .font_weight(FontWeight::BOLD),
                 )
-                .child(icon(CHEVRON_RIGHT, 14., DARK.text))
+                .child(icon(
+                    CHEVRON_RIGHT,
+                    14.,
+                    if can_next {
+                        DARK.accent_text
+                    } else {
+                        DARK.text
+                    },
+                ))
         };
 
         let nav_row = rect()
@@ -719,7 +731,7 @@ impl Component for EditAccountView {
                             rect()
                                 .padding(10.)
                                 .corner_radius(8.)
-                                .background(Fill::from((30, 30, 46)))
+                                .background(DARK.panel)
                                 .child(
                                     rect()
                                         .horizontal()
@@ -820,7 +832,7 @@ impl Component for EditAccountView {
                     .child(
                         label()
                             .text("Save")
-                            .color(DARK.text)
+                            .color(DARK.accent_text)
                             .font_size(13.)
                             .font_weight(FontWeight::BOLD),
                     )
@@ -863,9 +875,9 @@ impl Component for StepIndicator {
             }
 
             let bg = if is_active {
-                Fill::from((60, 45, 130))
+                Fill::from(DARK.selected)
             } else if is_completed {
-                Fill::from((40, 40, 60))
+                Fill::from(DARK.hover)
             } else {
                 crate::grain::hover()
             };
@@ -921,9 +933,9 @@ impl Component for AddAccountFormField {
                 InputColorsThemePartial::new()
                     .color(DARK.text)
                     .placeholder_color(DARK.muted)
-                    .background(Color::from((30, 30, 46)))
-                    .focus_background(Color::from((30, 30, 46)))
-                    .border_fill(Color::from((50, 50, 70)))
+                    .background(Color::from(DARK.panel))
+                    .focus_background(Color::from(DARK.panel))
+                    .border_fill(Color::from(DARK.divider))
                     .focus_border_fill(Color::from(DARK.accent)),
             );
         if self.secret {
@@ -1064,7 +1076,7 @@ impl Component for AccountSettings {
                     .child(AccountButton {
                         text: "Sync now".to_string(),
                         bg: crate::grain::hover(),
-                        hover_bg: Fill::from((45, 45, 62)),
+                        hover_bg: Fill::from(DARK.hover_strong),
                         on_press: EventHandler::new(move |_| state.sync_account(index)),
                     })
                     .child({
@@ -1072,7 +1084,7 @@ impl Component for AccountSettings {
                         AccountButton {
                             text: "Edit".to_string(),
                             bg: crate::grain::hover(),
-                            hover_bg: Fill::from((45, 45, 62)),
+                            hover_bg: Fill::from(DARK.hover_strong),
                             on_press: EventHandler::new(move |_| {
                                 s_edit.set_view(crate::state::View::EditAccount(index))
                             }),
@@ -1108,7 +1120,7 @@ fn provider_choice(
         .padding((12., 16., 12., 16.))
         .corner_radius(10.)
         .background(crate::grain::panel())
-        .border(Border::new().fill((47, 47, 52)).width(1.))
+        .border(Border::new().fill(DARK.divider).width(1.))
         .horizontal()
         .content(Content::Flex)
         .cross_align(Alignment::Center)

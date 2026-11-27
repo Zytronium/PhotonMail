@@ -8,7 +8,11 @@ use std::{
 use freya::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{state::AppState, theme::DARK, widgets::divider};
+use crate::{
+    state::AppState,
+    theme::{AccentColor, BackgroundHue, DARK, ThemeMode, set_current},
+    widgets::divider,
+};
 
 const AUTO_SYNC_OPTIONS: &[(u32, &str)] = &[
     (0, "Off"),
@@ -100,6 +104,7 @@ pub const NOTIFICATION_SOUND_OPTIONS: &[(NotificationSound, &str)] = &[
 
 const NOTIFICATION_SOUND_OPTION_HEIGHT: f32 = 34.;
 const LONG_NOTIFICATION_SOUND_OPTION_HEIGHT: f32 = 48.;
+const DEFAULT_BACKGROUND_INTENSITY: u8 = 15;
 
 fn notification_sound_option_height(sound: NotificationSound) -> f32 {
     if sound == NotificationSound::WhyThePhotonWouldYouUseThisSound {
@@ -125,6 +130,10 @@ pub struct AppSettings {
     pub notification_sound: NotificationSound,
     pub mark_read_after_millis: u32,
     pub undo_send_seconds: u32,
+    pub theme: ThemeMode,
+    pub accent_color: AccentColor,
+    pub background_hue: BackgroundHue,
+    pub background_intensity: u8,
 }
 
 impl Default for AppSettings {
@@ -143,6 +152,10 @@ impl Default for AppSettings {
             notification_sound: NotificationSound::default(),
             mark_read_after_millis: 0,
             undo_send_seconds: 5,
+            theme: ThemeMode::default(),
+            accent_color: AccentColor::default(),
+            background_hue: BackgroundHue::default(),
+            background_intensity: DEFAULT_BACKGROUND_INTENSITY,
         }
     }
 }
@@ -233,6 +246,51 @@ impl AppSettings {
 
     fn parse_value(mut value: serde_json::Value) -> Result<Self, serde_json::Error> {
         if let Some(object) = value.as_object_mut() {
+            if !matches!(
+                object.get("theme").and_then(serde_json::Value::as_str),
+                Some("light" | "dark" | "black")
+            ) {
+                object.insert("theme".to_string(), "dark".into());
+            }
+            if !matches!(
+                object
+                    .get("accent_color")
+                    .and_then(serde_json::Value::as_str),
+                Some("red" | "yellow" | "green" | "cyan" | "blue" | "purple" | "pink" | "gray")
+            ) {
+                object.insert("accent_color".to_string(), "purple".into());
+            }
+            if object
+                .get("background_hue")
+                .and_then(serde_json::Value::as_str)
+                == Some("neutral")
+            {
+                object.insert("background_hue".to_string(), "purple".into());
+            } else if object
+                .get("background_hue")
+                .and_then(serde_json::Value::as_str)
+                == Some("orange")
+            {
+                object.insert("background_hue".to_string(), "red".into());
+            } else if !matches!(
+                object
+                    .get("background_hue")
+                    .and_then(serde_json::Value::as_str),
+                Some("red" | "yellow" | "green" | "cyan" | "blue" | "purple" | "pink" | "gray")
+            ) {
+                object.insert("background_hue".to_string(), "purple".into());
+            }
+            if !matches!(
+                object
+                    .get("background_intensity")
+                    .and_then(serde_json::Value::as_u64),
+                Some(0..=100)
+            ) {
+                object.insert(
+                    "background_intensity".to_string(),
+                    DEFAULT_BACKGROUND_INTENSITY.into(),
+                );
+            }
             if !object.contains_key("auto_sync_seconds") {
                 if let Some(minutes) = object
                     .remove("auto_sync_minutes")
@@ -339,6 +397,24 @@ impl Component for PreferencesView {
         let show_notification_sound_menu = use_state(|| false);
 
         let mut rows = vec![
+            section_title("Appearance"),
+            setting_label("Theme", "Choose the overall interface style."),
+            theme_picker(state, settings.theme),
+            setting_label(
+                "Accent color",
+                "Choose the color used for highlights and actions.",
+            ),
+            accent_picker(state, settings.accent_color),
+            setting_label(
+                "Background hue",
+                "Choose the hue of interface backgrounds independently of the accent color.",
+            ),
+            background_hue_picker(state, settings.background_hue),
+            setting_label(
+                "Background intensity",
+                "Adjust the saturation of the selected background hue.",
+            ),
+            background_intensity_slider(state, settings.background_intensity),
             section_title("Privacy"),
             toggle_row(
                 "Block tracking pixels",
@@ -551,6 +627,182 @@ fn set_undo_send(settings: &mut AppSettings, value: u32) {
     settings.undo_send_seconds = value;
 }
 
+fn theme_picker(state: AppState, current: ThemeMode) -> Rect {
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::Flex)
+        .spacing(8.)
+        .children(ThemeMode::ALL.into_iter().map(|(theme, title)| {
+            let selected = theme == current;
+            let mut state = state;
+            rect()
+                .width(Size::flex(1.))
+                .height(Size::px(36.))
+                .corner_radius(6.)
+                .background(if selected { DARK.selected } else { DARK.panel })
+                .border(
+                    Border::new()
+                        .fill(if selected { DARK.accent } else { DARK.divider })
+                        .width(1.),
+                )
+                .center()
+                .cursor(freya::winit::window::CursorIcon::Pointer)
+                .on_press(EventHandler::new(move |_| {
+                    state.update_settings(|settings| settings.theme = theme);
+                }))
+                .child(
+                    label()
+                        .text(title)
+                        .color(DARK.text)
+                        .font_size(13.)
+                        .font_weight(if selected {
+                            FontWeight::BOLD
+                        } else {
+                            FontWeight::NORMAL
+                        }),
+                )
+        }))
+}
+
+fn accent_picker(state: AppState, current: AccentColor) -> Rect {
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::wrap_spacing(6.))
+        .spacing(6.)
+        .children(AccentColor::ALL.into_iter().map(|(accent, title, color)| {
+            let selected = accent == current;
+            let mut state = state;
+            rect()
+                .height(Size::px(34.))
+                .padding((0., 4., 0., 4.))
+                .spacing(6.)
+                .corner_radius(6.)
+                .background(if selected { DARK.selected } else { DARK.panel })
+                .border(
+                    Border::new()
+                        .fill(if selected { DARK.accent } else { DARK.divider })
+                        .width(1.),
+                )
+                .horizontal()
+                .cross_align(Alignment::Center)
+                .center()
+                .cursor(freya::winit::window::CursorIcon::Pointer)
+                .on_press(EventHandler::new(move |_| {
+                    state.update_settings(|settings| settings.accent_color = accent);
+                }))
+                .child(
+                    rect()
+                        .width(Size::px(12.))
+                        .height(Size::px(12.))
+                        .corner_radius(6.)
+                        .background(color),
+                )
+                .child(
+                    label()
+                        .text(title)
+                        .color(DARK.text)
+                        .font_size(11.)
+                        .max_lines(1),
+                )
+        }))
+}
+
+fn background_hue_picker(state: AppState, current: BackgroundHue) -> Rect {
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::wrap_spacing(6.))
+        .spacing(6.)
+        .children(BackgroundHue::ALL.into_iter().map(|(hue, title, color)| {
+            let selected = hue == current;
+            let mut state = state;
+            rect()
+                .height(Size::px(34.))
+                .padding((0., 4., 0., 4.))
+                .spacing(6.)
+                .corner_radius(6.)
+                .background(if selected { DARK.selected } else { DARK.panel })
+                .border(
+                    Border::new()
+                        .fill(if selected { DARK.accent } else { DARK.divider })
+                        .width(1.),
+                )
+                .horizontal()
+                .cross_align(Alignment::Center)
+                .center()
+                .cursor(freya::winit::window::CursorIcon::Pointer)
+                .on_press(EventHandler::new(move |_| {
+                    state.update_settings(|settings| settings.background_hue = hue);
+                }))
+                .child(
+                    rect()
+                        .width(Size::px(12.))
+                        .height(Size::px(12.))
+                        .corner_radius(6.)
+                        .background(color),
+                )
+                .child(
+                    label()
+                        .text(title)
+                        .color(DARK.text)
+                        .font_size(11.)
+                        .max_lines(1),
+                )
+        }))
+}
+
+fn background_intensity_slider(state: AppState, intensity: u8) -> Rect {
+    let mut state = state;
+    let intensity = intensity.min(100);
+
+    rect()
+        .width(Size::fill())
+        .vertical()
+        .spacing(4.)
+        .child(
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .main_align(Alignment::End)
+                .child(
+                    label()
+                        .text(format!("{intensity}%"))
+                        .color(DARK.text)
+                        .font_size(12.),
+                ),
+        )
+        .child(
+            Slider::new(EventHandler::new(move |value: f64| {
+                let intensity = value.clamp(0.0, 100.0).round() as u8;
+                let (theme, accent_color, background_hue) = {
+                    let settings = state.settings.read();
+                    (
+                        settings.theme,
+                        settings.accent_color,
+                        settings.background_hue,
+                    )
+                };
+                set_current(theme, accent_color, background_hue, intensity);
+                state.update_settings(|settings| {
+                    settings.background_intensity = intensity;
+                });
+            }))
+            .value(f64::from(intensity))
+            .step(1.)
+            .scroll_enabled(false)
+            .theme(
+                SliderThemePartial::new()
+                    .background(Color::from(DARK.divider))
+                    .thumb_background(Color::from(DARK.accent))
+                    .thumb_inner_background(Color::from(DARK.accent))
+                    .border_fill(Color::TRANSPARENT),
+            )
+            .size(Size::fill()),
+        )
+}
+
 fn grain_strength_slider(state: AppState, strength: f32) -> Rect {
     let mut state = state;
     let strength = strength.clamp(0.0, 2.0);
@@ -627,8 +879,8 @@ fn notification_sound_row(
         .height(Size::px(36.))
         .padding((0., 8., 0., 10.))
         .corner_radius(6.)
-        .background(Fill::from((20, 20, 31)))
-        .border(Border::new().fill((58, 58, 78)).width(1.))
+        .background(Fill::from(DARK.panel))
+        .border(Border::new().fill(DARK.divider).width(1.))
         .horizontal()
         .spacing(8.)
         .content(Content::Flex)
@@ -673,8 +925,8 @@ fn notification_sound_row(
                 .position(Position::new_absolute().top(36.).left(0.))
                 .width(Size::percent(100.))
                 .corner_radius(8.)
-                .background(Fill::from((30, 30, 46)))
-                .border(Border::new().fill((58, 58, 78)).width(1.))
+                .background(Fill::from(DARK.panel))
+                .border(Border::new().fill(DARK.divider).width(1.))
                 .child(
                     ScrollView::new()
                         .width(Size::percent(100.))
@@ -731,7 +983,7 @@ impl Component for NotificationSoundOption {
         } else if hovering() {
             crate::grain::hover()
         } else {
-            Fill::from((30, 30, 46))
+            Fill::from(DARK.panel)
         };
 
         let mut option = rect()
@@ -916,6 +1168,11 @@ mod tests {
         assert!(legacy.minimize_to_tray_on_close);
         assert!(!legacy.run_on_startup);
         assert_eq!(legacy.grain_texture_strength, 1.0);
+        assert_eq!(legacy.theme, ThemeMode::Dark);
+        assert_eq!(legacy.accent_color, AccentColor::Purple);
+        assert_eq!(legacy.background_hue, BackgroundHue::Purple);
+        assert_eq!(legacy.background_intensity, 15);
+        assert_eq!(DEFAULT_BACKGROUND_INTENSITY, 15);
 
         assert_eq!(
             AppSettings::parse(br#"{"grain_texture_strength":99}"#).grain_texture_strength,
@@ -937,6 +1194,31 @@ mod tests {
             AppSettings::parse(br#"{"grain_texture_strength":1.25}"#).grain_texture_strength,
             1.25
         );
+    }
+
+    #[test]
+    fn appearance_settings_parse_and_recover_invalid_values() {
+        let selected = AppSettings::parse(
+            br#"{"theme":"light","accent_color":"cyan","background_hue":"blue","background_intensity":42}"#,
+        );
+        assert_eq!(selected.theme, ThemeMode::Light);
+        assert_eq!(selected.accent_color, AccentColor::Cyan);
+        assert_eq!(selected.background_hue, BackgroundHue::Blue);
+        assert_eq!(selected.background_intensity, 42);
+
+        let invalid = AppSettings::parse(
+            br#"{"theme":"unknown","accent_color":false,"background_hue":"invalid","background_intensity":101}"#,
+        );
+        assert_eq!(invalid.theme, ThemeMode::Dark);
+        assert_eq!(invalid.accent_color, AccentColor::Purple);
+        assert_eq!(invalid.background_hue, BackgroundHue::Purple);
+        assert_eq!(invalid.background_intensity, DEFAULT_BACKGROUND_INTENSITY);
+
+        let migrated = AppSettings::parse(br#"{"background_hue":"neutral"}"#);
+        assert_eq!(migrated.background_hue, BackgroundHue::Purple);
+
+        let migrated_orange = AppSettings::parse(br#"{"background_hue":"orange"}"#);
+        assert_eq!(migrated_orange.background_hue, BackgroundHue::Red);
     }
 
     #[test]

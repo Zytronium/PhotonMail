@@ -5,7 +5,7 @@ use crate::{
     icons::*,
     model::Summary,
     state::{AppState, View},
-    theme::{ACCENT_HOVER, DARK, Rgb},
+    theme::{DARK, Rgb},
     widgets::{IconButton, badge, divider, dot, icon},
 };
 
@@ -17,6 +17,7 @@ pub struct Sidebar {
 impl Component for Sidebar {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
+        let _settings = state.settings.read();
         let acc = *state.account.read();
         let fol = *state.folder.read();
         let view = *state.view.read();
@@ -152,7 +153,7 @@ impl Component for Sidebar {
             .spacing(8.)
             .cursor(freya::winit::window::CursorIcon::Pointer)
             .background(if compose_hover() {
-                Fill::from(ACCENT_HOVER)
+                Fill::from(DARK.accent_hover)
             } else {
                 Fill::from(DARK.accent)
             })
@@ -163,11 +164,11 @@ impl Component for Sidebar {
                 s_compose.draft_pin.set(None);
                 s_compose.set_view(View::Compose);
             })
-            .child(icon(PENCIL, 16., DARK.text))
+            .child(icon(PENCIL, 16., DARK.accent_text))
             .child(
                 label()
                     .text("New message")
-                    .color(DARK.text)
+                    .color(DARK.accent_text)
                     .font_weight(FontWeight::BOLD),
             );
 
@@ -253,6 +254,7 @@ impl Component for SectionHeader {
         let show_add = self.show_add;
         let title = self.title;
         let state = self.state.clone();
+        let _settings = state.settings.read();
         let mut r = rect()
             .width(Size::fill())
             .horizontal()
@@ -279,7 +281,7 @@ impl Component for SectionHeader {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Clone)]
 struct GroupHeader {
     name: String,
     color: Rgb,
@@ -291,6 +293,12 @@ struct GroupHeader {
     on_drag_start: EventHandler<()>,
     on_drag_over: EventHandler<()>,
     on_press: EventHandler<Event<PressEventData>>,
+}
+
+impl PartialEq for GroupHeader {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
 }
 
 impl Component for GroupHeader {
@@ -354,7 +362,7 @@ impl Component for GroupHeader {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Clone)]
 struct Item {
     lead: Lead,
     text: String,
@@ -362,6 +370,12 @@ struct Item {
     count: usize,
     indent: f32,
     on_press: EventHandler<Event<PressEventData>>,
+}
+
+impl PartialEq for Item {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
 }
 
 impl Component for Item {
@@ -411,7 +425,7 @@ impl Component for Item {
                 .color(if active || count > 0 {
                     DARK.text
                 } else {
-                    (200, 200, 214)
+                    DARK.muted
                 })
                 .font_weight(if active || count > 0 {
                     FontWeight::BOLD

@@ -5,7 +5,6 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
 - Add Gmail, Outlook, iCloud, Yahoo, and Fastmail providers for new accounts
 - Settings
   - Force dark mode email rendering
-  - Themes and accent color
   - AMERICA MODE!!
     - Rebrands app into Freagle Mail
     - Restyles app in red, white, and blue colors

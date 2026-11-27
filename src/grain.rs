@@ -15,7 +15,7 @@ use std::{
 use freya::engine::prelude::{Data, RuntimeEffect};
 use freya::prelude::*;
 
-use crate::theme::{DARK, Rgb};
+use crate::theme::{DARK, Rgb, current_palette_index};
 
 /// How strong the grain is, as a fraction of full brightness.
 /// Raise for more texture, lower for less.
@@ -114,13 +114,13 @@ fn gradient(base: Rgb) -> (Rgb, Rgb) {
 // Cached per thread: `ShaderFill` compares by pointer, so building a new one on
 // every render would make Freya think the background changed every frame.
 thread_local! {
-    static PANEL: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
-    static SURFACE: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
-    static TITLEBAR: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
-    static HOVER: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
-    static SELECTED: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
-    static CLOSE_HOVER: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
-    static DIALOG: RefCell<HashMap<u16, Fill>> = RefCell::new(HashMap::new());
+    static PANEL: RefCell<HashMap<u32, Fill>> = RefCell::new(HashMap::new());
+    static SURFACE: RefCell<HashMap<u32, Fill>> = RefCell::new(HashMap::new());
+    static TITLEBAR: RefCell<HashMap<u32, Fill>> = RefCell::new(HashMap::new());
+    static HOVER: RefCell<HashMap<u32, Fill>> = RefCell::new(HashMap::new());
+    static SELECTED: RefCell<HashMap<u32, Fill>> = RefCell::new(HashMap::new());
+    static CLOSE_HOVER: RefCell<HashMap<u32, Fill>> = RefCell::new(HashMap::new());
+    static DIALOG: RefCell<HashMap<u32, Fill>> = RefCell::new(HashMap::new());
 }
 
 pub fn set_strength(multiplier: f32) {
@@ -128,11 +128,12 @@ pub fn set_strength(multiplier: f32) {
     STRENGTH.store(hundredths, Ordering::Relaxed);
 }
 
-fn fill(cache: &RefCell<HashMap<u16, Fill>>, base: Rgb) -> Fill {
+fn fill(cache: &RefCell<HashMap<u32, Fill>>, base: Rgb) -> Fill {
     let strength = STRENGTH.load(Ordering::Relaxed);
+    let key = (current_palette_index() as u32) << 16 | u32::from(strength);
     cache
         .borrow_mut()
-        .entry(strength)
+        .entry(key)
         .or_insert_with(|| {
             let (top, bottom) = gradient(base);
             build(top, bottom, grain_amount(f32::from(strength) / 100.0))

@@ -31,6 +31,7 @@ pub struct Reader {
 impl Component for Reader {
     fn render(&self) -> impl IntoElement {
         let state = self.state;
+        let _settings = state.settings.read();
         let view = *state.view.read();
         let show_back = matches!(
             view,
@@ -267,7 +268,7 @@ impl Component for MailView {
                         .width(Size::fill())
                         .padding(12.)
                         .corner_radius(8.)
-                        .background((35, 35, 48))
+                        .background(DARK.panel)
                         .vertical()
                         .spacing(7.);
                     let mut rows = vec![
@@ -621,7 +622,7 @@ impl Component for MailView {
                                         .background(if has_data {
                                             crate::grain::hover()
                                         } else {
-                                            Fill::from((30, 30, 40))
+                                            Fill::from(DARK.panel)
                                         })
                                         .on_press(if has_data {
                                             EventHandler::new(move |_| {
@@ -633,7 +634,7 @@ impl Component for MailView {
                                         .child(icon(
                                             DOWNLOAD,
                                             14.,
-                                            if has_data { DARK.text } else { (80, 80, 100) },
+                                            if has_data { DARK.text } else { DARK.muted },
                                         )),
                                 ),
                         );
@@ -644,7 +645,7 @@ impl Component for MailView {
                             .width(Size::fill())
                             .padding(10.)
                             .corner_radius(8.)
-                            .background((35, 35, 48))
+                            .background(DARK.panel)
                             .vertical()
                             .spacing(6.)
                             .child(
@@ -671,7 +672,7 @@ impl Component for MailView {
                         BodyState::Loaded { source, .. } if !source.is_empty() => ScrollView::new()
                             .height(Size::fill())
                             .child(
-                                rect().padding(12.).background((35, 35, 48)).child(
+                                rect().padding(12.).background(DARK.panel).child(
                                     label()
                                         .text(String::from_utf8_lossy(source).into_owned())
                                         .color(DARK.text)
@@ -990,21 +991,21 @@ fn build_collapsed_text_body(
             rect()
                 .width(Size::fill())
                 .padding((8., 12., 8., 12.))
-                .background((28, 28, 38))
+                .background(DARK.panel)
                 .corner_radius(4.)
                 .horizontal()
                 .child(
                     rect()
                         .width(Size::px(3.))
                         .height(Size::fill())
-                        .background((80, 80, 110))
+                        .background(DARK.divider)
                         .corner_radius(2.),
                 )
                 .child(
                     rect().width(Size::fill()).child(
                         label()
                             .text(text)
-                            .color((140, 140, 160))
+                            .color(DARK.muted)
                             .font_size(12.)
                             .font_family("monospace"),
                     ),
@@ -1190,7 +1191,7 @@ fn preview_dialog(
         rect()
             .width(Size::fill())
             .height(Size::px(1.))
-            .background((40, 40, 54)),
+            .background(DARK.divider),
     );
 
     // Filename label
@@ -1332,7 +1333,7 @@ impl Component for AttachmentPreview {
                     ScrollView::new().height(Size::fill()).child(
                         rect()
                             .padding(10.)
-                            .background((30, 30, 40))
+                            .background(DARK.panel)
                             .corner_radius(6.)
                             .child(
                                 label()
@@ -1359,7 +1360,7 @@ impl Component for AttachmentPreview {
                 rect()
                     .width(Size::fill())
                     .padding(6.)
-                    .background((40, 40, 54))
+                    .background(DARK.hover)
                     .corner_radius(6.)
                     .child(
                         label()
