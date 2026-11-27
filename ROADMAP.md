@@ -27,7 +27,6 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
 - Phishing link detection
 - Email signatures
 - Smarter email dark mode rendering
-- More advanced rich text editor for composing emails
 - Mailing list banner (with unsubscribe button) on messages from a mailing list
 - Encryption key support
 - Auto-updater
