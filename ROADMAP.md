@@ -3,6 +3,11 @@
 Below is a **non-exhaustive** list of planned features for Photon Mail.
 
 - Add ~~Gmail,~~ Outlook, iCloud, Yahoo, and Fastmail providers for new accounts
+- Email signatures
+- Mailing list banner (with unsubscribe button) on messages from a mailing list
+- Encryption key support
+- Phishing link detection
+- Smarter email dark mode rendering
 - Force dark mode email rendering setting 
 - "AMERICA MODE!!" setting
   - Rebrands app into Freagle Mail
@@ -22,9 +27,4 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
   - Support email in About changes from photonsupport@zytronium.dev to freaglesupport@whatthefuckisakilometer.com
   - Optional American email HTML template: users' rich text editor embeds content inside an overly patriotic red white and blue HTML email template (and sends that way too)
   - ABSOLUTELY NO FEATURES RELATING TO MODERN AMERICAN POLITICS
-- Phishing link detection
-- Email signatures
-- Smarter email dark mode rendering
-- Mailing list banner (with unsubscribe button) on messages from a mailing list
-- Encryption key support
 - Auto-updater
