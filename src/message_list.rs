@@ -802,3 +802,4 @@ mod tests {
         assert_eq!(first_email_address(""), "");
     }
 }
+

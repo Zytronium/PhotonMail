@@ -1,4 +1,9 @@
 //! Google OAuth for Gmail accounts using the installed desktop-app flow.
+//!
+//! Google requires a client secret at its token endpoint, so this app never talks to that
+//! endpoint directly. Code exchange and token refresh go through Photon Mail's token proxy
+//! (see `photon-proxy`), which adds the secret server-side. The secret is therefore not in
+//! this repository or in the executable.
 
 use std::time::Duration;
 
@@ -14,12 +19,12 @@ use tokio::{
 use url::Url;
 
 const AUTHORIZATION_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
+/// Token proxy that forwards code exchanges and refreshes to Google with the client secret.
+const TOKEN_PROXY_ENDPOINT: &str = "https://photon.zytronium.dev/api/google/token"; // For local API testing, change to "http://localhost:3000/api/google/token"
 const USERINFO_ENDPOINT: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const GMAIL_SCOPE: &str = "https://mail.google.com/";
 const GOOGLE_CLIENT_ID: &str =
     "45885468945-pm0a0j1h9s4ug6fercqk4val07splujs.apps.googleusercontent.com";
-const GOOGLE_CLIENT_SECRET: &str = "[redacted]";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -86,8 +91,8 @@ async fn authorize() -> Result<GoogleAccount, String> {
         CALLBACK_TIMEOUT,
         wait_for_authorization_code(listener, &state),
     )
-    .await
-    .map_err(|_| "Google sign-in timed out. Please try again.".to_string())??;
+        .await
+        .map_err(|_| "Google sign-in timed out. Please try again.".to_string())??;
 
     let http = Client::builder()
         .timeout(HTTP_TIMEOUT)
@@ -108,6 +113,19 @@ async fn authorize() -> Result<GoogleAccount, String> {
         email: user_info.email,
         refresh_token,
     })
+}
+
+/// The token proxy URL. Debug builds can point at a local proxy (for example
+/// `http://localhost:3000/api/google/token`) with `PHOTON_TOKEN_PROXY_URL`; release builds
+/// always use the real one so tokens can't be redirected through an environment variable.
+fn token_endpoint() -> String {
+    #[cfg(debug_assertions)]
+    if let Ok(url) = std::env::var("PHOTON_TOKEN_PROXY_URL") {
+        if !url.trim().is_empty() {
+            return url;
+        }
+    }
+    TOKEN_PROXY_ENDPOINT.to_string()
 }
 
 fn random_url_token() -> String {
@@ -178,7 +196,7 @@ async fn wait_for_authorization_code(
                     200,
                     "Google sign-in complete. You can close this browser window and return to Photon Mail.",
                 )
-                .await;
+                    .await;
                 return Ok(code);
             }
             Err(error) if error == "Invalid OAuth state." => {
@@ -265,28 +283,20 @@ async fn exchange_code(
 ) -> Result<TokenResponse, String> {
     let response = post_form(
         http,
-        &authorization_code_fields(
-            client_id,
-            GOOGLE_CLIENT_SECRET,
-            code,
-            verifier,
-            redirect_uri,
-        ),
+        &authorization_code_fields(client_id, code, verifier, redirect_uri),
     )
-    .await?;
+        .await?;
     parse_token_response(response, "Google authorization-code exchange").await
 }
 
 fn authorization_code_fields<'a>(
     client_id: &'a str,
-    client_secret: &'a str,
     code: &'a str,
     verifier: &'a str,
     redirect_uri: &'a str,
-) -> [(&'static str, &'a str); 6] {
+) -> [(&'static str, &'a str); 5] {
     [
         ("client_id", client_id),
-        ("client_secret", client_secret),
         ("code", code),
         ("code_verifier", verifier),
         ("grant_type", "authorization_code"),
@@ -297,10 +307,9 @@ fn authorization_code_fields<'a>(
 fn refresh_token_fields<'a>(
     client_id: &'a str,
     refresh_token: &'a str,
-) -> [(&'static str, &'a str); 4] {
+) -> [(&'static str, &'a str); 3] {
     [
         ("client_id", client_id),
-        ("client_secret", GOOGLE_CLIENT_SECRET),
         ("refresh_token", refresh_token),
         ("grant_type", "refresh_token"),
     ]
@@ -340,7 +349,7 @@ pub async fn access_token(secret: &str) -> Result<Option<String>, String> {
             &http,
             &refresh_token_fields(GOOGLE_CLIENT_ID, refresh_token),
         )
-        .await?;
+            .await?;
         return parse_token_response(response, "Google access-token refresh")
             .await
             .map(|token| Some(token.access_token));
@@ -362,12 +371,12 @@ async fn post_form(http: &Client, fields: &[(&str, &str)]) -> Result<reqwest::Re
         }
         form.finish()
     };
-    http.post(TOKEN_ENDPOINT)
+    http.post(token_endpoint())
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(body)
         .send()
         .await
-        .map_err(|error| format!("Couldn't contact Google's token service: {error}"))
+        .map_err(|error| format!("Couldn't contact Photon Mail's sign-in service: {error}"))
 }
 
 async fn parse_token_response(
@@ -460,27 +469,28 @@ mod tests {
     }
 
     #[test]
-    fn token_requests_include_the_client_secret() {
-        let code_fields = authorization_code_fields(
-            "client-id",
-            "client-secret",
-            "code",
-            "verifier",
-            "http://127.0.0.1:4321",
-        );
-        assert!(code_fields.contains(&("client_secret", "client-secret")));
+    fn token_requests_never_contain_a_client_secret() {
+        let code_fields =
+            authorization_code_fields("client-id", "code", "verifier", "http://127.0.0.1:4321");
+        assert!(code_fields.contains(&("client_id", "client-id")));
+        assert!(!code_fields.iter().any(|(key, _)| *key == "client_secret"));
 
         let refresh_fields = refresh_token_fields("client-id", "refresh-token");
-        assert!(refresh_fields.contains(&("client_secret", GOOGLE_CLIENT_SECRET)));
+        assert!(refresh_fields.contains(&("client_id", "client-id")));
+        assert!(
+            !refresh_fields
+                .iter()
+                .any(|(key, _)| *key == "client_secret")
+        );
     }
 
     #[test]
     fn token_error_details_include_google_error_description() {
         assert_eq!(
             token_error_details(
-                br#"{"error":"invalid_request","error_description":"client_secret is missing."}"#
+                br#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#
             ),
-            Some("invalid_request: client_secret is missing.".to_string())
+            Some("invalid_grant: Token has been expired or revoked.".to_string())
         );
     }
 }

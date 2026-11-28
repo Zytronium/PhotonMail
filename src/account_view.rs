@@ -726,6 +726,8 @@ impl Component for EditAccountView {
         // Auto-detect status for Edit Account
         let edit_detecting = use_state(|| false);
         let edit_detect_status = use_state(|| String::new());
+        let gmail_authenticating = use_state(|| false);
+        let gmail_auth_status = use_state(String::new);
 
         let mut col = rect()
             .width(Size::fill())
@@ -896,6 +898,112 @@ impl Component for EditAccountView {
                         })
                 )
         );
+
+        if cfg.host.eq_ignore_ascii_case("imap.gmail.com") {
+            col = col.child(
+                rect()
+                    .spacing(8.)
+                    .child(label().text("Google sign-in").color(DARK.muted).font_size(13.))
+                    .child(
+                        label()
+                            .text("Reconnect with Google to replace the saved refresh token. Restart Photon Mail afterward.")
+                            .color(DARK.muted)
+                            .font_size(12.),
+                    )
+                    .child({
+                        let mut gmail_authenticating = gmail_authenticating.clone();
+                        let mut gmail_auth_status = gmail_auth_status.clone();
+                        let expected_email = cfg.email.clone();
+                        let account_id = cfg.id.clone();
+                        rect()
+                            .padding((8., 14., 8., 14.))
+                            .corner_radius(6.)
+                            .background(crate::grain::hover())
+                            .cursor(if *gmail_authenticating.read() {
+                                freya::winit::window::CursorIcon::Default
+                            } else {
+                                freya::winit::window::CursorIcon::Pointer
+                            })
+                            .on_press(move |_| {
+                                if *gmail_authenticating.peek() {
+                                    return;
+                                }
+                                gmail_authenticating.set(true);
+                                gmail_auth_status.set("Waiting for Google sign-in…".to_string());
+                                let receiver = crate::mail::google_oauth::sign_in_in_background();
+                                let mut gmail_authenticating = gmail_authenticating.clone();
+                                let mut gmail_auth_status = gmail_auth_status.clone();
+                                let expected_email = expected_email.clone();
+                                let account_id = account_id.clone();
+                                freya::prelude::spawn(async move {
+                                    let result = receiver.recv().await.unwrap_or_else(|_| {
+                                        Err("Google sign-in stopped unexpectedly.".to_string())
+                                    });
+                                    match result {
+                                        Ok(account)
+                                            if !account
+                                                .email
+                                                .eq_ignore_ascii_case(&expected_email) =>
+                                        {
+                                            gmail_auth_status.set(format!(
+                                                "Google returned {}, but this account is {}. No token was changed.",
+                                                account.email, expected_email
+                                            ));
+                                        }
+                                        Ok(account) => {
+                                            let secret =
+                                                format!("oauth2-refresh:{}", account.refresh_token);
+                                            let (save_tx, save_rx) = async_channel::bounded(1);
+                                            let save_thread = std::thread::Builder::new()
+                                                .name("photon-mail-google-keyring".into())
+                                                .spawn(move || {
+                                                    let result = crate::mail::config::save_password(
+                                                        &account_id,
+                                                        &secret,
+                                                    );
+                                                    let _ = save_tx.send_blocking(result);
+                                                });
+                                            let saved = match save_thread {
+                                                Ok(_) => save_rx.recv().await.unwrap_or_else(|_| {
+                                                    Err("Keyring update stopped unexpectedly.".to_string())
+                                                }),
+                                                Err(error) => Err(format!(
+                                                    "Couldn't start the keyring update: {error}"
+                                                )),
+                                            };
+                                            gmail_auth_status.set(match saved {
+                                                Ok(()) => "Google sign-in refreshed. Restart Photon Mail to reconnect with the new token.".to_string(),
+                                                Err(error) => format!("Couldn't save the Google token to the system keyring: {error}"),
+                                            });
+                                        }
+                                        Err(error) => gmail_auth_status.set(error),
+                                    }
+                                    gmail_authenticating.set(false);
+                                });
+                            })
+                            .child(
+                                label()
+                                    .text(if *gmail_authenticating.read() {
+                                        "Signing in…"
+                                    } else {
+                                        "Reconnect Google"
+                                    })
+                                    .color(DARK.text)
+                                    .font_size(13.),
+                            )
+                    })
+                    .child(
+                        label()
+                            .text(gmail_auth_status.read().clone())
+                            .color(if gmail_auth_status.read().starts_with("Google sign-in refreshed") {
+                                DARK.success
+                            } else {
+                                DARK.muted
+                            })
+                            .font_size(11.),
+                    ),
+            );
+        }
 
         // Navigation buttons
         let nav_row = rect()
