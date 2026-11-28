@@ -552,6 +552,20 @@ fn visible_mail_indices(
     visible
 }
 
+pub(crate) fn mail_matches_search_query(mail: &Mail, query: &str) -> bool {
+    let subject_match = mail.subject.to_lowercase().contains(query);
+    let from_match =
+        mail.from.to_lowercase().contains(query) || mail.from_email.to_lowercase().contains(query);
+    let to_match =
+        mail.to.to_lowercase().contains(query) || mail.to_email.to_lowercase().contains(query);
+    let preview_match = mail.preview.to_lowercase().contains(query);
+    let body_match = match &mail.body {
+        BodyState::Loaded { text, .. } => text.to_lowercase().contains(query),
+        _ => false,
+    };
+    subject_match || from_match || to_match || preview_match || body_match
+}
+
 impl AppState {
     /// Mails in the current account + folder, or starred mail for the selected account scope.
     pub fn visible(&self) -> Vec<usize> {
@@ -575,20 +589,7 @@ impl AppState {
         let store = self.store.read();
         visible
             .into_iter()
-            .filter(|&i| {
-                let m = &store.mails[i];
-                let subject_match = m.subject.to_lowercase().contains(&query);
-                let from_match = m.from.to_lowercase().contains(&query)
-                    || m.from_email.to_lowercase().contains(&query);
-                let to_match = m.to.to_lowercase().contains(&query)
-                    || m.to_email.to_lowercase().contains(&query);
-                let preview_match = m.preview.to_lowercase().contains(&query);
-                let body_match = match &m.body {
-                    BodyState::Loaded { text, .. } => text.to_lowercase().contains(&query),
-                    _ => false,
-                };
-                subject_match || from_match || to_match || preview_match || body_match
-            })
+            .filter(|&i| mail_matches_search_query(&store.mails[i], &query))
             .collect()
     }
 
