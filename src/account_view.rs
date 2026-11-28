@@ -19,11 +19,11 @@ const FASTMAIL_LOGO: &[u8] = include_bytes!("../assets/provider-logos/fastmail.s
 /// Multi-step account setup flow, inspired by SubspaceMail's wizard-style onboarding.
 ///
 /// Steps:
-/// 1. **Account** — email address, display name, and password or OAuth access token
+/// 1. **Account** — email address, display name, and password or Google sign-in
 /// 2. **Server** — IMAP host and port (993 for TLS, 143 for STARTTLS)
 /// 3. **Verify** — review settings and connect
 ///
-/// OAuth access tokens use XOAUTH2 and must be entered manually; token refresh is not supported.
+/// Gmail uses Google's installed-app OAuth flow and XOAUTH2 for IMAP and SMTP.
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum SetupStep {
@@ -79,6 +79,9 @@ impl Component for AddAccountView {
         let account_name = use_state(String::new);
         let sender_name = use_state(String::new);
         let password = use_state(String::new);
+        let gmail_selected = use_state(|| false);
+        let gmail_authenticating = use_state(|| false);
+        let gmail_auth_status = use_state(String::new);
         let host = use_state(String::new);
         let port = use_state(|| "993".to_string());
         let smtp_host = use_state(String::new);
@@ -197,7 +200,27 @@ impl Component for AddAccountView {
                 .child(
                     rect()
                         .spacing(10.)
-                        .child(provider_choice("Gmail", GMAIL_LOGO, false, None))
+                        .child(provider_choice(
+                            "Gmail",
+                            GMAIL_LOGO,
+                            true,
+                            Some({
+                                let mut show_picker = show_provider_picker.clone();
+                                let mut gmail_selected = gmail_selected.clone();
+                                let mut host = host.clone();
+                                let mut port = port.clone();
+                                let mut smtp_host = smtp_host.clone();
+                                let mut smtp_port = smtp_port.clone();
+                                EventHandler::new(move |_| {
+                                    gmail_selected.set(true);
+                                    host.set("imap.gmail.com".to_string());
+                                    port.set("993".to_string());
+                                    smtp_host.set("smtp.gmail.com".to_string());
+                                    smtp_port.set("465".to_string());
+                                    show_picker.set(false);
+                                })
+                            }),
+                        ))
                         .child(provider_choice("Outlook", OUTLOOK_LOGO, false, None))
                         .child(provider_choice("iCloud", ICLOUD_LOGO, false, None))
                         .child(provider_choice("Yahoo", YAHOO_LOGO, false, None))
@@ -211,37 +234,114 @@ impl Component for AddAccountView {
                 )
         } else {
             match *current_step.read() {
-            SetupStep::Account => {
-                rect().spacing(12.)
-                    .child(label().text("Enter your email details to get started.").color(DARK.muted).font_size(13.))
-                    .child(AddAccountFormField {
-                        label: "Email address",
-                        placeholder: "you@example.com",
-                        value: email.clone(),
-                        secret: false,
-                    })
-                    .child(AddAccountFormField {
-                        label: "Account name",
-                        placeholder: "Work Email (shown in sidebar)",
-                        value: account_name.clone(),
-                        secret: false,
-                    })
-                    .child(AddAccountFormField {
-                        label: "Sender name",
-                        placeholder: "John Doe (shown to recipients)",
-                        value: sender_name.clone(),
-                        secret: false,
-                    })
-                    .child(AddAccountFormField {
-                        label: "Password or OAuth access token",
-                        placeholder: "Password, app password, or OAuth token",
-                        value: password.clone(),
-                        secret: true,
-                    })
-                    .child(label().text("Prefix OAuth access tokens with oauth2: — PhotonMail does not refresh tokens.").color(DARK.muted).font_size(11.))
-            }
-            SetupStep::Server => {
-                rect().spacing(12.)
+                SetupStep::Account => {
+                    let mut fields = rect()
+                        .spacing(12.)
+                        .child(
+                            label()
+                                .text("Enter your email details to get started.")
+                                .color(DARK.muted)
+                                .font_size(13.),
+                        )
+                        .child(AddAccountFormField {
+                            label: "Account name",
+                            placeholder: "Work Email (shown in sidebar)",
+                            value: account_name.clone(),
+                            secret: false,
+                        })
+                        .child(AddAccountFormField {
+                            label: "Sender name",
+                            placeholder: "John Doe (shown to recipients)",
+                            value: sender_name.clone(),
+                            secret: false,
+                        });
+                    if *gmail_selected.read() {
+                        fields = fields
+                        .child(label().text("Sign in securely with Google. Your password is never shared with Photon Mail.").color(DARK.muted).font_size(12.))
+                        .child(label().text(if email.read().is_empty() {
+                            "Google account: not connected".to_string()
+                        } else {
+                            format!("Google account: {}", email.read())
+                        }).color(DARK.text).font_size(13.))
+                        .child({
+                            let mut gmail_authenticating = gmail_authenticating.clone();
+                            let mut gmail_auth_status = gmail_auth_status.clone();
+                            let email = email.clone();
+                            let password = password.clone();
+                            rect()
+                                .padding((8., 14., 8., 14.))
+                                .corner_radius(6.)
+                                .background(crate::grain::hover())
+                                .cursor(if *gmail_authenticating.read() {
+                                    freya::winit::window::CursorIcon::Default
+                                } else {
+                                    freya::winit::window::CursorIcon::Pointer
+                                })
+                                .on_press(move |_| {
+                                    if *gmail_authenticating.peek() {
+                                        return;
+                                    }
+                                    gmail_authenticating.set(true);
+                                    gmail_auth_status.set("Waiting for Google sign-in…".to_string());
+                                    let receiver = crate::mail::google_oauth::sign_in_in_background();
+                                    let mut gmail_authenticating = gmail_authenticating.clone();
+                                    let mut gmail_auth_status = gmail_auth_status.clone();
+                                    let mut email = email.clone();
+                                    let mut password = password.clone();
+                                    freya::prelude::spawn(async move {
+                                        let result = receiver.recv().await.unwrap_or_else(|_| {
+                                            Err("Google sign-in stopped unexpectedly.".to_string())
+                                        });
+                                        match result {
+                                            Ok(account) => {
+                                                email.set(account.email.clone());
+                                                password.set(format!(
+                                                    "oauth2-refresh:{}",
+                                                    account.refresh_token
+                                                ));
+                                                gmail_auth_status.set(format!(
+                                                    "Signed in as {}.",
+                                                    account.email
+                                                ));
+                                            }
+                                            Err(error) => gmail_auth_status.set(error),
+                                        }
+                                        gmail_authenticating.set(false);
+                                    });
+                                })
+                                .child(label().text(if *gmail_authenticating.read() {
+                                    "Signing in…"
+                                } else {
+                                    "Sign in with Google"
+                                }).color(DARK.text).font_size(13.))
+                        })
+                        .child(label().text(gmail_auth_status.read().clone()).color(
+                            if password.read().starts_with("oauth2-refresh:") {
+                                DARK.success
+                            } else {
+                                DARK.muted
+                            },
+                        ).font_size(11.));
+                    } else {
+                        fields = fields
+                        .child(AddAccountFormField {
+                            label: "Email address",
+                            placeholder: "you@example.com",
+                            value: email.clone(),
+                            secret: false,
+                        })
+                        .child(AddAccountFormField {
+                            label: "Password or OAuth access token",
+                            placeholder: "Password, app password, or OAuth token",
+                            value: password.clone(),
+                            secret: true,
+                        })
+                        .child(label().text("Prefix OAuth access tokens with oauth2: — Photon Mail does not refresh these tokens.").color(DARK.muted).font_size(11.));
+                    }
+                    fields
+                }
+                SetupStep::Server => {
+                    rect().spacing(12.)
                     .child(label().text("Configure your IMAP server settings.").color(DARK.muted).font_size(13.))
                     .child(AddAccountFormField {
                         label: "IMAP server",
@@ -319,33 +419,70 @@ impl Component for AddAccountView {
                                     }).color(DARK.muted).font_size(12.))
                             )
                     })
-            }
-            SetupStep::Verify => {
-                let addr = email.read().clone();
-                let acct_nm = account_name.read().clone();
-                let sndr_nm = sender_name.read().clone();
-                let srv = host.read().clone();
-                let p = port.read().clone();
-                let smtp_srv = format!("{}:{}", smtp_host.read().trim(), smtp_port.read().trim());
-                let acct_display = if acct_nm.is_empty() { addr.split('@').next().unwrap_or(&addr).to_string() } else { acct_nm };
-                let sndr_display = if sndr_nm.is_empty() { acct_display.clone() } else { sndr_nm };
+                }
+                SetupStep::Verify => {
+                    let addr = email.read().clone();
+                    let acct_nm = account_name.read().clone();
+                    let sndr_nm = sender_name.read().clone();
+                    let srv = host.read().clone();
+                    let p = port.read().clone();
+                    let smtp_srv =
+                        format!("{}:{}", smtp_host.read().trim(), smtp_port.read().trim());
+                    let acct_display = if acct_nm.is_empty() {
+                        addr.split('@').next().unwrap_or(&addr).to_string()
+                    } else {
+                        acct_nm
+                    };
+                    let sndr_display = if sndr_nm.is_empty() {
+                        acct_display.clone()
+                    } else {
+                        sndr_nm
+                    };
 
-                rect().spacing(12.)
-                    .child(label().text("Review your settings before connecting.").color(DARK.muted).font_size(13.))
-                    .child(
-                        rect()
-                            .padding(14.)
-                            .corner_radius(8.)
-                            .background(DARK.panel)
-                            .spacing(10.)
-                            .child(VerifyRow { label: "Account", value: addr.clone() })
-                            .child(VerifyRow { label: "Account name", value: acct_display })
-                            .child(VerifyRow { label: "Sender name", value: sndr_display })
-                            .child(VerifyRow { label: "IMAP server", value: format!("{}:{}", srv, p) })
-                            .child(VerifyRow { label: "SMTP server", value: smtp_srv })
-                            .child(VerifyRow { label: "Auth", value: "Password".to_string() })
-                    )
-            }
+                    rect()
+                        .spacing(12.)
+                        .child(
+                            label()
+                                .text("Review your settings before connecting.")
+                                .color(DARK.muted)
+                                .font_size(13.),
+                        )
+                        .child(
+                            rect()
+                                .padding(14.)
+                                .corner_radius(8.)
+                                .background(DARK.panel)
+                                .spacing(10.)
+                                .child(VerifyRow {
+                                    label: "Account",
+                                    value: addr.clone(),
+                                })
+                                .child(VerifyRow {
+                                    label: "Account name",
+                                    value: acct_display,
+                                })
+                                .child(VerifyRow {
+                                    label: "Sender name",
+                                    value: sndr_display,
+                                })
+                                .child(VerifyRow {
+                                    label: "IMAP server",
+                                    value: format!("{}:{}", srv, p),
+                                })
+                                .child(VerifyRow {
+                                    label: "SMTP server",
+                                    value: smtp_srv,
+                                })
+                                .child(VerifyRow {
+                                    label: "Auth",
+                                    value: if *gmail_selected.read() {
+                                        "Google OAuth 2.0".to_string()
+                                    } else {
+                                        "Password / OAuth token".to_string()
+                                    },
+                                }),
+                        )
+                }
             }
         };
         if *show_provider_picker.read() {
@@ -380,7 +517,14 @@ impl Component for AddAccountView {
 
         // Navigation buttons
         let can_next = match *current_step.read() {
-            SetupStep::Account => email.read().contains('@') && password.read().len() > 0,
+            SetupStep::Account => {
+                email.read().contains('@')
+                    && if *gmail_selected.read() {
+                        password.read().starts_with("oauth2-refresh:")
+                    } else {
+                        !password.read().is_empty()
+                    }
+            }
             SetupStep::Server => host.read().trim().len() > 0 && smtp_host.read().trim().len() > 0,
             SetupStep::Verify => true,
         };

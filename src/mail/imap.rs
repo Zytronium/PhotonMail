@@ -314,17 +314,15 @@ async fn authenticate(
     cfg: &AccountConfig,
     secret: &str,
 ) -> Res<Session> {
-    let auth = if let Some(token) = secret.strip_prefix("oauth2:") {
-        if token.is_empty() {
-            return Err("OAuth2 access token is empty".to_string());
-        }
+    let oauth_token = super::google_oauth::access_token(secret).await?;
+    let auth = if let Some(token) = oauth_token {
         timeout(
             IO_TIMEOUT,
             client.authenticate(
                 "XOAUTH2",
                 Xoauth2Authenticator {
                     username: cfg.username.clone(),
-                    token: token.to_string(),
+                    token,
                 },
             ),
         )

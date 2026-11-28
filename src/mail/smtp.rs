@@ -141,13 +141,10 @@ pub async fn send_email(cfg: &AccountConfig, password: &str, raw: &str) -> Resul
             .to_string()
     })?;
 
-    let oauth_token = password.strip_prefix("oauth2:");
-    if oauth_token.is_some_and(str::is_empty) {
-        return Err("OAuth2 access token is empty".to_string());
-    }
+    let oauth_token = super::google_oauth::access_token(password).await?;
     let creds = Credentials::new(
         cfg.username.clone(),
-        oauth_token.unwrap_or(password).to_string(),
+        oauth_token.clone().unwrap_or_else(|| password.to_string()),
     );
     let mechanisms = if oauth_token.is_some() {
         vec![Mechanism::Xoauth2]

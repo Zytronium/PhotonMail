@@ -16,6 +16,7 @@ pub mod config;
 pub mod discovery;
 pub mod engine;
 pub(crate) mod formatting;
+pub(crate) mod google_oauth;
 mod imap;
 pub mod parse;
 pub mod quoting;
