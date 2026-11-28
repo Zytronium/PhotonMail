@@ -27,4 +27,5 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
   - Support email in About changes from photonsupport@zytronium.dev to freaglesupport@whatthefuckisakilometer.com
   - Optional American email HTML template: users' rich text editor embeds content inside an overly patriotic red white and blue HTML email template (and sends that way too)
   - ABSOLUTELY NO FEATURES RELATING TO MODERN AMERICAN POLITICS
+- Custom labels based on filters and conditions
 - Auto-updater
