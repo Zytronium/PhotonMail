@@ -97,6 +97,18 @@ async fn io<T, E: Display>(what: &str, fut: impl Future<Output = Result<T, E>>) 
     }
 }
 
+async fn read_greeting<T>(client: &mut async_imap::Client<T>) -> Res<()>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    match timeout(IO_TIMEOUT, client.read_response()).await {
+        Ok(Ok(Some(_))) => Ok(()),
+        Ok(Ok(None)) => Err("IMAP server closed before greeting".to_string()),
+        Ok(Err(error)) => Err(format!("IMAP greeting: {error}")),
+        Err(_) => Err("IMAP greeting timed out".to_string()),
+    }
+}
+
 fn not_connected() -> String {
     "not connected".to_string()
 }
@@ -258,12 +270,7 @@ async fn connect(cfg: &AccountConfig, password: &str) -> Res<Session> {
 
     if cfg.port == 143 {
         let mut client = async_imap::Client::new(tcp);
-        match timeout(IO_TIMEOUT, client.read_response()).await {
-            Ok(Ok(Some(_))) => {}
-            Ok(Ok(None)) => return Err("IMAP server closed before greeting".to_string()),
-            Ok(Err(e)) => return Err(format!("IMAP greeting: {e}")),
-            Err(_) => return Err("IMAP greeting timed out".to_string()),
-        }
+        read_greeting(&mut client).await?;
         match timeout(
             IO_TIMEOUT,
             client.run_command_and_check_ok("STARTTLS", None),
@@ -279,7 +286,9 @@ async fn connect(cfg: &AccountConfig, password: &str) -> Res<Session> {
         authenticate(async_imap::Client::new(tls), cfg, password).await
     } else {
         let tls = tls_stream(&cfg.host, tcp).await?;
-        authenticate(async_imap::Client::new(tls), cfg, password).await
+        let mut client = async_imap::Client::new(tls);
+        read_greeting(&mut client).await?;
+        authenticate(client, cfg, password).await
     }
 }
 
@@ -301,11 +310,15 @@ struct Xoauth2Authenticator {
 impl Authenticator for Xoauth2Authenticator {
     type Response = String;
 
-    fn process(&mut self, _challenge: &[u8]) -> Self::Response {
-        format!(
-            "user={}\x01auth=Bearer {}\x01\x01",
-            self.username, self.token
-        )
+    fn process(&mut self, challenge: &[u8]) -> Self::Response {
+        if challenge.is_empty() {
+            format!(
+                "user={}\x01auth=Bearer {}\x01\x01",
+                self.username, self.token
+            )
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -1654,6 +1667,21 @@ pub fn spawn_account(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn read_greeting_consumes_the_server_greeting() {
+        let (client_stream, mut server_stream) = tokio::io::duplex(128);
+        let mut client = async_imap::Client::new(client_stream);
+        server_stream
+            .write_all(b"* OK IMAP server ready\r\n")
+            .await
+            .expect("write greeting");
+
+        read_greeting(&mut client)
+            .await
+            .expect("read server greeting");
+    }
 
     #[test]
     fn recent_uid_window_prunes_only_oldest_uids() {
@@ -1720,6 +1748,18 @@ mod tests {
         assert_eq!(
             authenticator.process(&[]),
             "user=alice@example.com\x01auth=Bearer access-token\x01\x01"
+        );
+    }
+
+    #[test]
+    fn xoauth2_error_challenge_ends_the_authentication_exchange() {
+        let mut authenticator = Xoauth2Authenticator {
+            username: "alice@example.com".to_string(),
+            token: "access-token".to_string(),
+        };
+        assert_eq!(
+            authenticator.process(br#"{"status":"401","schemes":"bearer"}"#),
+            ""
         );
     }
 }

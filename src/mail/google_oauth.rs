@@ -19,6 +19,7 @@ const USERINFO_ENDPOINT: &str = "https://openidconnect.googleapis.com/v1/userinf
 const GMAIL_SCOPE: &str = "https://mail.google.com/";
 const GOOGLE_CLIENT_ID: &str =
     "45885468945-pm0a0j1h9s4ug6fercqk4val07splujs.apps.googleusercontent.com";
+const GOOGLE_CLIENT_SECRET: &str = "[redacted]";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -31,6 +32,12 @@ pub struct GoogleAccount {
 struct TokenResponse {
     access_token: String,
     refresh_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TokenErrorResponse {
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -258,16 +265,45 @@ async fn exchange_code(
 ) -> Result<TokenResponse, String> {
     let response = post_form(
         http,
-        &[
-            ("client_id", client_id),
-            ("code", code),
-            ("code_verifier", verifier),
-            ("grant_type", "authorization_code"),
-            ("redirect_uri", redirect_uri),
-        ],
+        &authorization_code_fields(
+            client_id,
+            GOOGLE_CLIENT_SECRET,
+            code,
+            verifier,
+            redirect_uri,
+        ),
     )
     .await?;
     parse_token_response(response, "Google authorization-code exchange").await
+}
+
+fn authorization_code_fields<'a>(
+    client_id: &'a str,
+    client_secret: &'a str,
+    code: &'a str,
+    verifier: &'a str,
+    redirect_uri: &'a str,
+) -> [(&'static str, &'a str); 6] {
+    [
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("code", code),
+        ("code_verifier", verifier),
+        ("grant_type", "authorization_code"),
+        ("redirect_uri", redirect_uri),
+    ]
+}
+
+fn refresh_token_fields<'a>(
+    client_id: &'a str,
+    refresh_token: &'a str,
+) -> [(&'static str, &'a str); 4] {
+    [
+        ("client_id", client_id),
+        ("client_secret", GOOGLE_CLIENT_SECRET),
+        ("refresh_token", refresh_token),
+        ("grant_type", "refresh_token"),
+    ]
 }
 
 async fn fetch_user_info(http: &Client, access_token: &str) -> Result<UserInfo, String> {
@@ -302,11 +338,7 @@ pub async fn access_token(secret: &str) -> Result<Option<String>, String> {
             .map_err(|error| format!("Couldn't prepare Google token refresh: {error}"))?;
         let response = post_form(
             &http,
-            &[
-                ("client_id", GOOGLE_CLIENT_ID),
-                ("refresh_token", refresh_token),
-                ("grant_type", "refresh_token"),
-            ],
+            &refresh_token_fields(GOOGLE_CLIENT_ID, refresh_token),
         )
         .await?;
         return parse_token_response(response, "Google access-token refresh")
@@ -348,9 +380,9 @@ async fn parse_token_response(
         .await
         .map_err(|error| format!("Couldn't read Google's token response: {error}"))?;
     if !status.is_success() {
-        return Err(format!(
-            "{operation} failed ({status}); reconnect the Google account if access was revoked."
-        ));
+        let detail = token_error_details(&body)
+            .unwrap_or_else(|| "reconnect the Google account if access was revoked".to_string());
+        return Err(format!("{operation} failed ({status}): {detail}"));
     }
     let token: TokenResponse = serde_json::from_slice(&body)
         .map_err(|error| format!("Google returned an invalid token response: {error}"))?;
@@ -358,6 +390,19 @@ async fn parse_token_response(
         return Err("Google returned an empty access token.".to_string());
     }
     Ok(token)
+}
+
+fn token_error_details(body: &[u8]) -> Option<String> {
+    let TokenErrorResponse {
+        error,
+        error_description,
+    } = serde_json::from_slice(body).ok()?;
+    match (error, error_description) {
+        (Some(error), Some(description)) => Some(format!("{error}: {description}")),
+        (Some(error), None) => Some(error),
+        (None, Some(description)) => Some(description),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -411,6 +456,31 @@ mod tests {
         assert_eq!(
             query.get("code_challenge_method").map(String::as_str),
             Some("S256")
+        );
+    }
+
+    #[test]
+    fn token_requests_include_the_client_secret() {
+        let code_fields = authorization_code_fields(
+            "client-id",
+            "client-secret",
+            "code",
+            "verifier",
+            "http://127.0.0.1:4321",
+        );
+        assert!(code_fields.contains(&("client_secret", "client-secret")));
+
+        let refresh_fields = refresh_token_fields("client-id", "refresh-token");
+        assert!(refresh_fields.contains(&("client_secret", GOOGLE_CLIENT_SECRET)));
+    }
+
+    #[test]
+    fn token_error_details_include_google_error_description() {
+        assert_eq!(
+            token_error_details(
+                br#"{"error":"invalid_request","error_description":"client_secret is missing."}"#
+            ),
+            Some("invalid_request: client_secret is missing.".to_string())
         );
     }
 }
