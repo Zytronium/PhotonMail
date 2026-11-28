@@ -330,14 +330,14 @@ impl Component for MessageList {
 
         let chip_on_press: EventHandler<Event<PressEventData>> = (move |_| {
             let v = !*s_filter.unread_only.read();
-            s_filter.unread_only.set(v);
+            s_filter.set_unread_only(v);
         })
-            .into();
+        .into();
 
         let all_on_press: EventHandler<Event<PressEventData>> = (move |_| {
-            s_all.unread_only.set(false);
+            s_all.set_unread_only(false);
         })
-            .into();
+        .into();
 
         let title = if starred_only {
             "Starred".to_string()

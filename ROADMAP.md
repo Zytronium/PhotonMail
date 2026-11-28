@@ -2,7 +2,7 @@
 
 Below is a **non-exhaustive** list of planned features for Photon Mail.
 
-- Add Gmail, Outlook, iCloud, Yahoo, and Fastmail providers for new accounts
+- Add ~~Gmail,~~ Outlook, iCloud, Yahoo, and Fastmail providers for new accounts
 - Force dark mode email rendering setting 
 - "AMERICA MODE!!" setting
   - Rebrands app into Freagle Mail
@@ -28,4 +28,3 @@ Below is a **non-exhaustive** list of planned features for Photon Mail.
 - Mailing list banner (with unsubscribe button) on messages from a mailing list
 - Encryption key support
 - Auto-updater
-- Gravatar logos for profile pictures in email list (can be turned off in settings)

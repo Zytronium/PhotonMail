@@ -53,6 +53,7 @@ pub struct AppState {
     pub pending_sends: State<Vec<PendingSend>>,
     pub next_pending_send_id: State<u64>,
     pub unread_only: State<bool>,
+    unread_filter_selection: State<Option<(usize, usize, u32)>>,
     pub starred_only: State<bool>,
     pub sidebar_width: State<f32>,
     pub message_list_width: State<f32>,
@@ -202,6 +203,7 @@ pub fn use_app_state() -> AppState {
         pending_sends: use_state(Vec::new),
         next_pending_send_id: use_state(|| 0),
         unread_only: use_state(|| false),
+        unread_filter_selection: use_state(|| None),
         starred_only: use_state(|| false),
         sidebar_width: use_state(|| 260.),
         message_list_width: use_state(|| 380.),
@@ -487,6 +489,7 @@ fn start_event_pump(app: AppState, cache_writer: Option<CacheWriter>) {
             };
             if selection_removed {
                 app.selected.set(None);
+                app.unread_filter_selection.set(None);
                 app.cancel_mark_read_timer();
                 app.attachment_preview_mail.set(None);
                 app.attachment_preview_open.set(false);
@@ -651,6 +654,7 @@ fn visible_mail_indices(
     folder: usize,
     unread_only: bool,
     starred_only: bool,
+    retained_unread_mail: Option<(usize, usize, u32)>,
 ) -> Vec<usize> {
     let mut visible: Vec<usize> = mails
         .iter()
@@ -660,7 +664,9 @@ fn visible_mail_indices(
                 && (!starred_only || mail.starred)
                 && (starred_only || mail.folder == folder)
                 && account.map_or(true, |a| mail.account == a)
-                && (!unread_only || mail.unread)
+                && (!unread_only
+                    || mail.unread
+                    || retained_unread_mail == Some((mail.account, mail.folder, mail.uid)))
         })
         .map(|(index, _)| index)
         .collect();
@@ -689,8 +695,20 @@ impl AppState {
         let unread_only = *self.unread_only.read();
         let starred_only = *self.starred_only.read();
         let account = *self.account.read();
+        let retained_unread_mail = if unread_only {
+            *self.unread_filter_selection.read()
+        } else {
+            None
+        };
         let store = self.store.read();
-        visible_mail_indices(&store.mails, account, folder, unread_only, starred_only)
+        visible_mail_indices(
+            &store.mails,
+            account,
+            folder,
+            unread_only,
+            starred_only,
+            retained_unread_mail,
+        )
     }
 
     /// Filter visible mails by a search query, checking subject, sender, recipient,
@@ -825,6 +843,7 @@ impl AppState {
 
     pub fn go(&mut self, account: Option<usize>, folder: usize) {
         self.cancel_mark_read_timer();
+        self.unread_filter_selection.set(None);
         self.account.set(account);
         self.folder.set(folder);
         self.starred_only.set(false);
@@ -841,6 +860,7 @@ impl AppState {
 
     pub fn go_starred(&mut self, account: usize) {
         self.cancel_mark_read_timer();
+        self.unread_filter_selection.set(None);
         self.account.set(Some(account));
         self.folder.set(INBOX);
         self.starred_only.set(true);
@@ -849,6 +869,7 @@ impl AppState {
 
     pub fn go_global_starred(&mut self) {
         self.cancel_mark_read_timer();
+        self.unread_filter_selection.set(None);
         self.account.set(None);
         self.folder.set(INBOX);
         self.starred_only.set(true);
@@ -869,11 +890,20 @@ impl AppState {
         *generation = generation.wrapping_add(1);
     }
 
+    pub fn set_unread_only(&mut self, unread_only: bool) {
+        if *self.unread_only.read() != unread_only {
+            self.unread_filter_selection.set(None);
+            self.unread_only.set(unread_only);
+        }
+    }
+
     /// Select a mail and fetch its body if it isn't already cached. Unread messages
     /// are marked read immediately or after the configured delay.
     pub fn select(&mut self, i: usize) {
         self.set_view(View::Mail);
         self.selected.set(Some(i));
+        let previously_retained = *self.unread_filter_selection.read();
+        self.unread_filter_selection.set(None);
         let mark_read_generation = {
             let mut generation = self.mark_read_generation.write();
             *generation = generation.wrapping_add(1);
@@ -892,6 +922,12 @@ impl AppState {
                 matches!(m.body, BodyState::NotLoaded),
             )
         };
+        if (was_unread || previously_retained == Some((account, folder, uid)))
+            && *self.unread_only.read()
+        {
+            self.unread_filter_selection
+                .set(Some((account, folder, uid)));
+        }
 
         {
             let mut store = self.store.write();
@@ -1361,7 +1397,7 @@ fn activation_token_for_notification(
 fn open_notification_mail(app: &mut AppState, target: NotificationTarget) {
     let index = find_notification_mail_index(&app.store.read(), target);
     app.search_query.set(String::new());
-    app.unread_only.set(false);
+    app.set_unread_only(false);
     app.go(Some(target.account), crate::mail::INBOX);
     if let Some(index) = index {
         app.select(index);
@@ -1566,28 +1602,55 @@ mod tests {
         let mails = vec![inbox, archived_star, unread_star, removed_star];
 
         assert_eq!(
-            visible_mail_indices(&mails, None, INBOX, false, true),
+            visible_mail_indices(&mails, None, INBOX, false, true, None),
             vec![2, 1]
         );
         assert_eq!(
-            visible_mail_indices(&mails, None, INBOX, true, true),
+            visible_mail_indices(&mails, None, INBOX, true, true, None),
             vec![2]
         );
         assert_eq!(
-            visible_mail_indices(&mails, Some(0), INBOX, false, true),
+            visible_mail_indices(&mails, Some(0), INBOX, false, true, None),
             vec![2]
         );
         assert_eq!(
-            visible_mail_indices(&mails, Some(0), INBOX, true, true),
+            visible_mail_indices(&mails, Some(0), INBOX, true, true, None),
             vec![2]
         );
         assert_eq!(
-            visible_mail_indices(&mails, Some(1), INBOX, false, true),
+            visible_mail_indices(&mails, Some(1), INBOX, false, true, None),
             vec![1]
         );
         assert_eq!(
-            visible_mail_indices(&mails, Some(0), INBOX, false, false),
+            visible_mail_indices(&mails, Some(0), INBOX, false, false, None),
             vec![0]
+        );
+    }
+
+    #[test]
+    fn unread_filter_keeps_the_selected_message_visible_after_it_is_read() {
+        let mut selected_mail = Store::demo().mails[0].clone();
+        selected_mail.account = 0;
+        selected_mail.folder = INBOX;
+        selected_mail.uid = 1;
+        selected_mail.ts = 10;
+        selected_mail.unread = false;
+        let mut unread_mail = selected_mail.clone();
+        unread_mail.uid = 2;
+        unread_mail.ts = 20;
+        unread_mail.unread = true;
+        let mut other_read_mail = selected_mail.clone();
+        other_read_mail.uid = 3;
+        other_read_mail.ts = 30;
+        let mails = vec![selected_mail, unread_mail, other_read_mail];
+
+        assert_eq!(
+            visible_mail_indices(&mails, None, INBOX, true, false, None),
+            vec![1]
+        );
+        assert_eq!(
+            visible_mail_indices(&mails, None, INBOX, true, false, Some((0, INBOX, 1))),
+            vec![1, 0]
         );
     }
 
