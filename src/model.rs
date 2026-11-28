@@ -400,6 +400,26 @@ impl Store {
                 self.add_error = None;
                 return true;
             }
+            Event::AccountRemoved { index } => {
+                if index >= self.accounts.len() {
+                    return false;
+                }
+                self.accounts.remove(index);
+                for mail_index in 0..self.mails.len() {
+                    if self.mails[mail_index].account == index {
+                        self.remove_payload(mail_index);
+                    } else if self.mails[mail_index].account > index {
+                        self.mails[mail_index].account -= 1;
+                    }
+                }
+                self.index.clear();
+                for (mail_index, mail) in self.mails.iter().enumerate() {
+                    if !mail.removed && mail.uid != 0 {
+                        self.index
+                            .insert((mail.account, mail.folder, mail.uid), mail_index);
+                    }
+                }
+            }
             Event::AddAccountFailed { error } => self.add_error = Some(error),
             Event::DraftSaved { .. } => {
                 // Handled by the event pump in state.rs, nothing to do in the store.
@@ -956,5 +976,26 @@ mod tests {
         store.tombstone(1);
         assert!(matches!(store.mails[1].body, BodyState::NotLoaded));
         assert!(store.mails[1].attachments.is_empty());
+    }
+
+    #[test]
+    fn removing_an_account_drops_its_mail_and_reindexes_remaining_mail() {
+        let mut store = store_with_idle_account();
+        let mut second_account = store.accounts[0].clone();
+        second_account.id = "second-account".to_string();
+        second_account.addr = "second@example.test".to_string();
+        store.accounts.push(second_account);
+        store.upsert(0, 0, row(5));
+        store.upsert(1, 0, row(6));
+
+        store.apply(Event::AccountRemoved { index: 0 });
+
+        assert_eq!(store.accounts.len(), 1);
+        assert_eq!(store.accounts[0].id, "second-account");
+        assert!(store.mails[0].removed);
+        assert_eq!(store.mails[1].account, 0);
+        assert_eq!(store.index.get(&(0, 0, 6)), Some(&1));
+        store.upsert(0, 0, row(6));
+        assert_eq!(store.mails.len(), 2);
     }
 }

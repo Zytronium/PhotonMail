@@ -77,7 +77,7 @@ async fn manager(
 ) {
     let mut configs = accounts.clone();
     // Worker position == account index in the UI's store.
-    let mut workers: Vec<UnboundedSender<WorkerCmd>> = Vec::new();
+    let mut workers: Vec<imap::AccountWorker> = Vec::new();
     for (index, cfg) in accounts.into_iter().enumerate() {
         workers.push(imap::spawn_account(
             index,
@@ -98,7 +98,7 @@ async fn manager(
                 match cmd {
                     Command::Account { account, cmd } => {
                         if let Some(worker) = workers.get(account) {
-                            let _ = worker.send(cmd);
+                            let _ = worker.commands.send(cmd);
                         }
                     }
                     Command::AddAccount { cfg, password } => {
@@ -131,13 +131,47 @@ async fn manager(
                         // The running worker keeps its own copy of the config; without this the
                         // new SMTP settings would only take effect after a restart.
                         if let Some(worker) = workers.get(index) {
-                            let _ = worker.send(WorkerCmd::UpdateConfig { cfg });
+                            let _ = worker.commands.send(WorkerCmd::UpdateConfig { cfg });
                         }
+                    }
+                    Command::RemoveAccount { index } => {
+                        let Some(removed_cfg) = configs.get(index).cloned() else {
+                            continue;
+                        };
+                        let mut updated_configs = configs.clone();
+                        updated_configs.remove(index);
+                        if let Err(error) = config::save_accounts(&updated_configs) {
+                            let _ = events.try_send(Event::Notice {
+                                text: format!("Couldn't remove the account: {error}"),
+                            });
+                            continue;
+                        }
+
+                        configs = updated_configs;
+                        workers.remove(index).abort();
+                        for (worker_index, worker) in workers.iter().enumerate().skip(index) {
+                            let _ = worker
+                                .commands
+                                .send(WorkerCmd::SetIndex { index: worker_index });
+                        }
+
+                        let id = removed_cfg.id;
+                        let cleanup = tokio::task::spawn_blocking(move || config::delete_password(&id))
+                            .await
+                            .unwrap_or_else(|error| Err(error.to_string()));
+                        if let Err(error) = cleanup {
+                            let _ = events.try_send(Event::Notice {
+                                text: format!("Account removed, but its saved credential couldn't be deleted: {error}"),
+                            });
+                        }
+                        let _ = events.try_send(Event::AccountRemoved { index });
                     }
                     Command::SetAutoSyncInterval { interval } => {
                         auto_sync_interval = interval;
                         for worker in &workers {
-                            let _ = worker.send(WorkerCmd::SetAutoSyncInterval { interval });
+                            let _ = worker
+                                .commands
+                                .send(WorkerCmd::SetAutoSyncInterval { interval });
                         }
                     }
                 }

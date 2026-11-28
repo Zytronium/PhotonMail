@@ -1346,7 +1346,7 @@ impl Component for AccountSettings {
                         text: "Remove account".to_string(),
                         bg: Fill::from(DARK.danger),
                         hover_bg: Fill::from(DARK.close_hover),
-                        on_press: EventHandler::new(|_| {}),
+                        on_press: EventHandler::new(move |_| state.remove_account(index)),
                     }),
             )
     }

@@ -221,6 +221,11 @@ impl AppSettings {
         }
     }
 
+    pub fn remove_account(&mut self, account_id: &str) {
+        self.disabled_notification_accounts.remove(account_id);
+        self.sidebar_account_order.retain(|id| id != account_id);
+    }
+
     pub fn save_to_disk(&self) {
         if let Some(path) = settings_path()
             && let Err(error) = self.save_to_path(&path)

@@ -779,6 +779,14 @@ pub fn load_password(id: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn delete_password(id: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, id).map_err(|e| e.to_string())?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

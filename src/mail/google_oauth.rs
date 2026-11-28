@@ -91,8 +91,8 @@ async fn authorize() -> Result<GoogleAccount, String> {
         CALLBACK_TIMEOUT,
         wait_for_authorization_code(listener, &state),
     )
-        .await
-        .map_err(|_| "Google sign-in timed out. Please try again.".to_string())??;
+    .await
+    .map_err(|_| "Google sign-in timed out. Please try again.".to_string())??;
 
     let http = Client::builder()
         .timeout(HTTP_TIMEOUT)
@@ -285,7 +285,7 @@ async fn exchange_code(
         http,
         &authorization_code_fields(client_id, code, verifier, redirect_uri),
     )
-        .await?;
+    .await?;
     parse_token_response(response, "Google authorization-code exchange").await
 }
 
@@ -349,7 +349,7 @@ pub async fn access_token(secret: &str) -> Result<Option<String>, String> {
             &http,
             &refresh_token_fields(GOOGLE_CLIENT_ID, refresh_token),
         )
-            .await?;
+        .await?;
         return parse_token_response(response, "Google access-token refresh")
             .await
             .map(|token| Some(token.access_token));

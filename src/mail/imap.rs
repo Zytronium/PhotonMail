@@ -873,6 +873,10 @@ impl Worker {
                 self.push_sync_front(INBOX);
                 Ok(())
             }
+            WorkerCmd::SetIndex { index } => {
+                self.index = index;
+                Ok(())
+            }
             WorkerCmd::FetchBody { folder, uid } => {
                 let result = if self.ensure_selected(folder).await? {
                     self.fetch_bodies(&[uid])
@@ -1606,16 +1610,27 @@ async fn idle_session(
 /// Start the work connection and the IDLE connection for one account.
 /// `password`: pass `Some` when it's already in hand (just added); otherwise it is read
 /// from the OS keyring.
+pub struct AccountWorker {
+    pub commands: UnboundedSender<WorkerCmd>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl AccountWorker {
+    pub fn abort(self) {
+        self.task.abort();
+    }
+}
+
 pub fn spawn_account(
     index: usize,
     cfg: AccountConfig,
     password: Option<String>,
     events: async_channel::Sender<Event>,
     auto_sync_interval: Option<Duration>,
-) -> UnboundedSender<WorkerCmd> {
+) -> AccountWorker {
     let (tx, rx) = unbounded_channel();
 
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let password = match password {
             Some(p) => p,
             None => {
@@ -1661,7 +1676,7 @@ pub fn spawn_account(
         let _ = cancel_tx.send(());
     });
 
-    tx
+    AccountWorker { commands: tx, task }
 }
 
 #[cfg(test)]

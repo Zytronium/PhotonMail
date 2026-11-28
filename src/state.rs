@@ -282,6 +282,7 @@ fn start_event_pump(app: AppState, cache_writer: Option<CacheWriter>) {
                     | crate::mail::Event::Restore { .. }
                     | crate::mail::Event::Body { .. }
                     | crate::mail::Event::AccountAdded { .. }
+                    | crate::mail::Event::AccountRemoved { .. }
             );
             let selection_removed = if let Some(selected) = *app.selected.read() {
                 let store = app.store.read();
@@ -292,6 +293,85 @@ fn start_event_pump(app: AppState, cache_writer: Option<CacheWriter>) {
             } else {
                 false
             };
+            if let crate::mail::Event::AccountRemoved { index } = &event {
+                let removed_id = app
+                    .store
+                    .peek()
+                    .accounts
+                    .get(*index)
+                    .map(|account| account.id.clone());
+                if let Some(removed_id) = removed_id {
+                    let remaining_accounts = app.store.peek().accounts.len() - 1;
+                    let selected_account = *app.account.read();
+                    app.account.set(adjust_account_index(
+                        selected_account,
+                        *index,
+                        remaining_accounts,
+                    ));
+                    {
+                        let mut expanded = app.expanded.write();
+                        if *index < expanded.len() {
+                            expanded.remove(*index);
+                        }
+                    }
+                    remap_account_folders(&mut *app.synced_folders.write(), *index);
+                    remap_account_folders(&mut *app.reset_folders.write(), *index);
+
+                    let mut draft_removed = false;
+                    let draft_mail = *app.draft_mail.read();
+                    if let Some((draft_account, folder, uid)) = draft_mail {
+                        if draft_account == *index {
+                            app.draft_mail.set(None);
+                            draft_removed = true;
+                        } else if draft_account > *index {
+                            app.draft_mail.set(Some((draft_account - 1, folder, uid)));
+                        }
+                    }
+                    if draft_removed {
+                        app.draft_pin.set(None);
+                    }
+                    {
+                        let mut compose_pre = app.compose_pre.write();
+                        if compose_pre
+                            .as_ref()
+                            .is_some_and(|pre| pre.from_account == *index)
+                        {
+                            *compose_pre = None;
+                        } else if let Some(pre) = compose_pre.as_mut()
+                            && pre.from_account > *index
+                        {
+                            pre.from_account -= 1;
+                        }
+                    }
+                    {
+                        let mut pending_sends = app.pending_sends.write();
+                        pending_sends.retain(|pending| {
+                            pending.account != *index
+                                && pending
+                                    .draft_origin
+                                    .is_none_or(|(account, _)| account != *index)
+                        });
+                        for pending in pending_sends.iter_mut() {
+                            if pending.account > *index {
+                                pending.account -= 1;
+                            }
+                            if let Some((account, uid)) = pending.draft_origin
+                                && account > *index
+                            {
+                                pending.draft_origin = Some((account - 1, uid));
+                            }
+                        }
+                    }
+                    app.attachment_preview_mail.set(None);
+                    app.attachment_preview_open.set(false);
+                    app.update_settings(|settings| settings.remove_account(&removed_id));
+                    app.set_view(if remaining_accounts == 0 {
+                        View::AddAccount
+                    } else {
+                        View::Mail
+                    });
+                }
+            }
             match &event {
                 crate::mail::Event::FolderSynced {
                     account, folder, ..
@@ -507,8 +587,44 @@ fn event_removes_mail(mail: &crate::model::Mail, event: &crate::mail::Event) -> 
         crate::mail::Event::Reset { account, folder } => {
             mail.account == *account && mail.folder == *folder
         }
+        crate::mail::Event::AccountRemoved { index } => mail.account == *index,
         _ => false,
     }
+}
+
+fn adjust_account_index(
+    account: Option<usize>,
+    removed_index: usize,
+    remaining_accounts: usize,
+) -> Option<usize> {
+    account.and_then(|account| {
+        if remaining_accounts == 0 {
+            return None;
+        }
+        if account == removed_index {
+            Some(removed_index.min(remaining_accounts - 1))
+        } else if account > removed_index {
+            Some(account - 1)
+        } else {
+            Some(account)
+        }
+    })
+}
+
+fn remap_account_folders(folders: &mut HashSet<(usize, usize)>, removed_index: usize) {
+    let existing = std::mem::take(folders);
+    *folders = existing
+        .into_iter()
+        .filter_map(|(account, folder)| {
+            if account == removed_index {
+                None
+            } else if account > removed_index {
+                Some((account - 1, folder))
+            } else {
+                Some((account, folder))
+            }
+        })
+        .collect();
 }
 
 fn play_notification_sound(sound: Cow<'static, [u8]>) {
@@ -1098,6 +1214,12 @@ impl AppState {
         self.engine
             .peek()
             .send(crate::mail::Command::UpdateAccount { index, cfg });
+    }
+
+    pub fn remove_account(&self, index: usize) {
+        self.engine
+            .peek()
+            .send(crate::mail::Command::RemoveAccount { index });
     }
 }
 

@@ -169,6 +169,9 @@ pub enum Event {
     AccountAdded {
         cfg: AccountConfig,
     },
+    AccountRemoved {
+        index: usize,
+    },
     AddAccountFailed {
         error: String,
     },
@@ -202,6 +205,10 @@ pub enum WorkerCmd {
     },
     /// Incremental INBOX sync (sent by the IDLE task).
     Refresh,
+    /// Update the account index after an earlier account was removed.
+    SetIndex {
+        index: usize,
+    },
     FetchBody {
         folder: usize,
         uid: u32,
@@ -261,6 +268,9 @@ pub enum Command {
     UpdateAccount {
         index: usize,
         cfg: AccountConfig,
+    },
+    RemoveAccount {
+        index: usize,
     },
     /// Update periodic syncing for every running account worker.
     SetAutoSyncInterval {
